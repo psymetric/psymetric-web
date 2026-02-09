@@ -7,6 +7,7 @@
  */
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import {
   createdResponse,
   listResponse,
@@ -182,14 +183,7 @@ export async function GET(request: NextRequest) {
 
     const relationType = searchParams.get("relationType");
 
-    type RelationWhere = {
-      fromEntityId?: string;
-      toEntityId?: string;
-      relationType?: string;
-      OR?: Array<{ fromEntityId: string } | { toEntityId: string }>;
-    };
-
-    const where: RelationWhere = {};
+    const where: Prisma.EntityRelationWhereInput = {};
 
     if (direction === "from") {
       where.fromEntityId = entityId;
@@ -200,7 +194,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (relationType) {
-      where.relationType = relationType;
+      where.relationType = relationType as Prisma.EntityRelationWhereInput["relationType"];
     }
 
     const [relations, total] = await Promise.all([
