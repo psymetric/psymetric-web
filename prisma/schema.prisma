@@ -1,0 +1,243 @@
+// PsyMetric Prisma Schema — Sprint 1: Source Inbox
+// Derived from: DB-ARCHITECTURE-PLAN.md, 07-RELATIONSHIP-AND-EVENT-VOCABULARY.md
+// Only entities required for Source Inbox are fully modeled here.
+// Future sprints will add remaining entities.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+// =============================================================================
+// Enums — Canonical vocabularies from docs/07 and DB-ARCHITECTURE-PLAN.md
+// =============================================================================
+
+enum SourceType {
+  rss
+  webpage
+  comment
+  reply
+  video
+  other
+}
+
+enum Platform {
+  website
+  x
+  youtube
+  github
+  other
+}
+
+enum SourceItemStatus {
+  ingested
+  triaged
+  used
+  archived
+}
+
+enum CapturedBy {
+  human
+  llm
+  system
+}
+
+enum EntityType {
+  guide
+  concept
+  project
+  news
+  distributionEvent
+  video
+  sourceItem
+  sourceFeed
+}
+
+enum ContentEntityType {
+  guide
+  concept
+  project
+  news
+}
+
+enum EntityStatus {
+  draft
+  publish_requested
+  published
+  archived
+}
+
+enum Difficulty {
+  beginner
+  intermediate
+  advanced
+}
+
+enum ConceptKind {
+  standard
+  model
+  comparison
+}
+
+// RelationType — from docs/07-RELATIONSHIP-AND-EVENT-VOCABULARY.md
+enum RelationType {
+  GUIDE_USES_CONCEPT
+  GUIDE_EXPLAINS_CONCEPT
+  GUIDE_REFERENCES_SOURCE
+  CONCEPT_RELATES_TO_CONCEPT
+  CONCEPT_REFERENCES_SOURCE
+  NEWS_DERIVED_FROM_SOURCE
+  NEWS_REFERENCES_SOURCE
+  NEWS_REFERENCES_CONCEPT
+  PROJECT_IMPLEMENTS_CONCEPT
+  PROJECT_REFERENCES_SOURCE
+  PROJECT_HAS_GUIDE
+  DISTRIBUTION_PROMOTES_GUIDE
+  DISTRIBUTION_PROMOTES_CONCEPT
+  DISTRIBUTION_PROMOTES_PROJECT
+  DISTRIBUTION_PROMOTES_NEWS
+  VIDEO_EXPLAINS_GUIDE
+  VIDEO_EXPLAINS_CONCEPT
+  VIDEO_EXPLAINS_PROJECT
+  VIDEO_EXPLAINS_NEWS
+}
+
+// EventType — from docs/07-RELATIONSHIP-AND-EVENT-VOCABULARY.md
+enum EventType {
+  ENTITY_CREATED
+  ENTITY_UPDATED
+  ENTITY_PUBLISH_REQUESTED
+  ENTITY_PUBLISH_REJECTED
+  ENTITY_PUBLISHED
+  ENTITY_ARCHIVED
+  ENTITY_VALIDATION_FAILED
+  SOURCE_CAPTURED
+  SOURCE_TRIAGED
+  RELATION_CREATED
+  RELATION_REMOVED
+  DISTRIBUTION_CREATED
+  DISTRIBUTION_PLANNED
+  DISTRIBUTION_PUBLISHED
+  VIDEO_CREATED
+  VIDEO_PUBLISHED
+  METRIC_SNAPSHOT_RECORDED
+  SYSTEM_CONFIG_CHANGED
+}
+
+enum ActorType {
+  human
+  llm
+  system
+}
+
+// =============================================================================
+// Source & Capture Entities
+// =============================================================================
+
+model SourceItem {
+  id            String           @id @default(uuid()) @db.Uuid
+  sourceType    SourceType
+  platform      Platform         @default(other)
+  url           String
+  capturedAt    DateTime         @default(now())
+  capturedBy    CapturedBy       @default(human)
+  contentHash   String
+  snapshotRef   String?
+  snapshotMime  String?
+  snapshotBytes Int?
+  operatorIntent String
+  notes         String?
+  status        SourceItemStatus @default(ingested)
+  archivedAt    DateTime?
+  sourceFeedId  String?          @db.Uuid
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+}
+
+model SourceFeed {
+  id            String   @id @default(uuid()) @db.Uuid
+  name          String
+  feedUrl       String   @unique
+  platform      Platform
+  platformLabel String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// =============================================================================
+// Content Entities — Unified table for guides, concepts, projects, news
+// Using a single table to simplify polymorphic relationships and querying.
+// entityType discriminates the kind.
+// =============================================================================
+
+model Entity {
+  id                String           @id @default(uuid()) @db.Uuid
+  entityType        ContentEntityType
+  title             String
+  slug              String
+  summary           String?
+  difficulty        Difficulty?
+  conceptKind       ConceptKind?     // only for entityType=concept
+  comparisonTargets String[]         @db.Uuid // only for conceptKind=comparison
+  repoUrl           String?          // only for entityType=project
+  repoDefaultBranch String?
+  license           String?
+  status            EntityStatus     @default(draft)
+  canonicalUrl      String?
+  contentRef        String?
+  publishedAt       DateTime?
+  archivedAt        DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@unique([entityType, slug])
+}
+
+// =============================================================================
+// Relationship Graph — from DB-ARCHITECTURE-PLAN.md
+// =============================================================================
+
+model EntityRelation {
+  id             String     @id @default(uuid()) @db.Uuid
+  fromEntityType EntityType
+  fromEntityId   String     @db.Uuid
+  toEntityType   EntityType
+  toEntityId     String     @db.Uuid
+  relationType   RelationType
+  notes          String?
+  createdAt      DateTime   @default(now())
+
+  @@unique([fromEntityType, fromEntityId, relationType, toEntityType, toEntityId])
+}
+
+// =============================================================================
+// Event Log — append-only, from DB-ARCHITECTURE-PLAN.md
+// =============================================================================
+
+model EventLog {
+  id         String    @id @default(uuid()) @db.Uuid
+  eventType  EventType
+  entityType EntityType
+  entityId   String    @db.Uuid
+  actor      ActorType
+  details    Json?
+  timestamp  DateTime  @default(now())
+}
+
+// =============================================================================
+// System Config — from DB-ARCHITECTURE-PLAN.md
+// =============================================================================
+
+model SystemConfig {
+  id        String    @id @default(uuid()) @db.Uuid
+  key       String    @unique
+  value     Json
+  updatedBy ActorType
+  updatedAt DateTime  @updatedAt
+}
