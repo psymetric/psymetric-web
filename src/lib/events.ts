@@ -6,7 +6,7 @@
  * - Event types use canonical vocabulary
  */
 import { prisma } from "./prisma";
-import type { EventType, EntityType, ActorType } from "@prisma/client";
+import type { EventType, EntityType, ActorType, Prisma } from "@prisma/client";
 
 export async function logEvent(params: {
   eventType: EventType;
@@ -21,7 +21,7 @@ export async function logEvent(params: {
       entityType: params.entityType,
       entityId: params.entityId,
       actor: params.actor,
-      details: params.details ?? {},
+      details: (params.details ?? {}) as Prisma.InputJsonValue,
     },
   });
 }
