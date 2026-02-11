@@ -15,13 +15,15 @@ Establish a traceable ingestion → interpretation → publish system for AI New
 
 Derived from:
 - 00-SYSTEM-OVERVIEW.md
-- 01-SITE-ARCHITECTURE-OVERVIEW.md
 - DB-ARCHITECTURE-PLAN.md
+- RELATIONSHIP-AND-EVENT-VOCABULARY.md
+- site-architecture docs
 - 07-ADMIN-DASHBOARD-SCOPE.md
 - 05-PUBLISHING-AND-INDEXING-RULES.md
 - 05-METRICS-AND-REPORTING.md
 - 04-LLM-OPERATING-RULES.md
 - 06-DEPLOYMENT-AND-INFRASTRUCTURE-BASELINE.md
+- 08-EXTENSION-INGESTION-ARCHITECTURE.md
 
 ---
 
@@ -30,10 +32,12 @@ Derived from:
 Required in Phase 1:
 - SourceItem model
 - Entity model
-- Relationship model
+- EntityRelation model
 - EventLog model
+- Video model scaffold (inactive workflow)
+- DraftArtifact model (scaffolding only, non-canonical)
 - DistributionEvent model
-- Video model scaffold (not active in workflow)
+- MetricSnapshot model
 - Enum vocabularies aligned with docs
 - URL deduplication for SourceItem
 - contentHash generation
@@ -41,16 +45,19 @@ Required in Phase 1:
 
 Rules:
 - Database is canonical truth
+- DraftArtifact is NOT canonical truth
 - No silent mutation
 - All meaningful actions must be evented
 
 ---
 
-## 2. Ingestion Layer (Derived from SYSTEM-OVERVIEW + ADMIN-DASHBOARD-SCOPE)
+## 2. Ingestion Layer (Derived from SYSTEM-OVERVIEW + EXTENSION-INGESTION-ARCHITECTURE)
 
 Required in Phase 1:
 - Manual Source capture (dashboard)
-- Chrome extension capture (X posts)
+- Chrome extension capture (desktop)
+- Kiwi extension capture (Android)
+- Extension must capture visible X text at ingestion time
 - RSS ingestion
 - SOURCE_CAPTURED event logging
 - operatorIntent required
@@ -67,45 +74,45 @@ Required:
   - used
   - archived
 - SOURCE_TRIAGED event logging
-- archivedAt set when archived
 - Notes append behavior
+- archivedAt set when archived
 
 ---
 
-## 4. Draft & Entity Management (Derived from DB-ARCHITECTURE-PLAN + ADMIN-DASHBOARD-SCOPE)
+## 4. Draft System (Derived from guardrails + extension architecture)
 
 Required:
-- Promote SourceItem → News draft
-- ENTITY_CREATED event
-- RELATION_CREATED event
-- Relationship: NEWS_DERIVED_FROM_SOURCE
-- Draft editor UI
-- Relationship management UI
-- Draft preview (noindex)
+- DraftArtifact table
+- DraftArtifact kind = x_reply (minimum)
+- DraftArtifact auto-expiry (~30 days)
+- DraftArtifact never influences canonical knowledge
+- DRAFT_CREATED event
+- DRAFT_EXPIRED event
+- Human-gated posting only
 
 Rules:
 - Drafts are scaffolding
-- Drafts do not feed intelligence systems
+- Drafts may be hard-deleted or tombstoned
+- No autonomous publishing
 
 ---
 
-## 5. Publish Lifecycle (Derived from PUBLISHING-AND-INDEXING-RULES + ADMIN-DASHBOARD-SCOPE)
+## 5. Publish Lifecycle (Derived from PUBLISHING-AND-INDEXING-RULES)
 
 Required:
-- Validate endpoint
+- Validation endpoint
 - Request publish
 - Human-only publish
 - Reject publish
 - Archive entity
-- Publish queue UI
-- Event timeline visibility
+- Publish Queue UI
+- Validation visibility in dashboard
 
 Rules:
 - Only humans may publish
 - publish sets publishedAt
 - archive sets archivedAt
 - Validation required before publish
-- No autonomous publishing
 
 ---
 
@@ -113,13 +120,12 @@ Rules:
 
 Required:
 - Main Site surface
-- Wiki surface (definitions live here)
-- News index page
-- News detail page
+- Wiki surface
+- /news index (published only)
+- /news/[slug] detail page (published only)
 - Relationship-driven navigation
 - Canonical URLs
-- Only published entities indexable
-- Drafts non-indexable
+- Draft entities never publicly routable
 - Sitemap generation from DB
 - Mobile-first rendering
 - Core Web Vitals compliance
@@ -134,7 +140,7 @@ Rules:
 
 Required screens:
 - Source Inbox
-- Draft Library
+- Draft Library (DraftArtifact view)
 - Entity Editor
 - Relationship Management
 - Publish Queue
@@ -149,36 +155,14 @@ Required screens:
 
 Required:
 - DistributionEvent table
-- DistributionEvent status transitions
 - Manual X posting workflow
+- MetricSnapshot table
 - Metrics snapshot storage (time-based)
 - MetricType vocabulary enforcement
 
 Rules:
 - Metrics are snapshots, not conclusions
 - Distribution ≠ Authority
-
----
-
-## 9. LLM Constraints (Derived from LLM-OPERATING-RULES)
-
-Required enforcement:
-- LLM cannot publish
-- LLM cannot mutate canonical state directly
-- All LLM actions must go through defined endpoints
-- LLM attribution visible in dashboard
-
----
-
-## 10. Deployment & Infrastructure (Derived from DEPLOYMENT-AND-INFRASTRUCTURE-BASELINE)
-
-Required:
-- Vercel deployment
-- Neon PostgreSQL
-- Prisma migrations
-- No Edge runtime for DB
-- Proper connection handling
-- Rebuildable system from repo + DB
 
 ---
 
@@ -199,10 +183,12 @@ Phase 1 is complete when:
 
 - Consistent AI news publishing cadence established
 - Full ingestion → publish loop operational
+- Extension capture operational (desktop + Android)
+- Draft reply workflow operational
+- Public news pages live and indexable
 - Dashboard fully operational per scope doc
-- Website compliant with architecture doc
 - Metrics snapshots being recorded
-- System fully rebuildable
+- System fully rebuildable from repo + DB
 
 ---
 
@@ -224,7 +210,6 @@ Required:
 
 Out of Scope:
 - Automated pattern detection
-- Intelligence layers
 
 ---
 
@@ -268,15 +253,12 @@ Preconditions:
 # Current Status
 
 Active Phase: Phase 1
-Core DB spine: Implemented
-Ingestion + dedupe: Implemented
-Triage: Implemented
-Video scaffold: Implemented (inactive)
-Draft expiry cron: Pending
-Full publish lifecycle: Pending confirmation
-DistributionEvent confirmation: Pending
-Metrics snapshot logging: Pending
-Website architecture verification: Pending
-Dashboard scope verification: Pending
+Source Inbox: Implemented
+Extension architecture: Documented
+Public website: Missing
+DraftArtifact: Not implemented
+DistributionEvent: Not implemented
+MetricSnapshot: Not implemented
+Publish lifecycle: Partial
 
 This roadmap is binding and must be amended explicitly before scope changes occur.
