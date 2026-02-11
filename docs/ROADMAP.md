@@ -1,251 +1,265 @@
-# PsyMetric Roadmap (Authoritative)
+# PsyMetric Roadmap (Authoritative — Doc-Aligned)
 
-This document defines the official phased roadmap for PsyMetric.
-
-It exists to:
-- prevent scope creep
-- align implementation with documentation
-- clearly define in-scope vs out-of-scope work
-- provide measurable exit criteria
-- preserve epistemic clarity
+This roadmap is strictly derived from existing documentation.
+Each section references the source document that defines the requirement.
 
 If a feature is not listed in the active phase, it is out of scope.
+If a requirement exists in docs, it must appear here in a phase.
 
 ---
 
 # Phase 1 — AI News Launch (ACTIVE)
 
-## Core Objective
-Establish a stable, traceable ingestion → interpretation → publish pipeline for AI news.
+## Objective
+Establish a traceable ingestion → interpretation → publish system for AI News.
 
-This phase is operational, not experimental.
-No autonomous systems.
-No inference layers.
-No background intelligence.
+Derived from:
+- 00-SYSTEM-OVERVIEW.md
+- 01-SITE-ARCHITECTURE-OVERVIEW.md
+- DB-ARCHITECTURE-PLAN.md
+- 07-ADMIN-DASHBOARD-SCOPE.md
+- 05-PUBLISHING-AND-INDEXING-RULES.md
+- 05-METRICS-AND-REPORTING.md
+- 04-LLM-OPERATING-RULES.md
+- 06-DEPLOYMENT-AND-INFRASTRUCTURE-BASELINE.md
 
 ---
 
-## 1. Ingestion Layer
+## 1. Database Spine (Derived from DB-ARCHITECTURE-PLAN.md)
 
-### Required
-- Manual capture via dashboard
-- Chrome extension capture (X posts)
-- RSS ingestion pipeline
-- URL deduplication (recapture logs event, no duplicate rows)
+Required in Phase 1:
+- SourceItem model
+- Entity model
+- Relationship model
+- EventLog model
+- DistributionEvent model
+- Video model scaffold (not active in workflow)
+- Enum vocabularies aligned with docs
+- URL deduplication for SourceItem
 - contentHash generation
-- SOURCE_CAPTURED event logging
+- No phantom enums
 
-### Rules
-- SourceItem.url is unique
-- Recapture reuses existing SourceItem
-- All captures require operatorIntent
-- Capture does NOT mutate canonical entities
+Rules:
+- Database is canonical truth
+- No silent mutation
+- All meaningful actions must be evented
 
 ---
 
-## 2. Triage Layer
+## 2. Ingestion Layer (Derived from SYSTEM-OVERVIEW + ADMIN-DASHBOARD-SCOPE)
 
-### Required
+Required in Phase 1:
+- Manual Source capture (dashboard)
+- Chrome extension capture (X posts)
+- RSS ingestion
+- SOURCE_CAPTURED event logging
+- operatorIntent required
+- Recapture logs event, no duplicate rows
+
+---
+
+## 3. Triage Layer (Derived from ADMIN-DASHBOARD-SCOPE)
+
+Required:
 - SourceItem status transitions:
   - ingested
   - triaged
   - used
   - archived
 - SOURCE_TRIAGED event logging
-- Optional timestamped notes append
-
-### Rules
-- No silent status changes
-- archivedAt must be set when archiving
-- Status changes must log previousStatus + newStatus
+- archivedAt set when archived
+- Notes append behavior
 
 ---
 
-## 3. Draft Creation
+## 4. Draft & Entity Management (Derived from DB-ARCHITECTURE-PLAN + ADMIN-DASHBOARD-SCOPE)
 
-### Required
+Required:
 - Promote SourceItem → News draft
-- Entity created with status=draft
-- Relationship: NEWS_DERIVED_FROM_SOURCE
 - ENTITY_CREATED event
 - RELATION_CREATED event
+- Relationship: NEWS_DERIVED_FROM_SOURCE
+- Draft editor UI
+- Relationship management UI
+- Draft preview (noindex)
 
-### Rules
+Rules:
 - Drafts are scaffolding
-- Drafts are not canonical knowledge
-- Drafts must never influence future intelligence systems
+- Drafts do not feed intelligence systems
 
 ---
 
-## 4. Publish Lifecycle
+## 5. Publish Lifecycle (Derived from PUBLISHING-AND-INDEXING-RULES + ADMIN-DASHBOARD-SCOPE)
 
-### Required Endpoints
-- Validate entity
+Required:
+- Validate endpoint
 - Request publish
 - Human-only publish
 - Reject publish
 - Archive entity
-- GET entity events
+- Publish queue UI
+- Event timeline visibility
 
-### Rules
+Rules:
 - Only humans may publish
 - publish sets publishedAt
 - archive sets archivedAt
-- Every state transition must log an EventLog entry
+- Validation required before publish
 - No autonomous publishing
 
 ---
 
-## 5. Public Surface
+## 6. Public Website Layer (Derived from SITE-ARCHITECTURE-OVERVIEW)
 
-### Required
-- Only News entities render publicly
-- Only status=published is indexable
-- Drafts are preview-only
-- Draft pages use noindex
-- Sitemap generated strictly from published entities
+Required:
+- Main Site surface
+- Wiki surface (definitions live here)
+- News index page
+- News detail page
+- Relationship-driven navigation
+- Canonical URLs
+- Only published entities indexable
+- Drafts non-indexable
+- Sitemap generation from DB
+- Mobile-first rendering
+- Core Web Vitals compliance
 
-### Rules
+Rules:
 - UI is projection
 - Database is truth
 
 ---
 
-## 6. Distribution Tracking & Metrics
+## 7. Admin Dashboard Layer (Derived from ADMIN-DASHBOARD-SCOPE)
 
-### Required
-- DistributionEvent table
-- Status: draft | planned | published | archived
-- Manual X posting workflow
-- DistributionEvent logging
-- Metrics snapshots stored as time-based records (views, engagement, etc.)
-
-### Rules
-- Distribution does not mutate canonical entity
-- Capture ≠ Publish
-- Distribution ≠ Authority
-- Metrics are snapshots, not conclusions
+Required screens:
+- Source Inbox
+- Draft Library
+- Entity Editor
+- Relationship Management
+- Publish Queue
+- Preview (noindex)
+- Event timeline view
+- Validation failure visibility
+- LLM attribution visibility
 
 ---
 
-## 7. Hygiene & Integrity
+## 8. Distribution & Metrics (Derived from METRICS-AND-REPORTING)
 
-### Required
-- Draft expiry policy (auto-archive after defined window)
-- EventLog for all meaningful actions
-- No phantom enums
-- No undocumented state transitions
+Required:
+- DistributionEvent table
+- DistributionEvent status transitions
+- Manual X posting workflow
+- Metrics snapshot storage (time-based)
+- MetricType vocabulary enforcement
+
+Rules:
+- Metrics are snapshots, not conclusions
+- Distribution ≠ Authority
+
+---
+
+## 9. LLM Constraints (Derived from LLM-OPERATING-RULES)
+
+Required enforcement:
+- LLM cannot publish
+- LLM cannot mutate canonical state directly
+- All LLM actions must go through defined endpoints
+- LLM attribution visible in dashboard
+
+---
+
+## 10. Deployment & Infrastructure (Derived from DEPLOYMENT-AND-INFRASTRUCTURE-BASELINE)
+
+Required:
+- Vercel deployment
+- Neon PostgreSQL
+- Prisma migrations
+- No Edge runtime for DB
+- Proper connection handling
+- Rebuildable system from repo + DB
 
 ---
 
 ## Explicitly Out of Scope (Phase 1)
+
 - GraphRAG
-- Pattern detection
-- Agent systems
+- Pattern detection engines
 - OpenClaw orchestration
-- Background inference
+- Autonomous execution systems
 - Tool factories
 - Monetization systems
-- Autonomous summarization
-- Automated posting
 
 ---
 
 ## Exit Criteria
+
 Phase 1 is complete when:
 
-- 3–5 AI news posts per week are consistently published
-- Ingestion pipeline is frictionless
-- No duplicate SourceItems
-- Publish discipline is enforced
-- Draft expiry is operational
-- Distribution events are tracked
-- Metrics snapshots are being recorded
-- System can be reconstructed from repo + Neon
-
----
-
-# Phase 1.5 — Operational Hardening
-
-## Objective
-Reduce cognitive load and stabilize workflow.
-
-## In Scope
-- Chrome extension UX refinement
-- Inbox ergonomics improvements
-- Publish UI clarity
-- Minor performance optimizations
-
-## Exit Criteria
-- Publishing feels routine and boring
-- No friction in daily workflow
-- Zero ambiguity in status transitions
+- Consistent AI news publishing cadence established
+- Full ingestion → publish loop operational
+- Dashboard fully operational per scope doc
+- Website compliant with architecture doc
+- Metrics snapshots being recorded
+- System fully rebuildable
 
 ---
 
 # Phase 2 — Structured Education Layer
 
-## Objective
-Transition from reactive news to structured educational authority.
+Derived from:
+- SYSTEM-OVERVIEW.md
+- RELATIONSHIP-AND-EVENT-VOCABULARY.md
 
-## In Scope
-- Canonical Concepts fully implemented
+Objective:
+Expand canonical knowledge beyond News.
+
+Required:
+- Concepts fully populated
 - Guides
-- Relationship-driven navigation
-- Cross-entity linking discipline
-- Validation enforcement for structure & citations
+- Cross-entity relationships
+- Wiki-driven navigation
+- Validation enforcement for citations
 
-## Rules
-- Only canonical entities feed future intelligence layers
-- Relationships must be explicit
-
-## Exit Criteria
-- 20+ Concepts
-- 10+ Guides
-- Fully navigable knowledge graph
+Out of Scope:
+- Automated pattern detection
+- Intelligence layers
 
 ---
 
 # Phase 3 — Manual Pattern Recognition
 
-## Objective
-Extract recurring friction patterns manually.
+Derived from SYSTEM-OVERVIEW long-pipe model.
 
-## In Scope
-- EventLog review
-- Relationship clustering (manual)
+Required:
+- Manual EventLog analysis
+- Relationship clustering
 - Friction documentation
-
-## Out of Scope
-- Automated clustering
-- Intelligence engines
 
 ---
 
 # Phase 4 — Assisted Intelligence Layer
 
-## Objective
-Introduce assisted reasoning once sufficient structured data exists.
+Derived from long-term architecture references in docs.
 
-## In Scope
+Required:
 - GraphRAG
 - Pattern clustering
 - Gap detection
-- Recommendation assistance
 
-## Constraints
-- No autonomous publishing
+Constraints:
+- No autonomous publish
 - No uncontrolled state mutation
 
 ---
 
 # Phase 5 — OpenClaw / Agent Orchestration
 
-## Objective
-Enable controlled agent-assisted execution after system maturity.
+Derived from future-planning documents.
 
-## Preconditions
-- 6+ months structured data
+Preconditions:
+- Mature structured dataset
 - Stable cadence
 - Proven manual pattern recognition
 
@@ -254,13 +268,15 @@ Enable controlled agent-assisted execution after system maturity.
 # Current Status
 
 Active Phase: Phase 1
-Core ingestion: Implemented
+Core DB spine: Implemented
+Ingestion + dedupe: Implemented
 Triage: Implemented
-Deduplication: Implemented
-Video scaffold: Implemented (not active in workflow)
+Video scaffold: Implemented (inactive)
 Draft expiry cron: Pending
-Full publish lifecycle hardening: Pending
+Full publish lifecycle: Pending confirmation
 DistributionEvent confirmation: Pending
 Metrics snapshot logging: Pending
+Website architecture verification: Pending
+Dashboard scope verification: Pending
 
-This roadmap is authoritative and must be explicitly amended before phase transitions occur.
+This roadmap is binding and must be amended explicitly before scope changes occur.
