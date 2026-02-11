@@ -238,7 +238,16 @@ async function entityExists(
     return source !== null;
   }
 
-  // TODO: Add existence checks for distributionEvent, video, sourceFeed
+  // Video entities live in their own table
+  if (entityType === "video") {
+    const vid = await prisma.video.findUnique({
+      where: { id: entityId },
+      select: { id: true },
+    });
+    return vid !== null;
+  }
+
+  // TODO: Add existence checks for distributionEvent, sourceFeed
   // when those entities are implemented in later sprints.
   return false;
 }

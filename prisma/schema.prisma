@@ -244,6 +244,28 @@ model EventLog {
 }
 
 // =============================================================================
+// Distribution Entities — Video
+// Per DB-ARCHITECTURE-PLAN.md: Video spec
+// =============================================================================
+
+model Video {
+  id                String            @id @default(uuid()) @db.Uuid
+  platform          Platform
+  externalUrl       String
+  status            EntityStatus      @default(draft)
+  publishedAt       DateTime?
+  archivedAt        DateTime?
+  primaryEntityType ContentEntityType
+  primaryEntityId   String            @db.Uuid
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([primaryEntityType, primaryEntityId])
+  @@index([status])
+  @@index([platform])
+}
+
+// =============================================================================
 // System Config — from DB-ARCHITECTURE-PLAN.md
 // =============================================================================
 
