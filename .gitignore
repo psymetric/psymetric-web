@@ -5,9 +5,6 @@
 /.next/
 /out/
 
-# internal docs (private for now)
-docs/
-
 # environment variables
 .env*
 
