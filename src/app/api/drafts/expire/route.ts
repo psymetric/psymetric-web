@@ -10,8 +10,14 @@
  */
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { successResponse, badRequest, serverError } from "@/lib/api-response";
-import { logEvent } from "@/lib/events";
+import { successResponse, badRequest, unauthorized, serverError } from "@/lib/api-response";
+
+function parseLimit(raw: string | null): number | null {
+  if (raw === null) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return null;
+  return n;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,63 +27,97 @@ export async function POST(request: NextRequest) {
       const auth = request.headers.get("authorization") ?? "";
       const token = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
       if (token !== requiredToken) {
-        return badRequest("Unauthorized");
+        return unauthorized("Invalid or missing token");
       }
+    }
+
+    // Parse limit query param
+    const url = new URL(request.url);
+    const qLimit = url.searchParams.get("limit");
+    
+    let limit = 200; // default
+    if (qLimit !== null) {
+      const parsedLimit = parseLimit(qLimit);
+      if (parsedLimit === null) {
+        return badRequest("limit must be an integer between 1 and 200");
+      }
+      if (parsedLimit < 1 || parsedLimit > 200) {
+        return badRequest("limit must be an integer between 1 and 200");
+      }
+      limit = parsedLimit;
     }
 
     const now = new Date();
 
-    // Only drafts tied to a SourceItem can be evented as required by docs.
-    const expired = await prisma.draftArtifact.findMany({
+    // Atomic sweep + event emission using transaction
+    const result = await prisma.$transaction(async (tx) => {
+      // Only drafts tied to a SourceItem can be evented as required by docs.
+      const expired = await tx.draftArtifact.findMany({
+        where: {
+          status: "draft",
+          deletedAt: null,
+          sourceItemId: { not: null },
+          expiresAt: { lte: now },
+        },
+        select: {
+          id: true,
+          sourceItemId: true,
+        },
+        orderBy: {
+          expiresAt: "asc",
+        },
+        take: limit,
+      });
+
+      if (expired.length === 0) {
+        return { expiredCount: 0, draftIds: [], hasMore: false };
+      }
+
+      const draftIds = expired.map((d) => d.id);
+
+      // Soft-delete + archive expired drafts
+      await tx.draftArtifact.updateMany({
+        where: { id: { in: draftIds } },
+        data: {
+          status: "archived",
+          deletedAt: now,
+        },
+      });
+
+      // Emit one DRAFT_EXPIRED per draft (per docs)
+      await Promise.all(
+        expired.map((d) =>
+          tx.eventLog.create({
+            data: {
+              eventType: "DRAFT_EXPIRED",
+              entityType: "sourceItem",
+              entityId: d.sourceItemId!,
+              actor: "system",
+              details: {
+                draftId: d.id,
+              },
+            },
+          })
+        )
+      );
+
+      return { expiredCount: draftIds.length, draftIds };
+    });
+
+    // Check if more expired drafts remain
+    const remainingExpired = await prisma.draftArtifact.count({
       where: {
         status: "draft",
         deletedAt: null,
         sourceItemId: { not: null },
         expiresAt: { lte: now },
       },
-      select: {
-        id: true,
-        sourceItemId: true,
-      },
-      orderBy: {
-        expiresAt: "asc",
-      },
-      take: 500,
     });
-
-    if (expired.length === 0) {
-      return successResponse({ expiredCount: 0 });
-    }
-
-    const draftIds = expired.map((d) => d.id);
-
-    // Soft-delete + archive expired drafts.
-    await prisma.draftArtifact.updateMany({
-      where: { id: { in: draftIds } },
-      data: {
-        status: "archived",
-        deletedAt: now,
-      },
-    });
-
-    // Emit one DRAFT_EXPIRED per draft (per docs).
-    await Promise.all(
-      expired.map((d) =>
-        logEvent({
-          eventType: "DRAFT_EXPIRED",
-          entityType: "sourceItem",
-          entityId: d.sourceItemId!,
-          actor: "system",
-          details: {
-            draftId: d.id,
-          },
-        })
-      )
-    );
 
     return successResponse({
-      expiredCount: draftIds.length,
-      draftIds,
+      expiredCount: result.expiredCount,
+      draftIds: result.draftIds,
+      hasMore: remainingExpired > 0,
     });
   } catch (error) {
     console.error("POST /api/drafts/expire error:", error);
