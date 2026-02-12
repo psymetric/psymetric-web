@@ -1,5 +1,6 @@
 /**
  * POST /api/metric-snapshots — Record metric snapshot
+ * GET /api/metric-snapshots — List metric snapshots with filtering
  *
  * Phase 1 Distribution & Metrics - Minimal write endpoint
  * - Records time-series metric snapshots
@@ -10,12 +11,96 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   createdResponse,
+  listResponse,
   badRequest,
   notFound,
   serverError,
+  parsePagination,
 } from "@/lib/api-response";
 import { logEvent } from "@/lib/events";
 import { isValidEnum, VALID_PLATFORMS, VALID_METRIC_TYPES } from "@/lib/validation";
+import type { Prisma } from "@prisma/client";
+
+// =============================================================================
+// GET /api/metric-snapshots
+// =============================================================================
+
+export async function GET(request: NextRequest) {
+  try {
+    const searchParams = request.nextUrl.searchParams;
+    const { page, limit, skip } = parsePagination(searchParams);
+
+    const where: Prisma.MetricSnapshotWhereInput = {};
+
+    // Platform filter
+    const platform = searchParams.get("platform");
+    if (platform) {
+      if (!isValidEnum(platform, VALID_PLATFORMS)) {
+        return badRequest("platform must be one of: website, x, youtube, github, other");
+      }
+      where.platform = platform;
+    }
+
+    // MetricType filter
+    const metricType = searchParams.get("metricType");
+    if (metricType) {
+      if (!isValidEnum(metricType, VALID_METRIC_TYPES)) {
+        return badRequest("metricType must be one of: x_impressions, x_likes, x_reposts, x_replies, x_bookmarks");
+      }
+      where.metricType = metricType;
+    }
+
+    // Entity filter
+    const entityId = searchParams.get("entityId");
+    if (entityId) {
+      where.entityId = entityId;
+    }
+
+    // Date range filters
+    const capturedAfter = searchParams.get("capturedAfter");
+    if (capturedAfter) {
+      const afterDate = new Date(capturedAfter);
+      if (isNaN(afterDate.getTime())) {
+        return badRequest("capturedAfter must be a valid ISO date string");
+      }
+      where.capturedAt = { gte: afterDate };
+    }
+
+    const capturedBefore = searchParams.get("capturedBefore");
+    if (capturedBefore) {
+      const beforeDate = new Date(capturedBefore);
+      if (isNaN(beforeDate.getTime())) {
+        return badRequest("capturedBefore must be a valid ISO date string");
+      }
+      where.capturedAt = {
+        ...where.capturedAt,
+        lte: beforeDate,
+      };
+    }
+
+    const [metricSnapshots, total] = await Promise.all([
+      prisma.metricSnapshot.findMany({
+        where,
+        orderBy: [
+          { capturedAt: "desc" },
+          { createdAt: "desc" },
+        ],
+        skip,
+        take: limit,
+      }),
+      prisma.metricSnapshot.count({ where }),
+    ]);
+
+    return listResponse(metricSnapshots, { page, limit, total });
+  } catch (error) {
+    console.error("GET /api/metric-snapshots error:", error);
+    return serverError();
+  }
+}
+
+// =============================================================================
+// POST /api/metric-snapshots
+// =============================================================================
 
 export async function POST(request: NextRequest) {
   try {
