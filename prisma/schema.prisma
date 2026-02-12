@@ -146,6 +146,14 @@ enum DraftArtifactStatus {
   archived
 }
 
+enum MetricType {
+  x_impressions
+  x_likes
+  x_reposts
+  x_replies
+  x_bookmarks
+}
+
 // =============================================================================
 // Source & Capture Entities
 // =============================================================================
@@ -214,6 +222,10 @@ model Entity {
   archivedAt        DateTime?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
+
+  // Relations
+  distributionEvents DistributionEvent[]
+  metricSnapshots    MetricSnapshot[]
 
   @@unique([entityType, slug])
   @@index([entityType, status])
@@ -299,6 +311,54 @@ model DraftArtifact {
   @@index([kind, status])
   @@index([sourceItemId, kind])
   @@index([expiresAt, deletedAt])
+}
+
+// =============================================================================
+// Distribution Entities — DistributionEvent
+// Per PHASE-1-SLICE-DISTRIBUTION-AND-METRICS.md
+// =============================================================================
+
+model DistributionEvent {
+  id                String            @id @default(uuid()) @db.Uuid
+  platform          Platform
+  externalUrl       String
+  status            EntityStatus      @default(draft)
+  publishedAt       DateTime?
+  archivedAt        DateTime?
+  primaryEntityType ContentEntityType
+  primaryEntityId   String            @db.Uuid
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  // Relations
+  primaryEntity     Entity?           @relation(fields: [primaryEntityId], references: [id], onDelete: Restrict)
+
+  @@index([primaryEntityType, primaryEntityId])
+  @@index([status])
+  @@index([platform])
+}
+
+// =============================================================================
+// Metrics — MetricSnapshot
+// Per PHASE-1-SLICE-DISTRIBUTION-AND-METRICS.md
+// =============================================================================
+
+model MetricSnapshot {
+  id          String            @id @default(uuid()) @db.Uuid
+  metricType  MetricType
+  value       Int
+  platform    Platform
+  capturedAt  DateTime          @default(now())
+  entityType  ContentEntityType
+  entityId    String            @db.Uuid
+  notes       String?
+  createdAt   DateTime          @default(now())
+
+  // Relations
+  entity      Entity?           @relation(fields: [entityId], references: [id], onDelete: Restrict)
+
+  @@index([metricType, capturedAt])
+  @@index([entityType, entityId, capturedAt])
 }
 
 // =============================================================================
