@@ -127,12 +127,23 @@ enum EventType {
   VIDEO_PUBLISHED
   METRIC_SNAPSHOT_RECORDED
   SYSTEM_CONFIG_CHANGED
+  DRAFT_CREATED
+  DRAFT_EXPIRED
 }
 
 enum ActorType {
   human
   llm
   system
+}
+
+enum DraftArtifactKind {
+  x_reply
+}
+
+enum DraftArtifactStatus {
+  draft
+  archived
 }
 
 // =============================================================================
@@ -263,6 +274,31 @@ model Video {
   @@index([primaryEntityType, primaryEntityId])
   @@index([status])
   @@index([platform])
+}
+
+// =============================================================================
+// Draft Artifacts — scaffolding only, non-canonical
+// Per ROADMAP.md Phase 1 Draft System requirements
+// =============================================================================
+
+model DraftArtifact {
+  id           String              @id @default(uuid()) @db.Uuid
+  kind         DraftArtifactKind
+  status       DraftArtifactStatus @default(draft)
+  content      String
+  sourceItemId String?             @db.Uuid
+  entityId     String?             @db.Uuid
+  createdBy    ActorType
+  llmModel     String?
+  llmMeta      Json?
+  expiresAt    DateTime
+  deletedAt    DateTime?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@index([kind, status])
+  @@index([sourceItemId, kind])
+  @@index([expiresAt, deletedAt])
 }
 
 // =============================================================================
