@@ -15,11 +15,18 @@ import {
   createdResponse,
   notFound,
   badRequest,
+  errorResponse,
   serverError,
 } from "@/lib/api-response";
 import { logEvent } from "@/lib/events";
 
 type DraftStyle = "short" | "medium" | "thread";
+
+type DraftCreatedDetails = {
+  draftIds?: unknown;
+  count?: unknown;
+  style?: unknown;
+};
 
 function parseCount(raw: string | null): number | null {
   if (raw === null) return null;
@@ -30,6 +37,14 @@ function parseCount(raw: string | null): number | null {
 
 function isDraftStyle(value: unknown): value is DraftStyle {
   return value === "short" || value === "medium" || value === "thread";
+}
+
+function extractDraftIds(details: unknown): string[] | null {
+  if (!details || typeof details !== "object") return null;
+  const d = details as DraftCreatedDetails;
+  if (!Array.isArray(d.draftIds)) return null;
+  const ids = d.draftIds.filter((x): x is string => typeof x === "string");
+  return ids.length > 0 ? ids : null;
 }
 
 function buildStubReply(args: {
@@ -91,6 +106,11 @@ export async function POST(
       return notFound("Source item not found");
     }
 
+    // Phase 1 invariant: only X reply drafts are supported.
+    if (sourceItem.platform !== "x") {
+      return badRequest("Draft replies are only supported for X source items");
+    }
+
     // --- Inputs (query params only; Phase 1 tight + boring) ---
     const url = new URL(request.url);
     const qCount = url.searchParams.get("count");
@@ -107,6 +127,59 @@ export async function POST(
       return badRequest("style must be one of: short, medium, thread");
     }
     const style: DraftStyle = styleRaw;
+
+    // --- Tighten bolts: rate-limit + idempotency guard using EventLog ---
+    // Serverless-safe (DB-backed): avoid accidental double-click spam.
+    const now = new Date();
+    const oneMinuteAgo = new Date(now.getTime() - 60_000);
+    const recent = await prisma.eventLog.findMany({
+      where: {
+        eventType: "DRAFT_CREATED",
+        entityType: "sourceItem",
+        entityId: sourceItem.id,
+        timestamp: { gte: oneMinuteAgo },
+      },
+      orderBy: { timestamp: "desc" },
+      take: 5,
+    });
+
+    // Idempotency: if the most recent generation matches the requested shape and is very recent,
+    // return its draftIds instead of creating duplicates.
+    const mostRecent = recent[0];
+    if (mostRecent) {
+      const ageMs = now.getTime() - mostRecent.timestamp.getTime();
+      const details = (mostRecent.details ?? {}) as unknown;
+      const d = details as DraftCreatedDetails;
+
+      const matchesShape = d?.count === count && d?.style === style;
+      const recentEnough = ageMs >= 0 && ageMs <= 10_000; // 10s window
+      const priorDraftIds = extractDraftIds(details);
+
+      if (recentEnough && matchesShape && priorDraftIds) {
+        const first = await prisma.draftArtifact.findUnique({
+          where: { id: priorDraftIds[0] },
+          select: { expiresAt: true },
+        });
+
+        return createdResponse({
+          draftIds: priorDraftIds,
+          ...(priorDraftIds.length === 1 ? { draftId: priorDraftIds[0] } : {}),
+          count,
+          style,
+          expiresAt: (first?.expiresAt ?? now).toISOString(),
+        });
+      }
+
+      // Rate limit: cap draft generations per SourceItem to reduce accidental spam.
+      // (Operator can still intentionally generate again after a short wait.)
+      if (recent.length >= 3) {
+        return errorResponse(
+          "RATE_LIMITED",
+          "Too many draft generations for this source item. Try again in a minute.",
+          429
+        );
+      }
+    }
 
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 30);
@@ -136,6 +209,15 @@ export async function POST(
       )
     );
 
+    // Internal invariant assertion (defensive): transaction should create exactly N.
+    if (drafts.length !== count) {
+      console.error(
+        "Invariant violation: draft count mismatch",
+        JSON.stringify({ requested: count, created: drafts.length, sourceItemId: id })
+      );
+      return serverError("Draft generation failed");
+    }
+
     const draftIds = drafts.map((d) => d.id);
 
     // --- Event: single DRAFT_CREATED with batch metadata ---
@@ -146,7 +228,7 @@ export async function POST(
       actor: "llm",
       details: {
         draftIds,
-        count: draftIds.length,
+        count,
         style,
       },
     });
@@ -155,7 +237,7 @@ export async function POST(
     return createdResponse({
       draftIds,
       ...(draftIds.length === 1 ? { draftId: draftIds[0] } : {}),
-      count: draftIds.length,
+      count,
       style,
       expiresAt: expiresAt.toISOString(),
     });
