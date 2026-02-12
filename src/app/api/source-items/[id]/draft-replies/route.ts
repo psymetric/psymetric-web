@@ -21,17 +21,15 @@ import { logEvent } from "@/lib/events";
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await context.params;
 
-    // --- Validate id param ---
     if (!id || typeof id !== "string") {
       return badRequest("Invalid id parameter");
     }
 
-    // --- Load SourceItem by id ---
     const sourceItem = await prisma.sourceItem.findUnique({
       where: { id },
     });
@@ -40,12 +38,10 @@ export async function POST(
       return notFound("Source item not found");
     }
 
-    // --- Generate reply draft (stub implementation) ---
     const generatedReply = "Draft reply based on captured content.";
 
-    // --- Create DraftArtifact ---
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 30); // 30 days from now
+    expiresAt.setDate(expiresAt.getDate() + 30);
 
     const draftArtifact = await prisma.draftArtifact.create({
       data: {
@@ -55,14 +51,13 @@ export async function POST(
         sourceItemId: id,
         entityId: null,
         createdBy: "llm",
-        llmModel: null,
-        llmMeta: null,
+        // Prisma Json? fields should be omitted when unknown/null.
+        // llmModel and llmMeta can be populated later when a real LLM integration exists.
         expiresAt,
         deletedAt: null,
       },
     });
 
-    // --- Log DRAFT_CREATED event ---
     await logEvent({
       eventType: "DRAFT_CREATED",
       entityType: "sourceItem",
@@ -90,17 +85,15 @@ export async function POST(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await context.params;
 
-    // --- Validate id param ---
     if (!id || typeof id !== "string") {
       return badRequest("Invalid id parameter");
     }
 
-    // --- Return DraftArtifacts for this SourceItem ---
     const drafts = await prisma.draftArtifact.findMany({
       where: {
         sourceItemId: id,
