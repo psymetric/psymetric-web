@@ -224,7 +224,7 @@ export function SourceInbox() {
 
   const generateReply = useCallback(async (sourceItemId: string) => {
     try {
-      const res = await fetch(`/api/source-items/${sourceItemId}/draft-replies`, {
+      const res = await fetch(`/api/source-items/${sourceItemId}/draft-replies?count=3&style=short`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
