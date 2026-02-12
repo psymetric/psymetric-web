@@ -18,7 +18,12 @@ import {
   parsePagination,
 } from "@/lib/api-response";
 import { logEvent } from "@/lib/events";
-import { isValidEnum, isValidUrl, VALID_PLATFORMS, VALID_ENTITY_STATUSES } from "@/lib/validation";
+import {
+  isValidEnum,
+  isValidUrl,
+  VALID_PLATFORMS,
+  VALID_ENTITY_STATUSES,
+} from "@/lib/validation";
 import type { Prisma } from "@prisma/client";
 
 // =============================================================================
@@ -36,7 +41,9 @@ export async function GET(request: NextRequest) {
     const platform = searchParams.get("platform");
     if (platform) {
       if (!isValidEnum(platform, VALID_PLATFORMS)) {
-        return badRequest("platform must be one of: website, x, youtube, github, other");
+        return badRequest(
+          "platform must be one of: website, x, youtube, github, other"
+        );
       }
       where.platform = platform;
     }
@@ -45,7 +52,9 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get("status");
     if (status) {
       if (!isValidEnum(status, VALID_ENTITY_STATUSES)) {
-        return badRequest("status must be one of: draft, publish_requested, published, archived");
+        return badRequest(
+          "status must be one of: draft, publish_requested, published, archived"
+        );
       }
       where.status = status;
     }
@@ -65,14 +74,16 @@ export async function GET(request: NextRequest) {
       };
     }
 
-    // Date range filters
+    // Date range filters (publishedAt is nullable)
+    const publishedAtFilter: Prisma.DateTimeNullableFilter = {};
+
     const publishedAfter = searchParams.get("publishedAfter");
     if (publishedAfter) {
       const afterDate = new Date(publishedAfter);
       if (isNaN(afterDate.getTime())) {
         return badRequest("publishedAfter must be a valid ISO date string");
       }
-      where.publishedAt = { gte: afterDate };
+      publishedAtFilter.gte = afterDate;
     }
 
     const publishedBefore = searchParams.get("publishedBefore");
@@ -81,19 +92,17 @@ export async function GET(request: NextRequest) {
       if (isNaN(beforeDate.getTime())) {
         return badRequest("publishedBefore must be a valid ISO date string");
       }
-      where.publishedAt = {
-        ...where.publishedAt,
-        lte: beforeDate,
-      };
+      publishedAtFilter.lte = beforeDate;
+    }
+
+    if (publishedAtFilter.gte || publishedAtFilter.lte) {
+      where.publishedAt = publishedAtFilter;
     }
 
     const [distributionEvents, total] = await Promise.all([
       prisma.distributionEvent.findMany({
         where,
-        orderBy: [
-          { publishedAt: "desc" },
-          { createdAt: "desc" },
-        ],
+        orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
         skip,
         take: limit,
       }),
@@ -125,7 +134,9 @@ export async function POST(request: NextRequest) {
 
     // Validate platform
     if (!isValidEnum(platform, VALID_PLATFORMS)) {
-      return badRequest("platform must be one of: website, x, youtube, github, other");
+      return badRequest(
+        "platform must be one of: website, x, youtube, github, other"
+      );
     }
 
     // Validate primaryEntityId

@@ -36,7 +36,9 @@ export async function GET(request: NextRequest) {
     const platform = searchParams.get("platform");
     if (platform) {
       if (!isValidEnum(platform, VALID_PLATFORMS)) {
-        return badRequest("platform must be one of: website, x, youtube, github, other");
+        return badRequest(
+          "platform must be one of: website, x, youtube, github, other"
+        );
       }
       where.platform = platform;
     }
@@ -45,7 +47,9 @@ export async function GET(request: NextRequest) {
     const metricType = searchParams.get("metricType");
     if (metricType) {
       if (!isValidEnum(metricType, VALID_METRIC_TYPES)) {
-        return badRequest("metricType must be one of: x_impressions, x_likes, x_reposts, x_replies, x_bookmarks");
+        return badRequest(
+          "metricType must be one of: x_impressions, x_likes, x_reposts, x_replies, x_bookmarks"
+        );
       }
       where.metricType = metricType;
     }
@@ -56,14 +60,16 @@ export async function GET(request: NextRequest) {
       where.entityId = entityId;
     }
 
-    // Date range filters
+    // Date range filters (capturedAt is non-null)
+    const capturedAtFilter: Prisma.DateTimeFilter = {};
+
     const capturedAfter = searchParams.get("capturedAfter");
     if (capturedAfter) {
       const afterDate = new Date(capturedAfter);
       if (isNaN(afterDate.getTime())) {
         return badRequest("capturedAfter must be a valid ISO date string");
       }
-      where.capturedAt = { gte: afterDate };
+      capturedAtFilter.gte = afterDate;
     }
 
     const capturedBefore = searchParams.get("capturedBefore");
@@ -72,19 +78,17 @@ export async function GET(request: NextRequest) {
       if (isNaN(beforeDate.getTime())) {
         return badRequest("capturedBefore must be a valid ISO date string");
       }
-      where.capturedAt = {
-        ...where.capturedAt,
-        lte: beforeDate,
-      };
+      capturedAtFilter.lte = beforeDate;
+    }
+
+    if (capturedAtFilter.gte || capturedAtFilter.lte) {
+      where.capturedAt = capturedAtFilter;
     }
 
     const [metricSnapshots, total] = await Promise.all([
       prisma.metricSnapshot.findMany({
         where,
-        orderBy: [
-          { capturedAt: "desc" },
-          { createdAt: "desc" },
-        ],
+        orderBy: [{ capturedAt: "desc" }, { createdAt: "desc" }],
         skip,
         take: limit,
       }),
@@ -116,7 +120,9 @@ export async function POST(request: NextRequest) {
 
     // Validate metricType
     if (!isValidEnum(metricType, VALID_METRIC_TYPES)) {
-      return badRequest("metricType must be one of: x_impressions, x_likes, x_reposts, x_replies, x_bookmarks");
+      return badRequest(
+        "metricType must be one of: x_impressions, x_likes, x_reposts, x_replies, x_bookmarks"
+      );
     }
 
     // Validate value
@@ -126,7 +132,9 @@ export async function POST(request: NextRequest) {
 
     // Validate platform
     if (!isValidEnum(platform, VALID_PLATFORMS)) {
-      return badRequest("platform must be one of: website, x, youtube, github, other");
+      return badRequest(
+        "platform must be one of: website, x, youtube, github, other"
+      );
     }
 
     // Validate entityId
