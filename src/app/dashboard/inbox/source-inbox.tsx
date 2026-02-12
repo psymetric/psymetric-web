@@ -9,11 +9,13 @@
  * - docs/operations-planning/07-ADMIN-DASHBOARD-SCOPE.md
  *
  * Actions:
- * 1. List SourceItems with filters (status, sourceType)
+ * 1. List SourceItems with filters (status, sourceType, platform)
  * 2. Capture Source modal
  * 3. Change Source status
  * 4. Attach Source to Entity
  * 5. Promote Source to Draft entity
+ * 6. Generate X reply drafts
+ * 7. Manage draft replies (copy, archive)
  *
  * Error handling per UI contract:
  * - Success: brief confirmation toast
@@ -64,6 +66,15 @@ interface Toast {
   message: string;
 }
 
+interface DraftArtifact {
+  id: string;
+  kind: string;
+  status: string;
+  content: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
 // =============================================================================
 // Constants — from canonical enums
 // =============================================================================
@@ -100,6 +111,7 @@ export function SourceInbox() {
   });
   const [filterStatus, setFilterStatus] = useState<string>("ingested");
   const [filterSourceType, setFilterSourceType] = useState<string>("");
+  const [filterPlatform, setFilterPlatform] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
@@ -107,6 +119,12 @@ export function SourceInbox() {
   const [showCaptureModal, setShowCaptureModal] = useState(false);
   const [showAttachModal, setShowAttachModal] = useState<SourceItem | null>(null);
   const [showPromoteModal, setShowPromoteModal] = useState<SourceItem | null>(null);
+
+  // Draft reply states
+  const [draftsBySourceId, setDraftsBySourceId] = useState<Record<string, DraftArtifact[]>>({});
+  const [draftLoadingBySourceId, setDraftLoadingBySourceId] = useState<Record<string, boolean>>({});
+  const [draftErrorBySourceId, setDraftErrorBySourceId] = useState<Record<string, string | null>>({});
+  const [expandedDrafts, setExpandedDrafts] = useState<Record<string, boolean>>({});
 
   // --- Toast helpers ---
   const addToast = useCallback((type: "success" | "error", message: string) => {
@@ -131,6 +149,7 @@ export function SourceInbox() {
         const params = new URLSearchParams();
         if (filterStatus) params.set("status", filterStatus);
         if (filterSourceType) params.set("sourceType", filterSourceType);
+        if (filterPlatform) params.set("platform", filterPlatform);
         params.set("page", String(page));
         params.set("limit", "20");
 
@@ -148,7 +167,7 @@ export function SourceInbox() {
         setLoading(false);
       }
     },
-    [filterStatus, filterSourceType, addToast]
+    [filterStatus, filterSourceType, filterPlatform, addToast]
   );
 
   useEffect(() => {
@@ -180,6 +199,83 @@ export function SourceInbox() {
       addToast("error", err instanceof Error ? err.message : "Failed to update status");
     }
   };
+
+  // --- Draft reply helpers ---
+  const fetchDrafts = useCallback(async (sourceItemId: string) => {
+    setDraftLoadingBySourceId((prev) => ({ ...prev, [sourceItemId]: true }));
+    setDraftErrorBySourceId((prev) => ({ ...prev, [sourceItemId]: null }));
+    
+    try {
+      const res = await fetch(`/api/source-items/${sourceItemId}/draft-replies`);
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error?.message || "Failed to fetch drafts");
+      }
+      const json = await res.json();
+      setDraftsBySourceId((prev) => ({ ...prev, [sourceItemId]: json.data }));
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Failed to fetch drafts";
+      setDraftErrorBySourceId((prev) => ({ ...prev, [sourceItemId]: errorMsg }));
+      addToast("error", errorMsg);
+    } finally {
+      setDraftLoadingBySourceId((prev) => ({ ...prev, [sourceItemId]: false }));
+    }
+  }, [addToast]);
+
+  const generateReply = useCallback(async (sourceItemId: string) => {
+    try {
+      const res = await fetch(`/api/source-items/${sourceItemId}/draft-replies`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error?.message || "Failed to generate reply");
+      }
+      
+      addToast("success", "Reply draft created");
+      setExpandedDrafts((prev) => ({ ...prev, [sourceItemId]: true }));
+      await fetchDrafts(sourceItemId);
+    } catch (err) {
+      addToast("error", err instanceof Error ? err.message : "Failed to generate reply");
+    }
+  }, [addToast, fetchDrafts]);
+
+  const copyDraft = useCallback(async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      addToast("success", "Copied");
+    } catch (err) {
+      addToast("error", "Failed to copy");
+    }
+  }, [addToast]);
+
+  const archiveDraft = useCallback(async (draftId: string, sourceItemId: string) => {
+    try {
+      const res = await fetch(`/api/drafts/${draftId}/archive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error?.message || "Failed to archive draft");
+      }
+      
+      addToast("success", "Draft archived");
+      await fetchDrafts(sourceItemId);
+    } catch (err) {
+      addToast("error", err instanceof Error ? err.message : "Failed to archive draft");
+    }
+  }, [addToast, fetchDrafts]);
+
+  const toggleDrafts = useCallback(async (sourceItemId: string) => {
+    const isExpanded = expandedDrafts[sourceItemId];
+    setExpandedDrafts((prev) => ({ ...prev, [sourceItemId]: !isExpanded }));
+    
+    if (!isExpanded && !draftsBySourceId[sourceItemId]) {
+      await fetchDrafts(sourceItemId);
+    }
+  }, [expandedDrafts, draftsBySourceId, fetchDrafts]);
 
   // =============================================================================
   // Render
@@ -221,6 +317,23 @@ export function SourceInbox() {
             {SOURCE_TYPES.map((t) => (
               <option key={t} value={t}>
                 {t}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Platform filter */}
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium text-gray-700">Platform:</label>
+          <select
+            value={filterPlatform}
+            onChange={(e) => setFilterPlatform(e.target.value)}
+            className="text-sm border border-gray-300 rounded px-2 py-1.5"
+          >
+            <option value="">All</option>
+            {PLATFORMS.map((p) => (
+              <option key={p} value={p}>
+                {p}
               </option>
             ))}
           </select>
@@ -272,74 +385,148 @@ export function SourceInbox() {
             </thead>
             <tbody>
               {items.map((item) => (
-                <tr
-                  key={item.id}
-                  className={`border-b border-gray-100 hover:bg-gray-50 ${
-                    item.status === "archived" ? "opacity-50" : ""
-                  }`}
-                >
-                  <td className="px-4 py-3">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">
-                      {item.sourceType}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 max-w-xs truncate">
-                    <a
-                      href={item.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-600 hover:underline"
-                    >
-                      {item.url}
-                    </a>
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">{item.platform}</td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={item.status} />
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
-                    {new Date(item.capturedAt).toLocaleDateString()}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      {/* Triage actions */}
-                      {item.status === "ingested" && (
-                        <>
-                          <button
-                            onClick={() => changeStatus(item, "triaged")}
-                            className="text-xs font-medium text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded hover:bg-green-100"
-                          >
-                            Keep
-                          </button>
-                          <button
-                            onClick={() => changeStatus(item, "archived")}
-                            className="text-xs font-medium text-gray-600 bg-gray-50 border border-gray-200 px-2 py-1 rounded hover:bg-gray-100"
-                          >
-                            Ignore
-                          </button>
-                        </>
-                      )}
-                      {/* Promote + Attach available for ingested/triaged */}
-                      {(item.status === "ingested" ||
-                        item.status === "triaged") && (
-                        <>
-                          <button
-                            onClick={() => setShowPromoteModal(item)}
-                            className="text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 px-2 py-1 rounded hover:bg-blue-100"
-                          >
-                            Promote
-                          </button>
-                          <button
-                            onClick={() => setShowAttachModal(item)}
-                            className="text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 px-2 py-1 rounded hover:bg-purple-100"
-                          >
-                            Attach
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
+                <React.Fragment key={item.id}>
+                  <tr
+                    className={`border-b border-gray-100 hover:bg-gray-50 ${
+                      item.status === "archived" ? "opacity-50" : ""
+                    }`}
+                  >
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">
+                        {item.sourceType}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 max-w-xs truncate">
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:underline"
+                      >
+                        {item.url}
+                      </a>
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">{item.platform}</td>
+                    <td className="px-4 py-3">
+                      <StatusBadge status={item.status} />
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                      {new Date(item.capturedAt).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Triage actions */}
+                        {item.status === "ingested" && (
+                          <>
+                            <button
+                              onClick={() => changeStatus(item, "triaged")}
+                              className="text-xs font-medium text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded hover:bg-green-100"
+                            >
+                              Keep
+                            </button>
+                            <button
+                              onClick={() => changeStatus(item, "archived")}
+                              className="text-xs font-medium text-gray-600 bg-gray-50 border border-gray-200 px-2 py-1 rounded hover:bg-gray-100"
+                            >
+                              Ignore
+                            </button>
+                          </>
+                        )}
+                        {/* Promote + Attach available for ingested/triaged */}
+                        {(item.status === "ingested" ||
+                          item.status === "triaged") && (
+                          <>
+                            <button
+                              onClick={() => setShowPromoteModal(item)}
+                              className="text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 px-2 py-1 rounded hover:bg-blue-100"
+                            >
+                              Promote
+                            </button>
+                            <button
+                              onClick={() => setShowAttachModal(item)}
+                              className="text-xs font-medium text-purple-700 bg-purple-50 border border-purple-200 px-2 py-1 rounded hover:bg-purple-100"
+                            >
+                              Attach
+                            </button>
+                          </>
+                        )}
+                        {/* X reply actions - only for X platform and not archived */}
+                        {item.platform === "x" && item.status !== "archived" && (
+                          <>
+                            <button
+                              onClick={() => generateReply(item.id)}
+                              className="text-xs font-medium text-orange-700 bg-orange-50 border border-orange-200 px-2 py-1 rounded hover:bg-orange-100"
+                            >
+                              Generate Reply
+                            </button>
+                            <button
+                              onClick={() => toggleDrafts(item.id)}
+                              className="text-xs font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-1 rounded hover:bg-indigo-100"
+                            >
+                              {expandedDrafts[item.id] ? "Hide Drafts" : "Show Drafts"}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  {/* Draft replies sub-row */}
+                  {item.platform === "x" && 
+                   item.status !== "archived" && 
+                   expandedDrafts[item.id] && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-3 bg-gray-50 border-b border-gray-100">
+                        <div className="space-y-3">
+                          {draftErrorBySourceId[item.id] && (
+                            <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+                              Error: {draftErrorBySourceId[item.id]}
+                            </div>
+                          )}
+                          
+                          {draftLoadingBySourceId[item.id] && (
+                            <div className="text-sm text-gray-500">Loading drafts…</div>
+                          )}
+                          
+                          {!draftLoadingBySourceId[item.id] && 
+                           !draftErrorBySourceId[item.id] && 
+                           (!draftsBySourceId[item.id] || draftsBySourceId[item.id].length === 0) && (
+                            <div className="text-sm text-gray-500">No drafts yet.</div>
+                          )}
+                          
+                          {draftsBySourceId[item.id]?.map((draft) => (
+                            <div
+                              key={draft.id}
+                              className="border border-gray-200 rounded-lg bg-white p-3 space-y-2"
+                            >
+                              <div className="text-sm text-gray-800 whitespace-pre-wrap">
+                                {draft.content}
+                              </div>
+                              <div className="flex items-center justify-between text-xs text-gray-500">
+                                <span>
+                                  Expires: {new Date(draft.expiresAt).toLocaleDateString()}
+                                </span>
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={() => copyDraft(draft.content)}
+                                    className="text-blue-600 hover:text-blue-800 font-medium"
+                                  >
+                                    Copy
+                                  </button>
+                                  <button
+                                    onClick={() => archiveDraft(draft.id, item.id)}
+                                    className="text-red-600 hover:text-red-800 font-medium"
+                                  >
+                                    Archive
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               ))}
             </tbody>
           </table>

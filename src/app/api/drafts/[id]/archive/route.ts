@@ -19,10 +19,10 @@ import { logEvent } from "@/lib/events";
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await context.params;
 
     // --- Validate id param ---
     if (!id || typeof id !== "string") {
