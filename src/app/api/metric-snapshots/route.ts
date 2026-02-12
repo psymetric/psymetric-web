@@ -109,14 +109,19 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Parse request body
-    let body: any;
+    let body: unknown;
     try {
       body = await request.json();
     } catch {
       return badRequest("Invalid JSON body");
     }
 
-    const { metricType, value, platform, entityId, capturedAt, notes } = body;
+    if (typeof body !== "object" || body === null) {
+      return badRequest("Invalid JSON body");
+    }
+
+    const b = body as Record<string, unknown>;
+    const { metricType, value, platform, entityId, capturedAt, notes } = b;
 
     // Validate metricType
     if (!isValidEnum(metricType, VALID_METRIC_TYPES)) {

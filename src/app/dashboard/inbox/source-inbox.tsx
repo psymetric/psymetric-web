@@ -245,7 +245,7 @@ export function SourceInbox() {
     try {
       await navigator.clipboard.writeText(content);
       addToast("success", "Copied");
-    } catch (err) {
+    } catch {
       addToast("error", "Failed to copy");
     }
   }, [addToast]);

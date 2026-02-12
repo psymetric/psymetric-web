@@ -123,14 +123,19 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Parse request body
-    let body: any;
+    let body: unknown;
     try {
       body = await request.json();
     } catch {
       return badRequest("Invalid JSON body");
     }
 
-    const { platform, primaryEntityId, externalUrl, publishedAt } = body;
+    if (typeof body !== "object" || body === null) {
+      return badRequest("Invalid JSON body");
+    }
+
+    const b = body as Record<string, unknown>;
+    const { platform, primaryEntityId, externalUrl, publishedAt } = b;
 
     // Validate platform
     if (!isValidEnum(platform, VALID_PLATFORMS)) {
