@@ -55,6 +55,14 @@ export const VALID_CONCEPT_KINDS = [
   "comparison",
 ] as const;
 
+export const VALID_METRIC_TYPES = [
+  "x_impressions",
+  "x_likes",
+  "x_reposts",
+  "x_replies",
+  "x_bookmarks",
+] as const;
+
 /**
  * Canonical relation types from docs/07-RELATIONSHIP-AND-EVENT-VOCABULARY.md
  * Mapped by fromEntityType → toEntityType → allowed relation types
