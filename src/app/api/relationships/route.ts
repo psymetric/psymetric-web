@@ -225,3 +225,125 @@ export async function POST(request: NextRequest) {
     return serverError();
   }
 }
+
+// =============================================================================
+// DELETE /api/relationships
+// =============================================================================
+
+export async function DELETE(request: NextRequest) {
+  try {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return badRequest("Invalid JSON body");
+    }
+
+    // Body must be object
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return badRequest("Request body must be an object");
+    }
+
+    // Validate required fields
+    if (!body.fromEntityId || typeof body.fromEntityId !== "string") {
+      return badRequest("fromEntityId is required and must be a string");
+    }
+
+    if (!body.toEntityId || typeof body.toEntityId !== "string") {
+      return badRequest("toEntityId is required and must be a string");
+    }
+
+    if (!body.relationType || typeof body.relationType !== "string") {
+      return badRequest("relationType is required and must be a string");
+    }
+
+    // Validate UUID format
+    if (!UUID_RE.test(body.fromEntityId)) {
+      return badRequest("fromEntityId must be a valid UUID");
+    }
+
+    if (!UUID_RE.test(body.toEntityId)) {
+      return badRequest("toEntityId must be a valid UUID");
+    }
+
+    // Validate relationType against schema enum
+    if (!VALID_RELATION_TYPES.includes(body.relationType as RelationType)) {
+      return badRequest(
+        `relationType must be one of: ${VALID_RELATION_TYPES.join(", ")}`
+      );
+    }
+
+    // Validate both entities exist in Entity table
+    const [fromEntity, toEntity] = await Promise.all([
+      prisma.entity.findUnique({
+        where: { id: body.fromEntityId },
+        select: { id: true, entityType: true },
+      }),
+      prisma.entity.findUnique({
+        where: { id: body.toEntityId },
+        select: { id: true, entityType: true },
+      }),
+    ]);
+
+    if (!fromEntity) {
+      return notFound(`From entity not found: ${body.fromEntityId}`);
+    }
+
+    if (!toEntity) {
+      return notFound(`To entity not found: ${body.toEntityId}`);
+    }
+
+    // Check if relationship exists
+    const existingRelation = await prisma.entityRelation.findUnique({
+      where: {
+        fromEntityType_fromEntityId_relationType_toEntityType_toEntityId: {
+          fromEntityType: fromEntity.entityType,
+          fromEntityId: body.fromEntityId,
+          relationType: body.relationType as RelationType,
+          toEntityType: toEntity.entityType,
+          toEntityId: body.toEntityId,
+        },
+      },
+    });
+
+    if (!existingRelation) {
+      return notFound("Relationship not found");
+    }
+
+    // Delete relationship and emit event log in transaction
+    await prisma.$transaction(async (tx) => {
+      // Delete exactly one EntityRelation row using composite unique key
+      await tx.entityRelation.delete({
+        where: {
+          fromEntityType_fromEntityId_relationType_toEntityType_toEntityId: {
+            fromEntityType: fromEntity.entityType,
+            fromEntityId: body.fromEntityId,
+            relationType: body.relationType as RelationType,
+            toEntityType: toEntity.entityType,
+            toEntityId: body.toEntityId,
+          },
+        },
+      });
+
+      // Emit exactly ONE EventLog
+      await tx.eventLog.create({
+        data: {
+          eventType: "RELATION_REMOVED",
+          entityType: fromEntity.entityType,
+          entityId: body.fromEntityId,
+          actor: "human",
+          details: {
+            relationType: body.relationType,
+            fromEntityId: body.fromEntityId,
+            toEntityId: body.toEntityId,
+          },
+        },
+      });
+    });
+
+    return successResponse({ deleted: true });
+  } catch (error) {
+    console.error("DELETE /api/relationships error:", error);
+    return serverError();
+  }
+}
