@@ -215,7 +215,7 @@ export function EntityEditor({
               placeholder="/path/to/canonical/url"
             />
             <p className="mt-1 text-xs text-gray-500">
-              Must start with '/' if provided
+              Must start with &apos;/&apos; if provided
             </p>
           </div>
 
