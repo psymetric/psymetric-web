@@ -15,6 +15,7 @@ import { prisma } from "@/lib/prisma";
 import { EntityType } from "@prisma/client";
 import { EntityEditor } from "./entity-editor";
 import { LifecycleActions } from "./lifecycle-actions";
+import { RelationshipCreator } from "./relationship-creator";
 
 // UUID validation regex
 const UUID_RE =
@@ -125,6 +126,20 @@ async function getEntityRelationships(entityId: string) {
   });
 }
 
+async function getAvailableEntities() {
+  // Fetch all entities for relationship creation dropdown
+  const entities = await prisma.entity.findMany({
+    select: {
+      id: true,
+      title: true,
+      entityType: true,
+    },
+    orderBy: [{ entityType: "asc" }, { title: "asc" }],
+  });
+
+  return entities;
+}
+
 export default async function EntityDetailPage(
   context: { params: Promise<{ id: string }> }
 ) {
@@ -148,9 +163,10 @@ export default async function EntityDetailPage(
     notFound();
   }
 
-  const [events, relationships] = await Promise.all([
+  const [events, relationships, availableEntities] = await Promise.all([
     getEntityEvents(entity),
     getEntityRelationships(entity.id),
+    getAvailableEntities(),
   ]);
 
   return (
@@ -316,6 +332,12 @@ export default async function EntityDetailPage(
             </div>
           )}
         </div>
+
+        {/* Relationship Creator */}
+        <RelationshipCreator
+          currentEntityId={entity.id}
+          availableEntities={availableEntities}
+        />
 
         {/* Event Timeline */}
         <div className="bg-white border border-gray-200 rounded-lg p-6">
