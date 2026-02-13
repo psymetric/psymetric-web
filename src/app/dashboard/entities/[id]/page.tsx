@@ -10,6 +10,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { EntityType } from "@prisma/client";
 import { EntityEditor } from "./entity-editor";
+import { LifecycleActions } from "./lifecycle-actions";
 
 // UUID validation regex
 const UUID_RE =
@@ -95,6 +96,12 @@ export default async function EntityDetailPage(
           summary={entity.summary}
           contentRef={entity.contentRef}
           canonicalUrl={entity.canonicalUrl}
+        />
+
+        {/* Lifecycle Actions */}
+        <LifecycleActions
+          id={entity.id}
+          status={entity.status}
         />
 
         {/* Read-only Information Sections */}
