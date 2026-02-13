@@ -9,13 +9,13 @@
  * Displays entity metadata in dashboard with editing capabilities, lifecycle actions,
  * event timeline, and relationship visualization.
  */
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { EntityType } from "@prisma/client";
 import { EntityEditor } from "./entity-editor";
 import { LifecycleActions } from "./lifecycle-actions";
 import { RelationshipCreator } from "./relationship-creator";
+import { RelationshipsPanel } from "./relationships-panel";
 
 // UUID validation regex
 const UUID_RE =
@@ -163,11 +163,23 @@ export default async function EntityDetailPage(
     notFound();
   }
 
-  const [events, relationships, availableEntities] = await Promise.all([
+  const [events, relationshipsRaw, availableEntities] = await Promise.all([
     getEntityEvents(entity),
     getEntityRelationships(entity.id),
     getAvailableEntities(),
   ]);
+
+  // Transform relationships for client component (serialize createdAt)
+  const relationships = relationshipsRaw.map((rel) => ({
+    id: rel.id,
+    direction: rel.direction as "Outgoing" | "Incoming",
+    relationType: rel.relationType,
+    otherEntityLabel: rel.otherEntityLabel,
+    otherEntityLink: rel.otherEntityLink,
+    createdAt: rel.createdAt.toISOString(),
+    fromEntityId: rel.fromEntityId,
+    toEntityId: rel.toEntityId,
+  }));
 
   return (
     <div>
@@ -272,66 +284,7 @@ export default async function EntityDetailPage(
         </div>
 
         {/* Relationships */}
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <div className="mb-4">
-            <h2 className="text-lg font-medium text-gray-900">Relationships</h2>
-            <p className="mt-1 text-sm text-gray-500">
-              Inbound and outbound relationships for this entity (showing up to 50 relationships)
-            </p>
-          </div>
-          
-          {relationships.length === 0 ? (
-            <p className="text-sm text-gray-500 italic">No relationships recorded.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-200">
-                    <th className="text-left py-2 font-medium text-gray-600">Direction</th>
-                    <th className="text-left py-2 font-medium text-gray-600">Relation Type</th>
-                    <th className="text-left py-2 font-medium text-gray-600">Related Entity</th>
-                    <th className="text-left py-2 font-medium text-gray-600">Created</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {relationships.map((relationship) => (
-                    <tr key={relationship.id} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="py-3">
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                          relationship.direction === "Outgoing"
-                            ? "bg-green-100 text-green-800"
-                            : "bg-blue-100 text-blue-800"
-                        }`}>
-                          {relationship.direction}
-                        </span>
-                      </td>
-                      <td className="py-3">
-                        <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded">
-                          {relationship.relationType}
-                        </span>
-                      </td>
-                      <td className="py-3">
-                        {relationship.otherEntityLink ? (
-                          <Link 
-                            href={relationship.otherEntityLink}
-                            className="text-blue-600 hover:text-blue-800 hover:underline"
-                          >
-                            {relationship.otherEntityLabel}
-                          </Link>
-                        ) : (
-                          <span className="text-gray-900">{relationship.otherEntityLabel}</span>
-                        )}
-                      </td>
-                      <td className="py-3 text-gray-500">
-                        {relationship.createdAt.toLocaleDateString()}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        <RelationshipsPanel relationships={relationships} />
 
         {/* Relationship Creator */}
         <RelationshipCreator
