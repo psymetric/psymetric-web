@@ -2,10 +2,14 @@
  * Entity Detail Page
  * Phase 2A.1 — Read-only entity detail view
  * Phase 2A.2 — Enhanced with entity editor form
+ * Phase 2A.3A — Added lifecycle action panel
+ * Phase 2A.3B — Added EventLog timeline panel
+ * Phase 2B.1 — Added read-only relationships panel
  *
- * Displays entity metadata in dashboard with editing capabilities for allowlisted fields.
- * No lifecycle actions, no joins, no relationships yet.
+ * Displays entity metadata in dashboard with editing capabilities, lifecycle actions,
+ * event timeline, and relationship visualization.
  */
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { EntityType } from "@prisma/client";
@@ -54,6 +58,73 @@ async function getEntityEvents(entity: { id: string; entityType: string }) {
   return events;
 }
 
+async function getEntityRelationships(entityId: string) {
+  // Get all relationships where this entity is either from or to
+  const relations = await prisma.entityRelation.findMany({
+    where: {
+      OR: [{ fromEntityId: entityId }, { toEntityId: entityId }],
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: 50,
+  });
+
+  if (relations.length === 0) {
+    return [];
+  }
+
+  // Collect all content entity IDs that we need to look up
+  const contentEntityTypes = ["guide", "concept", "project", "news"];
+  const contentIds = new Set<string>();
+
+  relations.forEach((relation) => {
+    // For outgoing relationships, check the "to" side
+    if (relation.fromEntityId === entityId && contentEntityTypes.includes(relation.toEntityType)) {
+      contentIds.add(relation.toEntityId);
+    }
+    // For incoming relationships, check the "from" side
+    if (relation.toEntityId === entityId && contentEntityTypes.includes(relation.fromEntityType)) {
+      contentIds.add(relation.fromEntityId);
+    }
+  });
+
+  // Batch fetch content entities for friendly labels
+  const contentEntities = contentIds.size > 0 ? await prisma.entity.findMany({
+    where: { id: { in: Array.from(contentIds) } },
+    select: { id: true, title: true, entityType: true, slug: true },
+  }) : [];
+
+  // Build lookup map
+  const entityLookup = new Map(
+    contentEntities.map((entity) => [entity.id, entity])
+  );
+
+  // Process relations with direction and labels
+  return relations.map((relation) => {
+    const isOutgoing = relation.fromEntityId === entityId;
+    const otherEntityType = isOutgoing ? relation.toEntityType : relation.fromEntityType;
+    const otherEntityId = isOutgoing ? relation.toEntityId : relation.fromEntityId;
+
+    let otherEntityLabel = `${otherEntityType} — ${otherEntityId}`;
+    let otherEntityLink: string | null = null;
+
+    // If it's a content entity, use the friendly label and link
+    const contentEntity = entityLookup.get(otherEntityId);
+    if (contentEntity) {
+      otherEntityLabel = `${contentEntity.title} (${contentEntity.entityType})`;
+      otherEntityLink = `/dashboard/entities/${contentEntity.id}`;
+    }
+
+    return {
+      ...relation,
+      direction: isOutgoing ? "Outgoing" : "Incoming",
+      otherEntityType,
+      otherEntityId,
+      otherEntityLabel,
+      otherEntityLink,
+    };
+  });
+}
+
 export default async function EntityDetailPage(
   context: { params: Promise<{ id: string }> }
 ) {
@@ -77,7 +148,10 @@ export default async function EntityDetailPage(
     notFound();
   }
 
-  const events = await getEntityEvents(entity);
+  const [events, relationships] = await Promise.all([
+    getEntityEvents(entity),
+    getEntityRelationships(entity.id),
+  ]);
 
   return (
     <div>
@@ -179,6 +253,68 @@ export default async function EntityDetailPage(
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Relationships */}
+        <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <div className="mb-4">
+            <h2 className="text-lg font-medium text-gray-900">Relationships</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Inbound and outbound relationships for this entity (showing up to 50 relationships)
+            </p>
+          </div>
+          
+          {relationships.length === 0 ? (
+            <p className="text-sm text-gray-500 italic">No relationships recorded.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="text-left py-2 font-medium text-gray-600">Direction</th>
+                    <th className="text-left py-2 font-medium text-gray-600">Relation Type</th>
+                    <th className="text-left py-2 font-medium text-gray-600">Related Entity</th>
+                    <th className="text-left py-2 font-medium text-gray-600">Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {relationships.map((relationship) => (
+                    <tr key={relationship.id} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="py-3">
+                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                          relationship.direction === "Outgoing"
+                            ? "bg-green-100 text-green-800"
+                            : "bg-blue-100 text-blue-800"
+                        }`}>
+                          {relationship.direction}
+                        </span>
+                      </td>
+                      <td className="py-3">
+                        <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded">
+                          {relationship.relationType}
+                        </span>
+                      </td>
+                      <td className="py-3">
+                        {relationship.otherEntityLink ? (
+                          <Link 
+                            href={relationship.otherEntityLink}
+                            className="text-blue-600 hover:text-blue-800 hover:underline"
+                          >
+                            {relationship.otherEntityLabel}
+                          </Link>
+                        ) : (
+                          <span className="text-gray-900">{relationship.otherEntityLabel}</span>
+                        )}
+                      </td>
+                      <td className="py-3 text-gray-500">
+                        {relationship.createdAt.toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* Event Timeline */}
