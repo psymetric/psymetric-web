@@ -8,6 +8,7 @@
  */
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { EntityType } from "@prisma/client";
 import { EntityEditor } from "./entity-editor";
 
 // UUID validation regex
@@ -36,6 +37,22 @@ async function getEntity(id: string) {
   return entity;
 }
 
+async function getEntityEvents(entity: { id: string; entityType: string }) {
+  const events = await prisma.eventLog.findMany({
+    where: {
+      entityType: entity.entityType as EntityType,
+      entityId: entity.id,
+    },
+    orderBy: [
+      { timestamp: "desc" },
+      { id: "desc" },
+    ],
+    take: 50,
+  });
+
+  return events;
+}
+
 export default async function EntityDetailPage(
   context: { params: Promise<{ id: string }> }
 ) {
@@ -58,6 +75,8 @@ export default async function EntityDetailPage(
   if (!entity) {
     notFound();
   }
+
+  const events = await getEntityEvents(entity);
 
   return (
     <div>
@@ -153,6 +172,50 @@ export default async function EntityDetailPage(
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Event Timeline */}
+        <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <div className="mb-4">
+            <h2 className="text-lg font-medium text-gray-900">Event Timeline</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Recent events for this entity (showing up to 50 events)
+            </p>
+          </div>
+          
+          {events.length === 0 ? (
+            <p className="text-sm text-gray-500 italic">No events recorded.</p>
+          ) : (
+            <div className="space-y-4">
+              {events.map((event) => (
+                <div key={event.id} className="border-l-4 border-blue-200 pl-4 py-2">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-1">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                          {event.eventType}
+                        </span>
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                          {event.actor}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        {event.timestamp.toLocaleDateString()} at {event.timestamp.toLocaleTimeString()}
+                      </p>
+                      {event.details && (
+                        <div className="mt-2">
+                          <p className="text-xs font-medium text-gray-700 mb-1">Details:</p>
+                          <pre className="text-xs bg-gray-50 border border-gray-200 rounded p-2 overflow-x-auto">
+                            {JSON.stringify(event.details, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
