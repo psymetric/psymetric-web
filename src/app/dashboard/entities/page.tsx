@@ -13,6 +13,7 @@ import {
   VALID_ENTITY_STATUSES,
 } from "@/lib/validation";
 import type { Prisma } from "@prisma/client";
+import { EntityFilters } from "./entity-filters";
 
 interface SearchParams {
   entityType?: string;
@@ -141,6 +142,15 @@ export default async function EntitiesPage({
           Browse and manage content entities across all types and statuses.
         </p>
       </div>
+
+      {/* Filter Form */}
+      <EntityFilters
+        key={`${searchParams.entityType || "all"}-${searchParams.status || "all"}-${searchParams.search || ""}-${searchParams.limit || "20"}`}
+        entityType={searchParams.entityType}
+        status={searchParams.status}
+        search={searchParams.search}
+        limit={searchParams.limit}
+      />
 
       {/* Error message */}
       {error && (
