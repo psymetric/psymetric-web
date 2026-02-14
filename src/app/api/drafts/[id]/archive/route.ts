@@ -59,6 +59,7 @@ export async function POST(
       entityType: "sourceItem",
       entityId: draft.sourceItemId,
       actor: "system",
+      projectId: draft.projectId,
       details: {
         draftId: draft.id,
         action: "archived",

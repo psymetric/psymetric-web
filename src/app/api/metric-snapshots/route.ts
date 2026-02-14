@@ -17,7 +17,6 @@ import {
   serverError,
   parsePagination,
 } from "@/lib/api-response";
-import { logEvent } from "@/lib/events";
 import { isValidEnum, VALID_PLATFORMS, VALID_METRIC_TYPES } from "@/lib/validation";
 import type { Prisma } from "@prisma/client";
 
@@ -54,9 +53,13 @@ export async function GET(request: NextRequest) {
       where.metricType = metricType;
     }
 
-    // Entity filter
+    // Entity filter (with UUID validation)
     const entityId = searchParams.get("entityId");
     if (entityId) {
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!UUID_RE.test(entityId)) {
+        return badRequest("entityId must be a valid UUID");
+      }
       where.entityId = entityId;
     }
 
@@ -167,38 +170,45 @@ export async function POST(request: NextRequest) {
     // Verify entity exists
     const entity = await prisma.entity.findUnique({
       where: { id: entityId },
-      select: { id: true, entityType: true },
+      select: { id: true, entityType: true, projectId: true },
     });
 
     if (!entity) {
       return notFound("Entity not found");
     }
 
-    // Create metric snapshot
-    const metricSnapshot = await prisma.metricSnapshot.create({
-      data: {
-        metricType,
-        value,
-        platform,
-        capturedAt: capturedAtDate,
-        entityType: entity.entityType,
-        entityId,
-        notes: notes || null,
-      },
-    });
+    // Transactional create + event log (atomic)
+    const metricSnapshot = await prisma.$transaction(async (tx) => {
+      const ms = await tx.metricSnapshot.create({
+        data: {
+          metricType,
+          value,
+          platform,
+          capturedAt: capturedAtDate,
+          entityType: entity.entityType,
+          entityId,
+          notes: notes || null,
+          projectId: entity.projectId,
+        },
+      });
 
-    // Log event
-    await logEvent({
-      eventType: "METRIC_SNAPSHOT_RECORDED",
-      entityType: "metricSnapshot",
-      entityId: metricSnapshot.id,
-      actor: "human",
-      details: {
-        metricType,
-        value,
-        platform,
-        entityId,
-      },
+      await tx.eventLog.create({
+        data: {
+          eventType: "METRIC_SNAPSHOT_RECORDED",
+          entityType: "metricSnapshot",
+          entityId: ms.id,
+          actor: "human",
+          projectId: entity.projectId,
+          details: {
+            metricType,
+            value,
+            platform,
+            entityId,
+          },
+        },
+      });
+
+      return ms;
     });
 
     return createdResponse({

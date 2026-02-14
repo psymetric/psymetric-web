@@ -17,7 +17,6 @@ import {
   serverError,
   parsePagination,
 } from "@/lib/api-response";
-import { logEvent } from "@/lib/events";
 import {
   isValidEnum,
   isValidUrl,
@@ -169,36 +168,43 @@ export async function POST(request: NextRequest) {
     // Verify primary entity exists
     const entity = await prisma.entity.findUnique({
       where: { id: primaryEntityId },
-      select: { id: true, entityType: true },
+      select: { id: true, entityType: true, projectId: true },
     });
 
     if (!entity) {
       return notFound("Primary entity not found");
     }
 
-    // Create distribution event
-    const distributionEvent = await prisma.distributionEvent.create({
-      data: {
-        platform,
-        externalUrl,
-        status: "published",
-        publishedAt: publishedAtDate,
-        primaryEntityType: entity.entityType,
-        primaryEntityId,
-      },
-    });
+    // Transactional create + event log (atomic)
+    const distributionEvent = await prisma.$transaction(async (tx) => {
+      const de = await tx.distributionEvent.create({
+        data: {
+          platform,
+          externalUrl,
+          status: "published",
+          publishedAt: publishedAtDate,
+          primaryEntityType: entity.entityType,
+          primaryEntityId,
+          projectId: entity.projectId,
+        },
+      });
 
-    // Log event
-    await logEvent({
-      eventType: "DISTRIBUTION_PUBLISHED",
-      entityType: "distributionEvent",
-      entityId: distributionEvent.id,
-      actor: "human",
-      details: {
-        platform,
-        primaryEntityId,
-        externalUrl,
-      },
+      await tx.eventLog.create({
+        data: {
+          eventType: "DISTRIBUTION_PUBLISHED",
+          entityType: "distributionEvent",
+          entityId: de.id,
+          actor: "human",
+          projectId: entity.projectId,
+          details: {
+            platform,
+            primaryEntityId,
+            externalUrl,
+          },
+        },
+      });
+
+      return de;
     });
 
     return createdResponse({

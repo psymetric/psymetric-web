@@ -17,6 +17,7 @@ import {
 } from "@/lib/api-response";
 import { RelationType } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
+import { DEFAULT_PROJECT_ID } from "@/lib/project";
 
 // UUID validation regex
 const UUID_RE =
@@ -166,7 +167,8 @@ export async function POST(request: NextRequest) {
     // Check for duplicate relationship
     const existingRelation = await prisma.entityRelation.findUnique({
       where: {
-        fromEntityType_fromEntityId_relationType_toEntityType_toEntityId: {
+        projectId_fromEntityType_fromEntityId_relationType_toEntityType_toEntityId: {
+          projectId: DEFAULT_PROJECT_ID,
           fromEntityType: fromEntity.entityType,
           fromEntityId: body.fromEntityId,
           relationType: body.relationType as RelationType,
@@ -190,6 +192,7 @@ export async function POST(request: NextRequest) {
           toEntityType: toEntity.entityType,
           toEntityId: body.toEntityId,
           relationType: body.relationType as RelationType,
+          projectId: DEFAULT_PROJECT_ID,
         },
       });
 
@@ -200,6 +203,7 @@ export async function POST(request: NextRequest) {
           entityType: fromEntity.entityType,
           entityId: body.fromEntityId,
           actor: "human",
+          projectId: DEFAULT_PROJECT_ID,
           details: {
             relationType: body.relationType,
             fromEntityId: body.fromEntityId,
@@ -296,7 +300,8 @@ export async function DELETE(request: NextRequest) {
     // Check if relationship exists
     const existingRelation = await prisma.entityRelation.findUnique({
       where: {
-        fromEntityType_fromEntityId_relationType_toEntityType_toEntityId: {
+        projectId_fromEntityType_fromEntityId_relationType_toEntityType_toEntityId: {
+          projectId: DEFAULT_PROJECT_ID,
           fromEntityType: fromEntity.entityType,
           fromEntityId: body.fromEntityId,
           relationType: body.relationType as RelationType,
@@ -315,7 +320,8 @@ export async function DELETE(request: NextRequest) {
       // Delete exactly one EntityRelation row using composite unique key
       await tx.entityRelation.delete({
         where: {
-          fromEntityType_fromEntityId_relationType_toEntityType_toEntityId: {
+          projectId_fromEntityType_fromEntityId_relationType_toEntityType_toEntityId: {
+            projectId: DEFAULT_PROJECT_ID,
             fromEntityType: fromEntity.entityType,
             fromEntityId: body.fromEntityId,
             relationType: body.relationType as RelationType,
@@ -332,6 +338,7 @@ export async function DELETE(request: NextRequest) {
           entityType: fromEntity.entityType,
           entityId: body.fromEntityId,
           actor: "human",
+          projectId: DEFAULT_PROJECT_ID,
           details: {
             relationType: body.relationType,
             fromEntityId: body.fromEntityId,

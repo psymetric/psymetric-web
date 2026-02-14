@@ -1,8 +1,10 @@
 /**
+ * GET /api/entities/[id] — Read single entity
  * PATCH /api/entities/[id] — Update allowlisted editorial fields only
  *
- * Phase 1 deterministic update endpoint
- * - Updates only allowlisted fields: title, summary, contentRef, canonicalUrl
+ * Phase 1 deterministic endpoints
+ * - GET returns full entity object
+ * - PATCH updates only allowlisted fields: title, summary, contentRef, canonicalUrl, difficulty, repoUrl
  * - No lifecycle transitions, no status changes, no publish logic
  * - Strict validation and logging
  */
@@ -14,11 +16,52 @@ import {
   notFound,
   serverError,
 } from "@/lib/api-response";
-import { logEvent } from "@/lib/events";
-import { isNonEmptyString } from "@/lib/validation";
+import { isNonEmptyString, isValidEnum, isValidUrl, VALID_DIFFICULTIES } from "@/lib/validation";
+
+// UUID validation regex
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+// =============================================================================
+// GET /api/entities/[id]
+// =============================================================================
+
+export async function GET(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await context.params;
+
+    if (!id || typeof id !== "string") {
+      return badRequest("Invalid id parameter");
+    }
+
+    if (!UUID_RE.test(id)) {
+      return badRequest("id must be a valid UUID");
+    }
+
+    const entity = await prisma.entity.findUnique({
+      where: { id },
+    });
+
+    if (!entity) {
+      return notFound("Entity not found");
+    }
+
+    return successResponse(entity);
+  } catch (error) {
+    console.error("GET /api/entities/[id] error:", error);
+    return serverError();
+  }
+}
+
+// =============================================================================
+// PATCH /api/entities/[id]
+// =============================================================================
 
 // Strict allowlist of updateable fields
-const ALLOWED_FIELDS = ["title", "summary", "contentRef", "canonicalUrl"] as const;
+const ALLOWED_FIELDS = ["title", "summary", "contentRef", "canonicalUrl", "difficulty", "repoUrl"] as const;
 type AllowedField = (typeof ALLOWED_FIELDS)[number];
 
 export async function PATCH(
@@ -31,9 +74,6 @@ export async function PATCH(
     if (!id || typeof id !== "string") {
       return badRequest("Invalid id parameter");
     }
-
-    const UUID_RE =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
     if (!UUID_RE.test(id)) {
       return badRequest("id must be a valid UUID");
@@ -93,27 +133,61 @@ export async function PATCH(
     }
 
     if (requestFields.canonicalUrl !== undefined) {
-      if (typeof requestFields.canonicalUrl !== "string" || !requestFields.canonicalUrl.startsWith("/")) {
-        return badRequest("canonicalUrl must be a string starting with '/'");
+      if (typeof requestFields.canonicalUrl !== "string") {
+        return badRequest("canonicalUrl must be a string");
+      }
+      // Accept paths (/foo/bar) or full URLs (https://...)
+      if (!requestFields.canonicalUrl.startsWith("/") && !requestFields.canonicalUrl.startsWith("https://")) {
+        return badRequest("canonicalUrl must start with '/' or 'https://'");
       }
       data.canonicalUrl = requestFields.canonicalUrl;
     }
 
-    // Check if entity exists and update
-    const updatedEntity = await prisma.entity.update({
+    if (requestFields.difficulty !== undefined) {
+      if (typeof requestFields.difficulty !== "string" || !isValidEnum(requestFields.difficulty, VALID_DIFFICULTIES)) {
+        return badRequest("difficulty must be one of: " + VALID_DIFFICULTIES.join(", "));
+      }
+      data.difficulty = requestFields.difficulty;
+    }
+
+    if (requestFields.repoUrl !== undefined) {
+      if (typeof requestFields.repoUrl !== "string" || !isValidUrl(requestFields.repoUrl)) {
+        return badRequest("repoUrl must be a valid URL");
+      }
+      data.repoUrl = requestFields.repoUrl;
+    }
+
+    // Transactional update + event log (atomic)
+    // Load entity to get projectId for event log
+    const existingEntity = await prisma.entity.findUnique({
       where: { id },
-      data,
+      select: { id: true, projectId: true },
     });
 
-    // Log update event
-    await logEvent({
-      eventType: "ENTITY_UPDATED",
-      entityType: updatedEntity.entityType as "guide" | "concept" | "project" | "news",
-      entityId: updatedEntity.id,
-      actor: "human",
-      details: {
-        updatedFields: Object.keys(data),
-      },
+    if (!existingEntity) {
+      return notFound("Entity not found");
+    }
+
+    const updatedEntity = await prisma.$transaction(async (tx) => {
+      const entity = await tx.entity.update({
+        where: { id },
+        data,
+      });
+
+      await tx.eventLog.create({
+        data: {
+          eventType: "ENTITY_UPDATED",
+          entityType: entity.entityType,
+          entityId: entity.id,
+          actor: "human",
+          projectId: existingEntity.projectId,
+          details: {
+            updatedFields: Object.keys(data),
+          },
+        },
+      });
+
+      return entity;
     });
 
     return successResponse(updatedEntity);

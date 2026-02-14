@@ -1,7 +1,6 @@
-// PsyMetric Prisma Schema — Sprint 1: Source Inbox
+// PsyMetric Prisma Schema — Multi-Project Scoping
 // Derived from: DB-ARCHITECTURE-PLAN.md, 07-RELATIONSHIP-AND-EVENT-VOCABULARY.md
-// Only entities required for Source Inbox are fully modeled here.
-// Future sprints will add remaining entities.
+// Project scoping: every domain entity belongs to exactly one Project.
 
 generator client {
   provider = "prisma-client-js"
@@ -156,6 +155,31 @@ enum MetricType {
 }
 
 // =============================================================================
+// Project — Multi-project scoping
+// Every domain entity belongs to exactly one project.
+// =============================================================================
+
+model Project {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Reverse relations
+  entities           Entity[]
+  sourceItems        SourceItem[]
+  sourceFeeds        SourceFeed[]
+  entityRelations    EntityRelation[]
+  eventLogs          EventLog[]
+  videos             Video[]
+  distributionEvents DistributionEvent[]
+  metricSnapshots    MetricSnapshot[]
+  draftArtifacts     DraftArtifact[]
+}
+
+// =============================================================================
 // Source & Capture Entities
 // =============================================================================
 
@@ -178,10 +202,13 @@ model SourceItem {
   sourceFeedId   String?          @db.Uuid
   sourceFeed     SourceFeed?      @relation(fields: [sourceFeedId], references: [id], onDelete: SetNull)
 
+  projectId      String           @db.Uuid
+  project        Project          @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
-  @@index([status, capturedAt])
+  @@index([projectId, status, capturedAt])
   @@index([sourceType, platform])
 }
 
@@ -192,10 +219,16 @@ model SourceFeed {
   platform      Platform
   platformLabel String?
   isActive      Boolean    @default(true)
+
+  projectId     String     @db.Uuid
+  project       Project    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
   sourceItems   SourceItem[]
+
+  @@index([projectId])
 }
 
 // =============================================================================
@@ -221,6 +254,10 @@ model Entity {
   contentRef        String?
   publishedAt       DateTime?
   archivedAt        DateTime?
+
+  projectId         String            @db.Uuid
+  project           Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
@@ -228,8 +265,8 @@ model Entity {
   distributionEvents DistributionEvent[]
   metricSnapshots    MetricSnapshot[]
 
-  @@unique([entityType, slug])
-  @@index([entityType, status])
+  @@unique([projectId, entityType, slug])
+  @@index([projectId, entityType, status, createdAt])
 }
 
 // =============================================================================
@@ -244,15 +281,20 @@ model EntityRelation {
   toEntityId     String       @db.Uuid
   relationType   RelationType
   notes          String?
+
+  projectId      String       @db.Uuid
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
   createdAt      DateTime     @default(now())
 
-  @@unique([fromEntityType, fromEntityId, relationType, toEntityType, toEntityId])
-  @@index([fromEntityType, fromEntityId])
-  @@index([toEntityType, toEntityId])
+  @@unique([projectId, fromEntityType, fromEntityId, relationType, toEntityType, toEntityId])
+  @@index([projectId, fromEntityId])
+  @@index([projectId, toEntityId])
 }
 
 // =============================================================================
 // Event Log — append-only, from DB-ARCHITECTURE-PLAN.md
+// projectId added directly to avoid joins for project-scoped audit queries.
 // =============================================================================
 
 model EventLog {
@@ -262,8 +304,13 @@ model EventLog {
   entityId   String    @db.Uuid
   actor      ActorType
   details    Json?
+
+  projectId  String    @db.Uuid
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
   timestamp  DateTime  @default(now())
 
+  @@index([projectId, timestamp, id])
   @@index([entityType, entityId, timestamp])
 }
 
@@ -281,10 +328,14 @@ model Video {
   archivedAt        DateTime?
   primaryEntityType ContentEntityType
   primaryEntityId   String            @db.Uuid
+
+  projectId         String            @db.Uuid
+  project           Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
-  @@index([primaryEntityType, primaryEntityId])
+  @@index([projectId, primaryEntityType, primaryEntityId])
   @@index([status])
   @@index([platform])
 }
@@ -306,10 +357,14 @@ model DraftArtifact {
   llmMeta      Json?
   expiresAt    DateTime
   deletedAt    DateTime?
+
+  projectId    String              @db.Uuid
+  project      Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
 
-  @@index([kind, status])
+  @@index([projectId, kind, status])
   @@index([sourceItemId, kind])
   @@index([expiresAt, deletedAt])
 }
@@ -328,13 +383,17 @@ model DistributionEvent {
   archivedAt        DateTime?
   primaryEntityType ContentEntityType
   primaryEntityId   String            @db.Uuid
+
+  projectId         String            @db.Uuid
+  project           Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
   // Relations
   primaryEntity     Entity?           @relation(fields: [primaryEntityId], references: [id], onDelete: Restrict)
 
-  @@index([primaryEntityType, primaryEntityId])
+  @@index([projectId, primaryEntityType, primaryEntityId])
   @@index([status])
   @@index([platform])
 }
@@ -353,17 +412,22 @@ model MetricSnapshot {
   entityType  ContentEntityType
   entityId    String            @db.Uuid
   notes       String?
+
+  projectId   String            @db.Uuid
+  project     Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
   createdAt   DateTime          @default(now())
 
   // Relations
   entity      Entity?           @relation(fields: [entityId], references: [id], onDelete: Restrict)
 
-  @@index([metricType, capturedAt])
-  @@index([entityType, entityId, capturedAt])
+  @@index([projectId, metricType, capturedAt])
+  @@index([projectId, entityType, entityId, capturedAt])
 }
 
 // =============================================================================
 // System Config — from DB-ARCHITECTURE-PLAN.md
+// Intentionally NOT project-scoped. Global system configuration.
 // =============================================================================
 
 model SystemConfig {

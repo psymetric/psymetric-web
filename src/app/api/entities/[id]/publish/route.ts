@@ -15,7 +15,6 @@ import {
   unauthorized,
   serverError,
 } from "@/lib/api-response";
-import { logEvent } from "@/lib/events";
 
 export async function POST(
   request: NextRequest,
@@ -47,6 +46,7 @@ export async function POST(
         slug: true,
         status: true,
         canonicalUrl: true,
+        projectId: true,
         updatedAt: true,
       },
     });
@@ -87,33 +87,38 @@ export async function POST(
       canonicalUrl = urlMap[entity.entityType as keyof typeof urlMap];
     }
 
-    // Update entity to published status
-    const updatedEntity = await prisma.entity.update({
-      where: { id },
-      data: {
-        status: "published",
-        publishedAt: now,
-        canonicalUrl,
-      },
-    });
-
     // Prepare event details
     const eventDetails: { from: string; to: string; canonicalUrl?: string } = {
       from: "publish_requested",
       to: "published",
     };
-    
     if (canonicalUrl) {
       eventDetails.canonicalUrl = canonicalUrl;
     }
 
-    // Log publish event
-    await logEvent({
-      eventType: "ENTITY_PUBLISHED",
-      entityType: entity.entityType as "guide" | "concept" | "project" | "news",
-      entityId: entity.id,
-      actor: "human",
-      details: eventDetails,
+    // Transactional publish + event log (atomic)
+    const updatedEntity = await prisma.$transaction(async (tx) => {
+      const updated = await tx.entity.update({
+        where: { id },
+        data: {
+          status: "published",
+          publishedAt: now,
+          canonicalUrl,
+        },
+      });
+
+      await tx.eventLog.create({
+        data: {
+          eventType: "ENTITY_PUBLISHED",
+          entityType: entity.entityType,
+          entityId: entity.id,
+          actor: "human",
+          projectId: entity.projectId,
+          details: eventDetails,
+        },
+      });
+
+      return updated;
     });
 
     return successResponse({

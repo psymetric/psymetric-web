@@ -14,8 +14,8 @@ import {
   errorResponse,
   serverError,
 } from "@/lib/api-response";
-import { logEvent } from "@/lib/events";
 import { validateEntityForPublish } from "@/lib/entity-validation";
+import type { Prisma } from "@prisma/client";
 
 export async function POST(
   request: NextRequest,
@@ -39,6 +39,7 @@ export async function POST(
         repoUrl: true,
         contentRef: true,
         status: true,
+        projectId: true,
         updatedAt: true,
       },
     });
@@ -60,16 +61,21 @@ export async function POST(
     const validation = await validateEntityForPublish({ entity });
 
     if (validation.status === "fail") {
-      // Log validation failure event
-      await logEvent({
-        eventType: "ENTITY_VALIDATION_FAILED",
-        entityType: entity.entityType as "guide" | "concept" | "project" | "news",
-        entityId: entity.id,
-        actor: "human",
-        details: {
-          status: validation.status,
-          categories: validation.categories,
-          errors: validation.errors,
+      // Log validation failure event (no state change, so standalone is acceptable)
+      const details = {
+        status: validation.status,
+        categories: validation.categories,
+        errors: validation.errors,
+      } as unknown as Prisma.InputJsonValue;
+
+      await prisma.eventLog.create({
+        data: {
+          eventType: "ENTITY_VALIDATION_FAILED",
+          entityType: entity.entityType,
+          entityId: entity.id,
+          actor: "human",
+          projectId: entity.projectId,
+          details,
         },
       });
 
@@ -82,24 +88,30 @@ export async function POST(
       );
     }
 
-    // Update entity status to publish_requested
-    const updatedEntity = await prisma.entity.update({
-      where: { id },
-      data: {
-        status: "publish_requested",
-      },
-    });
+    // Transactional status update + event log (atomic)
+    const updatedEntity = await prisma.$transaction(async (tx) => {
+      const updated = await tx.entity.update({
+        where: { id },
+        data: {
+          status: "publish_requested",
+        },
+      });
 
-    // Log publish request event
-    await logEvent({
-      eventType: "ENTITY_PUBLISH_REQUESTED",
-      entityType: entity.entityType as "guide" | "concept" | "project" | "news",
-      entityId: entity.id,
-      actor: "human",
-      details: {
-        from: "draft",
-        to: "publish_requested",
-      },
+      await tx.eventLog.create({
+        data: {
+          eventType: "ENTITY_PUBLISH_REQUESTED",
+          entityType: entity.entityType,
+          entityId: entity.id,
+          actor: "human",
+          projectId: entity.projectId,
+          details: {
+            from: "draft",
+            to: "publish_requested",
+          },
+        },
+      });
+
+      return updated;
     });
 
     return successResponse({

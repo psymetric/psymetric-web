@@ -14,7 +14,6 @@ import {
   errorResponse,
   serverError,
 } from "@/lib/api-response";
-import { logEvent } from "@/lib/events";
 
 export async function POST(
   request: NextRequest,
@@ -45,6 +44,7 @@ export async function POST(
         id: true,
         entityType: true,
         status: true,
+        projectId: true,
         updatedAt: true,
       },
     });
@@ -62,30 +62,36 @@ export async function POST(
       );
     }
 
-    // Update entity status back to draft
-    const updatedEntity = await prisma.entity.update({
-      where: { id },
-      data: {
-        status: "draft",
-      },
-    });
-
-    // Log rejection event
+    // Prepare event details
     const eventDetails: { from: string; to: string; reason?: string } = {
       from: "publish_requested",
       to: "draft",
     };
-    
     if (reason) {
       eventDetails.reason = reason;
     }
 
-    await logEvent({
-      eventType: "ENTITY_PUBLISH_REJECTED",
-      entityType: entity.entityType as "guide" | "concept" | "project" | "news",
-      entityId: entity.id,
-      actor: "human",
-      details: eventDetails,
+    // Transactional reject + event log (atomic)
+    const updatedEntity = await prisma.$transaction(async (tx) => {
+      const updated = await tx.entity.update({
+        where: { id },
+        data: {
+          status: "draft",
+        },
+      });
+
+      await tx.eventLog.create({
+        data: {
+          eventType: "ENTITY_PUBLISH_REJECTED",
+          entityType: entity.entityType,
+          entityId: entity.id,
+          actor: "human",
+          projectId: entity.projectId,
+          details: eventDetails,
+        },
+      });
+
+      return updated;
     });
 
     return successResponse({

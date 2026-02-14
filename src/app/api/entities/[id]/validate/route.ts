@@ -14,8 +14,8 @@ import {
   badRequest,
   serverError,
 } from "@/lib/api-response";
-import { logEvent } from "@/lib/events";
 import { validateEntityForPublish } from "@/lib/entity-validation";
+import type { Prisma } from "@prisma/client";
 
 export async function POST(
   request: NextRequest,
@@ -38,6 +38,7 @@ export async function POST(
         slug: true,
         repoUrl: true,
         contentRef: true,
+        projectId: true,
       },
     });
 
@@ -48,17 +49,20 @@ export async function POST(
     // Run validation
     const validation = await validateEntityForPublish({ entity });
 
-    // Log validation failure event if needed
+    // Log validation failure event if needed (no state change, standalone is safe)
     if (validation.status === "fail") {
-      await logEvent({
-        eventType: "ENTITY_VALIDATION_FAILED",
-        entityType: entity.entityType as "guide" | "concept" | "project" | "news",
-        entityId: entity.id,
-        actor: "human",
-        details: {
-          status: validation.status,
-          categories: validation.categories,
-          errors: validation.errors,
+      await prisma.eventLog.create({
+        data: {
+          eventType: "ENTITY_VALIDATION_FAILED",
+          entityType: entity.entityType,
+          entityId: entity.id,
+          actor: "human",
+          projectId: entity.projectId,
+          details: ({
+            status: validation.status,
+            categories: validation.categories,
+            errors: validation.errors,
+          } as unknown as Prisma.InputJsonValue),
         },
       });
     }

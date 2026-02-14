@@ -7,14 +7,10 @@
  * Handles PATCH calls to /api/entities/[id] for allowlisted fields only.
  * No lifecycle actions, follows existing dashboard patterns.
  */
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-
-interface Toast {
-  id: number;
-  type: "success" | "error";
-  message: string;
-}
+import { useToast } from "@/lib/use-toast";
+import { ToastContainer } from "@/app/dashboard/toast-container";
 
 interface EntityEditorProps {
   id: string;
@@ -41,22 +37,7 @@ export function EntityEditor({
   
   // UI state
   const [saving, setSaving] = useState(false);
-  const [toasts, setToasts] = useState<Toast[]>([]);
-
-  // Toast helpers
-  const addToast = useCallback((type: "success" | "error", message: string) => {
-    const id = Date.now();
-    setToasts((prev) => [...prev, { id, type, message }]);
-    if (type === "success") {
-      setTimeout(() => {
-        setToasts((prev) => prev.filter((t) => t.id !== id));
-      }, 3000);
-    }
-  }, []);
-
-  const dismissToast = useCallback((id: number) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
+  const { toasts, addToast, dismissToast } = useToast();
 
   // Dirty check - has anything changed from initial values?
   const hasChanges = 
@@ -126,29 +107,7 @@ export function EntityEditor({
 
   return (
     <>
-      {/* Toast container */}
-      {toasts.length > 0 && (
-        <div className="fixed top-4 right-4 z-50 flex flex-col gap-2">
-          {toasts.map((toast) => (
-            <div
-              key={toast.id}
-              className={`flex items-center gap-3 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium ${
-                toast.type === "success"
-                  ? "bg-green-600 text-white"
-                  : "bg-red-600 text-white"
-              }`}
-            >
-              <span>{toast.message}</span>
-              <button
-                onClick={() => dismissToast(toast.id)}
-                className="text-white/80 hover:text-white"
-              >
-                ✕
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       <div className="bg-white border border-gray-200 rounded-lg p-6">
         <div className="mb-6">

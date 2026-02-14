@@ -979,7 +979,8 @@ function PromoteModal({
     e.preventDefault();
     setSubmitting(true);
     try {
-      const entityRes = await fetch("/api/entities", {
+      // Single atomic endpoint: entity + relationship + status update
+      const res = await fetch(`/api/source-items/${sourceItem.id}/promote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -988,41 +989,10 @@ function PromoteModal({
           ...(entityType === "concept" ? { conceptKind } : {}),
         }),
       });
-      if (!entityRes.ok) {
-        const err = await entityRes.json();
-        throw new Error(err.error?.message || "Failed to create entity");
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error?.message || "Promote failed");
       }
-      const entityData = await entityRes.json();
-      const newEntityId = entityData.data.id;
-
-      const relationType = SOURCE_RELATION_TYPES[entityType];
-      if (relationType) {
-        const relRes = await fetch("/api/relationships", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fromEntityType: entityType,
-            fromEntityId: newEntityId,
-            toEntityType: "sourceItem",
-            toEntityId: sourceItem.id,
-            relationType,
-          }),
-        });
-        if (!relRes.ok) {
-          const err = await relRes.json();
-          onError(
-            `Entity created but relationship failed: ${err.error?.message || "Unknown error"}. ` +
-            `You can attach the source manually.`
-          );
-          return;
-        }
-      }
-
-      await fetch(`/api/source-items/${sourceItem.id}/status`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "used" }),
-      });
 
       onSuccess();
     } catch (err) {

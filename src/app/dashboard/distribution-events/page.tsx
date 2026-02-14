@@ -1,108 +1,111 @@
 /**
- * Entity List Page
- * Phase 2A — Dashboard entity list with deterministic filtering + pagination
+ * Distribution Events List Page
+ * Phase 2C.1 — Dashboard distribution events list with deterministic filtering + pagination
  *
- * Read-only list of entities mirroring GET /api/entities filtering contract.
+ * Read-only list of distribution events mirroring GET /api/distribution-events filtering contract.
  * No client components, no lifecycle actions, no schema changes.
  */
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import {
   isValidEnum,
-  VALID_CONTENT_ENTITY_TYPES,
+  VALID_PLATFORMS,
   VALID_ENTITY_STATUSES,
 } from "@/lib/validation";
 import type { Prisma } from "@prisma/client";
-import { EntityFilters } from "./entity-filters";
 
 interface SearchParams {
-  entityType?: string;
+  platform?: string;
+  primaryEntityId?: string;
   status?: string;
-  search?: string;
   page?: string;
   limit?: string;
 }
 
-async function getEntities(searchParams: SearchParams) {
+// UUID validation regex
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function getDistributionEvents(searchParams: SearchParams) {
   // Parse pagination
   const page = Math.max(1, parseInt(searchParams.page || "1", 10));
   const limit = Math.min(50, Math.max(1, parseInt(searchParams.limit || "20", 10)));
   const skip = (page - 1) * limit;
 
-  // Build where clause - mirror GET /api/entities exactly
-  const where: Prisma.EntityWhereInput = {};
+  // Build where clause - mirror GET /api/distribution-events exactly
+  const where: Prisma.DistributionEventWhereInput = {};
 
-  // Validate and apply entityType filter
-  const entityType = searchParams.entityType;
-  if (entityType) {
-    if (!isValidEnum(entityType, VALID_CONTENT_ENTITY_TYPES)) {
-      return { error: `Invalid entityType: ${entityType}`, entities: [], total: 0, pagination: { page, limit, skip } };
+  // Validate and apply platform filter
+  const platform = searchParams.platform;
+  if (platform) {
+    if (!isValidEnum(platform, VALID_PLATFORMS)) {
+      return { error: `Invalid platform: ${platform}`, distributionEvents: [], total: 0, pagination: { page, limit, skip } };
     }
-    where.entityType = entityType;
+    where.platform = platform;
   }
 
   // Validate and apply status filter
   const status = searchParams.status;
   if (status) {
     if (!isValidEnum(status, VALID_ENTITY_STATUSES)) {
-      return { error: `Invalid status: ${status}`, entities: [], total: 0, pagination: { page, limit, skip } };
+      return { error: `Invalid status: ${status}`, distributionEvents: [], total: 0, pagination: { page, limit, skip } };
     }
     where.status = status;
   }
 
-  // Apply search filter - matches title OR slug, case-insensitive
-  const search = searchParams.search;
-  if (search) {
-    where.OR = [
-      { title: { contains: search, mode: "insensitive" } },
-      { slug: { contains: search, mode: "insensitive" } },
-    ];
+  // Validate and apply primaryEntityId filter
+  const primaryEntityId = searchParams.primaryEntityId;
+  if (primaryEntityId) {
+    if (!UUID_RE.test(primaryEntityId)) {
+      return { error: `Invalid primaryEntityId: must be a valid UUID`, distributionEvents: [], total: 0, pagination: { page, limit, skip } };
+    }
+    where.primaryEntityId = primaryEntityId;
   }
 
   try {
-    const [entities, total] = await Promise.all([
-      prisma.entity.findMany({
+    const [distributionEvents, total] = await Promise.all([
+      prisma.distributionEvent.findMany({
         where,
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        orderBy: [{ publishedAt: "desc" }, { id: "desc" }],
         skip,
         take: limit,
         select: {
           id: true,
-          title: true,
-          entityType: true,
+          platform: true,
+          primaryEntityId: true,
+          externalUrl: true,
           status: true,
-          slug: true,
+          publishedAt: true,
           createdAt: true,
-          updatedAt: true,
         },
       }),
-      prisma.entity.count({ where }),
+      prisma.distributionEvent.count({ where }),
     ]);
 
     return {
-      entities,
+      distributionEvents,
       total,
       pagination: { page, limit, skip },
       error: null,
     };
   } catch (error) {
-    console.error("Error fetching entities:", error);
-    return { error: "Failed to fetch entities", entities: [], total: 0, pagination: { page, limit, skip } };
+    console.error("Error fetching distribution events:", error);
+    return { error: "Failed to fetch distribution events", distributionEvents: [], total: 0, pagination: { page, limit, skip } };
   }
 }
 
 function buildPaginationUrl(searchParams: SearchParams, newPage: number) {
   const params = new URLSearchParams();
   
-  if (searchParams.entityType) params.set("entityType", searchParams.entityType);
+  if (searchParams.platform) params.set("platform", searchParams.platform);
   if (searchParams.status) params.set("status", searchParams.status);
-  if (searchParams.search) params.set("search", searchParams.search);
+  if (searchParams.primaryEntityId) params.set("primaryEntityId", searchParams.primaryEntityId);
   if (searchParams.limit && searchParams.limit !== "20") params.set("limit", searchParams.limit);
   
   params.set("page", newPage.toString());
   
   const query = params.toString();
-  return query ? `/dashboard/entities?${query}` : `/dashboard/entities`;
+  return query ? `/dashboard/distribution-events?${query}` : `/dashboard/distribution-events`;
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -124,35 +127,26 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-export default async function EntitiesPage({
+export default async function DistributionEventsPage({
   searchParams: searchParamsPromise,
 }: {
   searchParams: Promise<SearchParams>;
 }) {
   const searchParams = await searchParamsPromise;
-  const { entities, total, pagination, error } = await getEntities(searchParams);
+  const { distributionEvents, total, pagination, error } = await getDistributionEvents(searchParams);
   
-  const hasResults = entities.length > 0;
+  const hasResults = distributionEvents.length > 0;
   const hasPrevious = pagination.page > 1;
-  const hasNext = pagination.skip + entities.length < total;
+  const hasNext = pagination.skip + distributionEvents.length < total;
 
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">Entity Library</h1>
+        <h1 className="text-2xl font-semibold text-gray-900">Distribution Events</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Browse and manage content entities across all types and statuses.
+          Browse and track content distribution events across all platforms.
         </p>
       </div>
-
-      {/* Filter Form */}
-      <EntityFilters
-        key={`${searchParams.entityType || "all"}-${searchParams.status || "all"}-${searchParams.search || ""}-${searchParams.limit || "20"}`}
-        entityType={searchParams.entityType}
-        status={searchParams.status}
-        search={searchParams.search}
-        limit={searchParams.limit}
-      />
 
       {/* Error message */}
       {error && (
@@ -162,13 +156,13 @@ export default async function EntitiesPage({
       )}
 
       {/* Filters summary */}
-      {(searchParams.entityType || searchParams.status || searchParams.search) && (
+      {(searchParams.platform || searchParams.status || searchParams.primaryEntityId) && (
         <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
           <div className="flex items-center gap-4 text-sm text-blue-800">
             <span className="font-medium">Active filters:</span>
-            {searchParams.entityType && (
+            {searchParams.platform && (
               <span className="bg-blue-200 px-2 py-1 rounded">
-                Type: {searchParams.entityType}
+                Platform: {searchParams.platform}
               </span>
             )}
             {searchParams.status && (
@@ -176,13 +170,13 @@ export default async function EntitiesPage({
                 Status: {searchParams.status}
               </span>
             )}
-            {searchParams.search && (
+            {searchParams.primaryEntityId && (
               <span className="bg-blue-200 px-2 py-1 rounded">
-                Search: &quot;{searchParams.search}&quot;
+                Entity ID: {searchParams.primaryEntityId.substring(0, 8)}...
               </span>
             )}
             <Link 
-              href="/dashboard/entities"
+              href="/dashboard/distribution-events"
               className="text-blue-600 hover:text-blue-800 underline"
             >
               Clear filters
@@ -195,67 +189,98 @@ export default async function EntitiesPage({
       <div className="mb-4">
         <p className="text-sm text-gray-600">
           {error ? (
-            "Unable to load entities"
+            "Unable to load distribution events"
           ) : hasResults ? (
             <>
-              Showing {pagination.skip + 1}–{pagination.skip + entities.length} of {total} entities
+              Showing {pagination.skip + 1}–{pagination.skip + distributionEvents.length} of {total} distribution events
             </>
           ) : (
-            total === 0 ? "No entities found" : "No results match your filters"
+            total === 0 ? "No distribution events found" : "No results match your filters"
           )}
         </p>
       </div>
 
-      {/* Entity list */}
+      {/* Distribution events list */}
       {hasResults ? (
         <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Title
+                  Platform
                 </th>
                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Type
+                  Primary Entity
+                </th>
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  External URL
                 </th>
                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Status
                 </th>
                 <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Updated
+                  Published At
+                </th>
+                <th className="text-left px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Created At
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {entities.map((entity) => (
-                <tr key={entity.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4">
-                    <div>
-                      <Link
-                        href={`/dashboard/entities/${entity.id}`}
-                        className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline"
-                      >
-                        {entity.title}
-                      </Link>
-                      <p className="text-xs text-gray-500 mt-1 font-mono">
-                        {entity.slug}
-                      </p>
-                    </div>
-                  </td>
+              {distributionEvents.map((distributionEvent) => (
+                <tr key={distributionEvent.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4">
                     <span className="text-sm text-gray-900 capitalize">
-                      {entity.entityType}
+                      {distributionEvent.platform}
                     </span>
                   </td>
                   <td className="px-6 py-4">
-                    <StatusBadge status={entity.status} />
+                    {UUID_RE.test(distributionEvent.primaryEntityId) ? (
+                      <Link
+                        href={`/dashboard/entities/${distributionEvent.primaryEntityId}`}
+                        className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline font-mono"
+                      >
+                        {distributionEvent.primaryEntityId}
+                      </Link>
+                    ) : (
+                      <span className="text-sm text-gray-900 font-mono">
+                        {distributionEvent.primaryEntityId}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4">
+                    <a
+                      href={distributionEvent.externalUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-blue-600 hover:text-blue-800 hover:underline max-w-xs truncate block"
+                    >
+                      {distributionEvent.externalUrl}
+                    </a>
+                  </td>
+                  <td className="px-6 py-4">
+                    <StatusBadge status={distributionEvent.status} />
+                  </td>
+                  <td className="px-6 py-4">
+                    {distributionEvent.publishedAt ? (
+                      <>
+                        <span className="text-sm text-gray-900">
+                          {distributionEvent.publishedAt.toLocaleDateString()}
+                        </span>
+                        <p className="text-xs text-gray-500">
+                          {distributionEvent.publishedAt.toLocaleTimeString()}
+                        </p>
+                      </>
+                    ) : (
+                      <span className="text-sm text-gray-400 italic">Not published</span>
+                    )}
                   </td>
                   <td className="px-6 py-4">
                     <span className="text-sm text-gray-900">
-                      {entity.updatedAt.toLocaleDateString()}
+                      {distributionEvent.createdAt.toLocaleDateString()}
                     </span>
                     <p className="text-xs text-gray-500">
-                      {entity.updatedAt.toLocaleTimeString()}
+                      {distributionEvent.createdAt.toLocaleTimeString()}
                     </p>
                   </td>
                 </tr>
@@ -266,11 +291,11 @@ export default async function EntitiesPage({
       ) : (
         !error && (
           <div className="bg-white border border-gray-200 rounded-lg p-8 text-center">
-            <p className="text-gray-500">No entities found.</p>
-            {(searchParams.entityType || searchParams.status || searchParams.search) && (
+            <p className="text-gray-500">No distribution events found.</p>
+            {(searchParams.platform || searchParams.status || searchParams.primaryEntityId) && (
               <p className="text-sm text-gray-400 mt-2">
                 Try adjusting your filters or{" "}
-                <Link href="/dashboard/entities" className="text-blue-600 hover:underline">
+                <Link href="/dashboard/distribution-events" className="text-blue-600 hover:underline">
                   clear all filters
                 </Link>
                 .

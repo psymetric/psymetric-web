@@ -62,6 +62,7 @@ export async function POST(request: NextRequest) {
         select: {
           id: true,
           sourceItemId: true,
+          projectId: true,
         },
         orderBy: {
           expiresAt: "asc",
@@ -93,6 +94,7 @@ export async function POST(request: NextRequest) {
               entityType: "sourceItem",
               entityId: d.sourceItemId!,
               actor: "system",
+              projectId: d.projectId,
               details: {
                 draftId: d.id,
               },

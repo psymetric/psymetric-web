@@ -17,7 +17,6 @@ import {
   notFound,
   serverError,
 } from "@/lib/api-response";
-import { logEvent } from "@/lib/events";
 import {
   isValidEnum,
   VALID_SOURCE_ITEM_STATUSES,
@@ -63,22 +62,29 @@ export async function PUT(
       updateData.notes = existingNotes + triageNote;
     }
 
-    const updated = await prisma.sourceItem.update({
-      where: { id },
-      data: updateData,
-    });
+    // Transactional status update + event log (atomic)
+    const updated = await prisma.$transaction(async (tx) => {
+      const item = await tx.sourceItem.update({
+        where: { id },
+        data: updateData,
+      });
 
-    // --- Log SOURCE_TRIAGED event ---
-    await logEvent({
-      eventType: "SOURCE_TRIAGED",
-      entityType: "sourceItem",
-      entityId: id,
-      actor: "human",
-      details: {
-        previousStatus: existing.status,
-        newStatus: body.status,
-        ...(body.notes ? { notes: body.notes } : {}),
-      },
+      await tx.eventLog.create({
+        data: {
+          eventType: "SOURCE_TRIAGED",
+          entityType: "sourceItem",
+          entityId: id,
+          actor: "human",
+          projectId: existing.projectId,
+          details: {
+            previousStatus: existing.status,
+            newStatus: body.status,
+            ...(body.notes ? { notes: body.notes } : {}),
+          },
+        },
+      });
+
+      return item;
     });
 
     return successResponse({

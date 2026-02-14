@@ -17,7 +17,6 @@ import {
   badRequest,
   serverError,
 } from "@/lib/api-response";
-import { logEvent } from "@/lib/events";
 import {
   isValidEnum,
   isValidUrl,
@@ -26,6 +25,7 @@ import {
   VALID_SOURCE_TYPES,
   VALID_PLATFORMS,
 } from "@/lib/validation";
+import { DEFAULT_PROJECT_ID } from "@/lib/project";
 
 export async function POST(request: NextRequest) {
   try {
@@ -62,31 +62,33 @@ export async function POST(request: NextRequest) {
     });
 
     if (existing) {
-      // --- Recapture: URL already exists ---
+      // --- Recapture: URL already exists --- (transactional)
+      await prisma.$transaction(async (tx) => {
+        if (body.notes) {
+          const existingNotes = existing.notes || "";
+          const recaptureNote = `\n\n[Recapture ${new Date().toISOString()}]: ${body.notes}`;
+          await tx.sourceItem.update({
+            where: { id: existing.id },
+            data: { notes: existingNotes + recaptureNote },
+          });
+        }
 
-      // Append notes if provided (same pattern as triage route)
-      if (body.notes) {
-        const existingNotes = existing.notes || "";
-        const recaptureNote = `\n\n[Recapture ${new Date().toISOString()}]: ${body.notes}`;
-        await prisma.sourceItem.update({
-          where: { id: existing.id },
-          data: { notes: existingNotes + recaptureNote },
+        await tx.eventLog.create({
+          data: {
+            eventType: "SOURCE_CAPTURED",
+            entityType: "sourceItem",
+            entityId: existing.id,
+            actor: "human",
+            projectId: DEFAULT_PROJECT_ID,
+            details: {
+              recapture: true,
+              sourceType: body.sourceType,
+              url: body.url,
+              operatorIntent: body.operatorIntent,
+              ...(body.notes ? { notes: body.notes } : {}),
+            },
+          },
         });
-      }
-
-      // Log SOURCE_CAPTURED with recapture flag
-      await logEvent({
-        eventType: "SOURCE_CAPTURED",
-        entityType: "sourceItem",
-        entityId: existing.id,
-        actor: "human",
-        details: {
-          recapture: true,
-          sourceType: body.sourceType,
-          url: body.url,
-          operatorIntent: body.operatorIntent,
-          ...(body.notes ? { notes: body.notes } : {}),
-        },
       });
 
       return successResponse({
@@ -99,32 +101,40 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // --- New capture: URL does not exist ---
+    // --- New capture: URL does not exist --- (transactional)
     const contentHash = await generateContentHash(body.url);
 
-    const sourceItem = await prisma.sourceItem.create({
-      data: {
-        sourceType: body.sourceType,
-        platform: body.platform || "other",
-        url: body.url,
-        capturedBy: "human",
-        contentHash,
-        operatorIntent: body.operatorIntent,
-        notes: body.notes || null,
-        status: "ingested",
-      },
-    });
+    const sourceItem = await prisma.$transaction(async (tx) => {
+      const item = await tx.sourceItem.create({
+        data: {
+          sourceType: body.sourceType,
+          platform: body.platform || "other",
+          url: body.url,
+          capturedBy: "human",
+          contentHash,
+          operatorIntent: body.operatorIntent,
+          notes: body.notes || null,
+          status: "ingested",
+          projectId: DEFAULT_PROJECT_ID,
+        },
+      });
 
-    await logEvent({
-      eventType: "SOURCE_CAPTURED",
-      entityType: "sourceItem",
-      entityId: sourceItem.id,
-      actor: "human",
-      details: {
-        sourceType: sourceItem.sourceType,
-        url: sourceItem.url,
-        operatorIntent: body.operatorIntent,
-      },
+      await tx.eventLog.create({
+        data: {
+          eventType: "SOURCE_CAPTURED",
+          entityType: "sourceItem",
+          entityId: item.id,
+          actor: "human",
+          projectId: DEFAULT_PROJECT_ID,
+          details: {
+            sourceType: item.sourceType,
+            url: item.url,
+            operatorIntent: body.operatorIntent,
+          },
+        },
+      });
+
+      return item;
     });
 
     return createdResponse({

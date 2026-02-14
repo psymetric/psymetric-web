@@ -204,6 +204,7 @@ export async function POST(
             // llmModel and llmMeta can be populated later when a real LLM integration exists.
             expiresAt,
             deletedAt: null,
+            projectId: sourceItem.projectId,
           },
         })
       )
@@ -226,6 +227,7 @@ export async function POST(
       entityType: "sourceItem",
       entityId: sourceItem.id,
       actor: "llm",
+      projectId: sourceItem.projectId,
       details: {
         draftIds,
         count,

@@ -13,7 +13,6 @@ import {
   serverError,
   parsePagination,
 } from "@/lib/api-response";
-import { logEvent } from "@/lib/events";
 import {
   isValidEnum,
   isNonEmptyString,
@@ -24,6 +23,7 @@ import {
   VALID_CONCEPT_KINDS,
   VALID_DIFFICULTIES,
 } from "@/lib/validation";
+import { DEFAULT_PROJECT_ID } from "@/lib/project";
 import type { Prisma } from "@prisma/client";
 
 // =============================================================================
@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
     const [entities, total] = await Promise.all([
       prisma.entity.findMany({
         where,
-        orderBy: { updatedAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         skip,
         take: limit,
       }),
@@ -135,10 +135,11 @@ export async function POST(request: NextRequest) {
     // --- Generate slug if not provided ---
     const slug = body.slug || slugify(body.title);
 
-    // --- Check slug uniqueness within entity type ---
+    // --- Check slug uniqueness within project + entity type ---
     const existingSlug = await prisma.entity.findUnique({
       where: {
-        entityType_slug: {
+        projectId_entityType_slug: {
+          projectId: DEFAULT_PROJECT_ID,
           entityType: body.entityType,
           slug,
         },
@@ -148,44 +149,44 @@ export async function POST(request: NextRequest) {
       return badRequest(`Slug "${slug}" already exists for ${body.entityType}`);
     }
 
-    // --- Create entity ---
-    const entity = await prisma.entity.create({
-      data: {
-        entityType: body.entityType,
-        title: body.title,
-        slug,
-        summary: body.summary || null,
-        difficulty: body.difficulty || null,
-        conceptKind:
-          body.entityType === "concept"
-            ? body.conceptKind || "standard"
-            : null,
-        repoUrl: body.repoUrl || null,
-        status: "draft",
-      },
+    // --- Transactional create + event log (atomic) ---
+    const entity = await prisma.$transaction(async (tx) => {
+      const newEntity = await tx.entity.create({
+        data: {
+          entityType: body.entityType,
+          title: body.title,
+          slug,
+          summary: body.summary || null,
+          difficulty: body.difficulty || null,
+          conceptKind:
+            body.entityType === "concept"
+              ? body.conceptKind || "standard"
+              : null,
+          repoUrl: body.repoUrl || null,
+          status: "draft",
+          projectId: DEFAULT_PROJECT_ID,
+        },
+      });
+
+      await tx.eventLog.create({
+        data: {
+          eventType: "ENTITY_CREATED",
+          entityType: body.entityType,
+          entityId: newEntity.id,
+          actor: "human",
+          projectId: DEFAULT_PROJECT_ID,
+          details: {
+            title: newEntity.title,
+            slug: newEntity.slug,
+            ...(body.llmAssisted ? { llmAssisted: true } : {}),
+          },
+        },
+      });
+
+      return newEntity;
     });
 
-    // --- Log ENTITY_CREATED event ---
-    await logEvent({
-      eventType: "ENTITY_CREATED",
-      entityType: body.entityType,
-      entityId: entity.id,
-      actor: "human",
-      details: {
-        title: entity.title,
-        slug: entity.slug,
-        ...(body.llmAssisted ? { llmAssisted: true } : {}),
-      },
-    });
-
-    return createdResponse({
-      id: entity.id,
-      entityType: entity.entityType,
-      title: entity.title,
-      slug: entity.slug,
-      status: entity.status,
-      createdAt: entity.createdAt.toISOString(),
-    });
+    return createdResponse(entity);
   } catch (error) {
     console.error("POST /api/entities error:", error);
     return serverError();

@@ -9,6 +9,7 @@
  * Auth must be added before production deployment.
  */
 import React from "react";
+import Link from "next/link";
 
 export default function DashboardLayout({
   children,
@@ -26,19 +27,30 @@ export default function DashboardLayout({
                 PsyMetric
               </span>
               <div className="flex gap-4">
-                <a
+                <Link
                   href="/dashboard/inbox"
                   className="text-sm font-medium text-gray-700 hover:text-gray-900 px-2 py-1 rounded"
                 >
                   Source Inbox
-                </a>
-                {/* Future Sprint screens */}
-                <span className="text-sm text-gray-400 px-2 py-1">
+                </Link>
+                <Link
+                  href="/dashboard/entities"
+                  className="text-sm font-medium text-gray-700 hover:text-gray-900 px-2 py-1 rounded"
+                >
                   Entity Library
-                </span>
-                <span className="text-sm text-gray-400 px-2 py-1">
-                  Publish Queue
-                </span>
+                </Link>
+                <Link
+                  href="/dashboard/distribution-events"
+                  className="text-sm font-medium text-gray-700 hover:text-gray-900 px-2 py-1 rounded"
+                >
+                  Distribution
+                </Link>
+                <Link
+                  href="/dashboard/metric-snapshots"
+                  className="text-sm font-medium text-gray-700 hover:text-gray-900 px-2 py-1 rounded"
+                >
+                  Metrics
+                </Link>
               </div>
             </div>
           </div>

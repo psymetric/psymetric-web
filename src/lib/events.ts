@@ -13,6 +13,7 @@ export async function logEvent(params: {
   entityType: EntityType;
   entityId: string;
   actor: ActorType;
+  projectId: string;
   details?: Record<string, unknown>;
 }) {
   return prisma.eventLog.create({
@@ -21,6 +22,7 @@ export async function logEvent(params: {
       entityType: params.entityType,
       entityId: params.entityId,
       actor: params.actor,
+      projectId: params.projectId,
       details: (params.details ?? {}) as Prisma.InputJsonValue,
     },
   });
