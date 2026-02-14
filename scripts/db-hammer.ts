@@ -29,7 +29,20 @@
  *   --i-understand             Extra safety acknowledgement required for remote DB
  */
 
-import { PrismaClient, Prisma, ContentEntityType, EntityType, RelationType, EventType, ActorType, Platform, SourceType, SourceItemStatus, CapturedBy, MetricType } from "@prisma/client";
+import {
+  PrismaClient,
+  Prisma,
+  ContentEntityType,
+  EntityType,
+  RelationType,
+  EventType,
+  ActorType,
+  Platform,
+  SourceType,
+  SourceItemStatus,
+  CapturedBy,
+  MetricType,
+} from "@prisma/client";
 import crypto from "node:crypto";
 
 const prisma = new PrismaClient();
@@ -161,6 +174,12 @@ function looksLikeProductionEnv(): boolean {
   return false;
 }
 
+function getPrismaKnownErrorCode(e: unknown): string | undefined {
+  if (!e || typeof e !== "object") return undefined;
+  const maybe = e as { code?: unknown };
+  return typeof maybe.code === "string" ? maybe.code : undefined;
+}
+
 function safetyCheck(args: Args): void {
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) {
@@ -188,7 +207,8 @@ function safetyCheck(args: Args): void {
   // Require explicit bounded project IDs OR deterministic seed-based IDs.
   // If user provides only one, reject.
   if ((args.projectA && !args.projectB) || (!args.projectA && args.projectB)) {
-    throw new Error("Provide both --projectA and --projectB, or neither (use --seed)."
+    throw new Error(
+      "Provide both --projectA and --projectB, or neither (use --seed)."
     );
   }
 
@@ -200,7 +220,11 @@ function safetyCheck(args: Args): void {
   }
 }
 
-async function ensureProjects(projectAId: string, projectBId: string, seed: number) {
+async function ensureProjects(
+  projectAId: string,
+  projectBId: string,
+  seed: number
+) {
   const nameA = `Test Project A (${seed})`;
   const nameB = `Test Project B (${seed})`;
   const slugA = `test-a-${seed}`;
@@ -233,7 +257,10 @@ async function seedBaseline(projectId: string, projectSlug: string, seed: number
   const slugShared = `shared-slug-${seed}`; // used across projects to prove project-scoped uniqueness
 
   const urlUnique = `https://example.com/${projectSlug}/source/${seed}`;
-  const contentHash = crypto.createHash("sha256").update(urlUnique).digest("hex");
+  const contentHash = crypto
+    .createHash("sha256")
+    .update(urlUnique)
+    .digest("hex");
 
   const sourceItemId = deterministicUuid(seed, `${projectId}|sourceItem`);
 
@@ -466,10 +493,18 @@ async function runChecks(projectAId: string, projectBId: string, seed: number) {
 
   const [aCount, bCount] = await Promise.all([
     prisma.entity.count({
-      where: { projectId: projectAId, entityType: ContentEntityType.guide, slug: slugShared },
+      where: {
+        projectId: projectAId,
+        entityType: ContentEntityType.guide,
+        slug: slugShared,
+      },
     }),
     prisma.entity.count({
-      where: { projectId: projectBId, entityType: ContentEntityType.guide, slug: slugShared },
+      where: {
+        projectId: projectBId,
+        entityType: ContentEntityType.guide,
+        slug: slugShared,
+      },
     }),
   ]);
 
@@ -492,21 +527,29 @@ async function runChecks(projectAId: string, projectBId: string, seed: number) {
     });
     throw new Error("Uniqueness check failed: duplicate entity slug should have thrown");
   } catch (e) {
-    const err = e as Prisma.PrismaClientKnownRequestError;
-    if (err.code !== "P2002") {
+    const code = getPrismaKnownErrorCode(e);
+    if (code !== "P2002") {
       throw new Error(
-        `Expected Prisma P2002 for duplicate entity slug, got: ${(err as any).code ?? "unknown"}`
+        `Expected Prisma P2002 for duplicate entity slug, got: ${code ?? "unknown"}`
       );
     }
   }
 
   // 3) Relationship uniqueness within project
   const aGuide = await prisma.entity.findFirst({
-    where: { projectId: projectAId, entityType: ContentEntityType.guide, slug: slugShared },
+    where: {
+      projectId: projectAId,
+      entityType: ContentEntityType.guide,
+      slug: slugShared,
+    },
     select: { id: true },
   });
   const aConcept = await prisma.entity.findFirst({
-    where: { projectId: projectAId, entityType: ContentEntityType.concept, slug: `concept-${seed}` },
+    where: {
+      projectId: projectAId,
+      entityType: ContentEntityType.concept,
+      slug: `concept-${seed}`,
+    },
     select: { id: true },
   });
   if (!aGuide || !aConcept) {
@@ -527,10 +570,10 @@ async function runChecks(projectAId: string, projectBId: string, seed: number) {
     });
     throw new Error("Uniqueness check failed: duplicate relation should have thrown");
   } catch (e) {
-    const err = e as Prisma.PrismaClientKnownRequestError;
-    if (err.code !== "P2002") {
+    const code = getPrismaKnownErrorCode(e);
+    if (code !== "P2002") {
       throw new Error(
-        `Expected Prisma P2002 for duplicate relation, got: ${(err as any).code ?? "unknown"}`
+        `Expected Prisma P2002 for duplicate relation, got: ${code ?? "unknown"}`
       );
     }
   }
@@ -545,9 +588,13 @@ async function runChecks(projectAId: string, projectBId: string, seed: number) {
 
   for (const pid of [projectAId, projectBId]) {
     for (const et of expected) {
-      const c = await prisma.eventLog.count({ where: { projectId: pid, eventType: et } });
+      const c = await prisma.eventLog.count({
+        where: { projectId: pid, eventType: et },
+      });
       if (c < 1) {
-        throw new Error(`Event invariant failed: project ${pid} missing eventType ${et}`);
+        throw new Error(
+          `Event invariant failed: project ${pid} missing eventType ${et}`
+        );
       }
     }
   }
@@ -557,11 +604,19 @@ async function cleanupProjects(projectIds: string[]) {
   // Delete in FK-safe order, strictly bounded by projectId.
   await prisma.$transaction(async (tx) => {
     await tx.eventLog.deleteMany({ where: { projectId: { in: projectIds } } });
-    await tx.metricSnapshot.deleteMany({ where: { projectId: { in: projectIds } } });
-    await tx.distributionEvent.deleteMany({ where: { projectId: { in: projectIds } } });
+    await tx.metricSnapshot.deleteMany({
+      where: { projectId: { in: projectIds } },
+    });
+    await tx.distributionEvent.deleteMany({
+      where: { projectId: { in: projectIds } },
+    });
     await tx.video.deleteMany({ where: { projectId: { in: projectIds } } });
-    await tx.entityRelation.deleteMany({ where: { projectId: { in: projectIds } } });
-    await tx.draftArtifact.deleteMany({ where: { projectId: { in: projectIds } } });
+    await tx.entityRelation.deleteMany({
+      where: { projectId: { in: projectIds } },
+    });
+    await tx.draftArtifact.deleteMany({
+      where: { projectId: { in: projectIds } },
+    });
     await tx.sourceItem.deleteMany({ where: { projectId: { in: projectIds } } });
     await tx.sourceFeed.deleteMany({ where: { projectId: { in: projectIds } } });
     await tx.entity.deleteMany({ where: { projectId: { in: projectIds } } });
@@ -580,10 +635,14 @@ async function main() {
   assertUuid("projectB", projectBId);
 
   console.log("DB Hammer starting...");
-  console.log(`DATABASE_URL remote: ${isRemoteDatabaseUrl(process.env.DATABASE_URL ?? "")}`);
+  console.log(
+    `DATABASE_URL remote: ${isRemoteDatabaseUrl(process.env.DATABASE_URL ?? "")}`
+  );
   console.log(`Project A: ${projectAId}`);
   console.log(`Project B: ${projectBId}`);
-  console.log(`Actions: createProjects=${args.createProjects} seedData=${args.seedData} runChecks=${args.runChecks} cleanup=${args.cleanup}`);
+  console.log(
+    `Actions: createProjects=${args.createProjects} seedData=${args.seedData} runChecks=${args.runChecks} cleanup=${args.cleanup}`
+  );
 
   let slugA = "";
   let slugB = "";
