@@ -17,17 +17,28 @@ import {
   notFound,
   serverError,
 } from "@/lib/api-response";
-import {
-  isValidEnum,
-  VALID_SOURCE_ITEM_STATUSES,
-} from "@/lib/validation";
+import { isValidEnum, VALID_SOURCE_ITEM_STATUSES } from "@/lib/validation";
+import { resolveProjectId } from "@/lib/project";
+
+// UUID validation regex
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
     const { id } = await params;
+    if (!id || !UUID_RE.test(id)) {
+      return badRequest("id must be a valid UUID");
+    }
+
     const body = await request.json();
 
     // --- Validate required fields ---
@@ -38,14 +49,23 @@ export async function PUT(
       );
     }
 
-    // --- Check item exists ---
-    const existing = await prisma.sourceItem.findUnique({ where: { id } });
-    if (!existing) {
+    // Notes must be string if provided
+    if (body.notes !== undefined && body.notes !== null && typeof body.notes !== "string") {
+      return badRequest("notes must be a string");
+    }
+
+    // --- Check item exists and belongs to project ---
+    const existing = await prisma.sourceItem.findUnique({
+      where: { id },
+      select: { id: true, status: true, notes: true, projectId: true },
+    });
+
+    if (!existing || existing.projectId !== projectId) {
       return notFound(`SourceItem ${id} not found`);
     }
 
     // --- Build update data ---
-    const updateData: Record<string, unknown> = {
+    const updateData: { status: typeof body.status; archivedAt?: Date | null; notes?: string } = {
       status: body.status,
     };
 
@@ -55,8 +75,7 @@ export async function PUT(
     }
 
     // Append triage notes if provided
-    if (body.notes) {
-      // Append to existing notes rather than overwriting
+    if (typeof body.notes === "string" && body.notes.length > 0) {
       const existingNotes = existing.notes || "";
       const triageNote = `\n\n[Triage ${new Date().toISOString()}]: ${body.notes}`;
       updateData.notes = existingNotes + triageNote;
@@ -75,11 +94,13 @@ export async function PUT(
           entityType: "sourceItem",
           entityId: id,
           actor: "human",
-          projectId: existing.projectId,
+          projectId,
           details: {
             previousStatus: existing.status,
             newStatus: body.status,
-            ...(body.notes ? { notes: body.notes } : {}),
+            ...(typeof body.notes === "string" && body.notes.length > 0
+              ? { notes: body.notes }
+              : {}),
           },
         },
       });
