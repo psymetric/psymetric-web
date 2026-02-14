@@ -6,6 +6,11 @@
  * - Records manual distribution (human-posted content to X)
  * - No autonomous posting, no draft workflow
  * - Always creates as published status
+ *
+ * Multi-project hardened:
+ * - Resolves projectId from request
+ * - Scopes GET reads and counts by projectId
+ * - POST verifies primary entity belongs to projectId; writes are project-scoped
  */
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -23,6 +28,7 @@ import {
   VALID_PLATFORMS,
   VALID_ENTITY_STATUSES,
 } from "@/lib/validation";
+import { resolveProjectId } from "@/lib/project";
 import type { Prisma } from "@prisma/client";
 
 // =============================================================================
@@ -31,10 +37,16 @@ import type { Prisma } from "@prisma/client";
 
 export async function GET(request: NextRequest) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
     const searchParams = request.nextUrl.searchParams;
     const { page, limit, skip } = parsePagination(searchParams);
 
-    const where: Prisma.DistributionEventWhereInput = {};
+    // Always project-scoped
+    const where: Prisma.DistributionEventWhereInput = { projectId };
 
     // Platform filter
     const platform = searchParams.get("platform");
@@ -101,7 +113,7 @@ export async function GET(request: NextRequest) {
     const [distributionEvents, total] = await Promise.all([
       prisma.distributionEvent.findMany({
         where,
-        orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+        orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
         skip,
         take: limit,
       }),
@@ -121,6 +133,11 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
     // Parse request body
     let body: unknown;
     try {
@@ -165,13 +182,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Verify primary entity exists
+    // Verify primary entity exists AND belongs to this project
     const entity = await prisma.entity.findUnique({
       where: { id: primaryEntityId },
       select: { id: true, entityType: true, projectId: true },
     });
 
-    if (!entity) {
+    if (!entity || entity.projectId !== projectId) {
       return notFound("Primary entity not found");
     }
 
@@ -180,12 +197,12 @@ export async function POST(request: NextRequest) {
       const de = await tx.distributionEvent.create({
         data: {
           platform,
-          externalUrl,
+          externalUrl: externalUrl as string,
           status: "published",
           publishedAt: publishedAtDate,
           primaryEntityType: entity.entityType,
           primaryEntityId,
-          projectId: entity.projectId,
+          projectId,
         },
       });
 
@@ -195,7 +212,7 @@ export async function POST(request: NextRequest) {
           entityType: "distributionEvent",
           entityId: de.id,
           actor: "human",
-          projectId: entity.projectId,
+          projectId,
           details: {
             platform,
             primaryEntityId,
