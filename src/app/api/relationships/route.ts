@@ -15,9 +15,9 @@ import {
   serverError,
   parsePagination,
 } from "@/lib/api-response";
-import { RelationType } from "@prisma/client";
+import { RelationType, ContentEntityType, EntityType } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
-import { DEFAULT_PROJECT_ID } from "@/lib/project";
+import { resolveProjectId, assertSameProject } from "@/lib/project";
 
 // UUID validation regex
 const UUID_RE =
@@ -26,16 +26,37 @@ const UUID_RE =
 // Valid relation types from schema
 const VALID_RELATION_TYPES = Object.values(RelationType);
 
+function mapToEntityType(contentType: ContentEntityType): EntityType {
+  // ContentEntityType is a strict subset of EntityType, but Prisma generates them as distinct enums.
+  // Map explicitly to avoid unsafe casting.
+  switch (contentType) {
+    case "guide":
+      return EntityType.guide;
+    case "concept":
+      return EntityType.concept;
+    case "project":
+      return EntityType.project;
+    case "news":
+      return EntityType.news;
+  }
+}
+
 // =============================================================================
 // GET /api/relationships
 // =============================================================================
 
 export async function GET(request: NextRequest) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
     const searchParams = request.nextUrl.searchParams;
     const { page, limit, skip } = parsePagination(searchParams);
 
-    const where: Prisma.EntityRelationWhereInput = {};
+    // Always scope by projectId
+    const where: Prisma.EntityRelationWhereInput = { projectId };
 
     // fromEntityId filter
     const fromEntityId = searchParams.get("fromEntityId");
@@ -98,7 +119,12 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    let body;
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
+    let body: unknown;
     try {
       body = await request.json();
     } catch {
@@ -110,70 +136,89 @@ export async function POST(request: NextRequest) {
       return badRequest("Request body must be an object");
     }
 
-    // Validate required fields
-    if (!body.fromEntityId || typeof body.fromEntityId !== "string") {
+    const b = body as Record<string, unknown>;
+
+    const fromEntityId = b.fromEntityId;
+    const toEntityId = b.toEntityId;
+    const relationTypeInput = b.relationType;
+
+    if (typeof fromEntityId !== "string") {
       return badRequest("fromEntityId is required and must be a string");
     }
 
-    if (!body.toEntityId || typeof body.toEntityId !== "string") {
+    if (typeof toEntityId !== "string") {
       return badRequest("toEntityId is required and must be a string");
     }
 
-    if (!body.relationType || typeof body.relationType !== "string") {
+    if (typeof relationTypeInput !== "string") {
       return badRequest("relationType is required and must be a string");
     }
 
     // Validate UUID format
-    if (!UUID_RE.test(body.fromEntityId)) {
+    if (!UUID_RE.test(fromEntityId)) {
       return badRequest("fromEntityId must be a valid UUID");
     }
 
-    if (!UUID_RE.test(body.toEntityId)) {
+    if (!UUID_RE.test(toEntityId)) {
       return badRequest("toEntityId must be a valid UUID");
     }
 
     // Prevent self-relationships
-    if (body.fromEntityId === body.toEntityId) {
+    if (fromEntityId === toEntityId) {
       return badRequest("Cannot create relationship from entity to itself");
     }
 
     // Validate relationType against schema enum
-    if (!VALID_RELATION_TYPES.includes(body.relationType as RelationType)) {
+    if (!VALID_RELATION_TYPES.includes(relationTypeInput as RelationType)) {
       return badRequest(
         `relationType must be one of: ${VALID_RELATION_TYPES.join(", ")}`
       );
     }
 
-    // Validate both entities exist in Entity table
+    const relationType = relationTypeInput as RelationType;
+
+    // Validate both entities exist and are in this project
     const [fromEntity, toEntity] = await Promise.all([
       prisma.entity.findUnique({
-        where: { id: body.fromEntityId },
-        select: { id: true, entityType: true },
+        where: { id: fromEntityId },
+        select: { id: true, entityType: true, projectId: true },
       }),
       prisma.entity.findUnique({
-        where: { id: body.toEntityId },
-        select: { id: true, entityType: true },
+        where: { id: toEntityId },
+        select: { id: true, entityType: true, projectId: true },
       }),
     ]);
 
-    if (!fromEntity) {
-      return notFound(`From entity not found: ${body.fromEntityId}`);
+    if (!fromEntity || fromEntity.projectId !== projectId) {
+      return notFound(`From entity not found: ${fromEntityId}`);
     }
 
-    if (!toEntity) {
-      return notFound(`To entity not found: ${body.toEntityId}`);
+    if (!toEntity || toEntity.projectId !== projectId) {
+      return notFound(`To entity not found: ${toEntityId}`);
     }
+
+    const crossProjectError = assertSameProject(
+      fromEntity.projectId,
+      toEntity.projectId,
+      "relationship"
+    );
+    if (crossProjectError) {
+      return badRequest(crossProjectError);
+    }
+
+    const fromEntityType = mapToEntityType(fromEntity.entityType);
+    const toEntityType = mapToEntityType(toEntity.entityType);
 
     // Check for duplicate relationship
     const existingRelation = await prisma.entityRelation.findUnique({
       where: {
         projectId_fromEntityType_fromEntityId_relationType_toEntityType_toEntityId: {
-          projectId: DEFAULT_PROJECT_ID,
-          fromEntityType: fromEntity.entityType,
-          fromEntityId: body.fromEntityId,
-          relationType: body.relationType as RelationType,
-          toEntityType: toEntity.entityType,
-          toEntityId: body.toEntityId,
+          projectId,
+          fromEntityType,
+          fromEntityId,
+          relationType,
+          toEntityType,
+          toEntityId,
         },
       },
     });
@@ -184,30 +229,28 @@ export async function POST(request: NextRequest) {
 
     // Create relationship and emit event log in transaction
     const result = await prisma.$transaction(async (tx) => {
-      // Insert EntityRelation row
       const relation = await tx.entityRelation.create({
         data: {
-          fromEntityType: fromEntity.entityType,
-          fromEntityId: body.fromEntityId,
-          toEntityType: toEntity.entityType,
-          toEntityId: body.toEntityId,
-          relationType: body.relationType as RelationType,
-          projectId: DEFAULT_PROJECT_ID,
+          fromEntityType,
+          fromEntityId,
+          toEntityType,
+          toEntityId,
+          relationType,
+          projectId,
         },
       });
 
-      // Emit exactly ONE EventLog
       await tx.eventLog.create({
         data: {
           eventType: "RELATION_CREATED",
-          entityType: fromEntity.entityType,
-          entityId: body.fromEntityId,
+          entityType: fromEntityType,
+          entityId: fromEntityId,
           actor: "human",
-          projectId: DEFAULT_PROJECT_ID,
+          projectId,
           details: {
-            relationType: body.relationType,
-            fromEntityId: body.fromEntityId,
-            toEntityId: body.toEntityId,
+            relationType: relationTypeInput,
+            fromEntityId,
+            toEntityId,
           },
         },
       });
@@ -236,7 +279,12 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    let body;
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
+    let body: unknown;
     try {
       body = await request.json();
     } catch {
@@ -248,65 +296,84 @@ export async function DELETE(request: NextRequest) {
       return badRequest("Request body must be an object");
     }
 
-    // Validate required fields
-    if (!body.fromEntityId || typeof body.fromEntityId !== "string") {
+    const b = body as Record<string, unknown>;
+
+    const fromEntityId = b.fromEntityId;
+    const toEntityId = b.toEntityId;
+    const relationTypeInput = b.relationType;
+
+    if (typeof fromEntityId !== "string") {
       return badRequest("fromEntityId is required and must be a string");
     }
 
-    if (!body.toEntityId || typeof body.toEntityId !== "string") {
+    if (typeof toEntityId !== "string") {
       return badRequest("toEntityId is required and must be a string");
     }
 
-    if (!body.relationType || typeof body.relationType !== "string") {
+    if (typeof relationTypeInput !== "string") {
       return badRequest("relationType is required and must be a string");
     }
 
     // Validate UUID format
-    if (!UUID_RE.test(body.fromEntityId)) {
+    if (!UUID_RE.test(fromEntityId)) {
       return badRequest("fromEntityId must be a valid UUID");
     }
 
-    if (!UUID_RE.test(body.toEntityId)) {
+    if (!UUID_RE.test(toEntityId)) {
       return badRequest("toEntityId must be a valid UUID");
     }
 
     // Validate relationType against schema enum
-    if (!VALID_RELATION_TYPES.includes(body.relationType as RelationType)) {
+    if (!VALID_RELATION_TYPES.includes(relationTypeInput as RelationType)) {
       return badRequest(
         `relationType must be one of: ${VALID_RELATION_TYPES.join(", ")}`
       );
     }
 
-    // Validate both entities exist in Entity table
+    const relationType = relationTypeInput as RelationType;
+
+    // Validate both entities exist and are in this project
     const [fromEntity, toEntity] = await Promise.all([
       prisma.entity.findUnique({
-        where: { id: body.fromEntityId },
-        select: { id: true, entityType: true },
+        where: { id: fromEntityId },
+        select: { id: true, entityType: true, projectId: true },
       }),
       prisma.entity.findUnique({
-        where: { id: body.toEntityId },
-        select: { id: true, entityType: true },
+        where: { id: toEntityId },
+        select: { id: true, entityType: true, projectId: true },
       }),
     ]);
 
-    if (!fromEntity) {
-      return notFound(`From entity not found: ${body.fromEntityId}`);
+    if (!fromEntity || fromEntity.projectId !== projectId) {
+      return notFound(`From entity not found: ${fromEntityId}`);
     }
 
-    if (!toEntity) {
-      return notFound(`To entity not found: ${body.toEntityId}`);
+    if (!toEntity || toEntity.projectId !== projectId) {
+      return notFound(`To entity not found: ${toEntityId}`);
     }
+
+    const crossProjectError = assertSameProject(
+      fromEntity.projectId,
+      toEntity.projectId,
+      "relationship"
+    );
+    if (crossProjectError) {
+      return badRequest(crossProjectError);
+    }
+
+    const fromEntityType = mapToEntityType(fromEntity.entityType);
+    const toEntityType = mapToEntityType(toEntity.entityType);
 
     // Check if relationship exists
     const existingRelation = await prisma.entityRelation.findUnique({
       where: {
         projectId_fromEntityType_fromEntityId_relationType_toEntityType_toEntityId: {
-          projectId: DEFAULT_PROJECT_ID,
-          fromEntityType: fromEntity.entityType,
-          fromEntityId: body.fromEntityId,
-          relationType: body.relationType as RelationType,
-          toEntityType: toEntity.entityType,
-          toEntityId: body.toEntityId,
+          projectId,
+          fromEntityType,
+          fromEntityId,
+          relationType,
+          toEntityType,
+          toEntityId,
         },
       },
     });
@@ -315,34 +382,31 @@ export async function DELETE(request: NextRequest) {
       return notFound("Relationship not found");
     }
 
-    // Delete relationship and emit event log in transaction
     await prisma.$transaction(async (tx) => {
-      // Delete exactly one EntityRelation row using composite unique key
       await tx.entityRelation.delete({
         where: {
           projectId_fromEntityType_fromEntityId_relationType_toEntityType_toEntityId: {
-            projectId: DEFAULT_PROJECT_ID,
-            fromEntityType: fromEntity.entityType,
-            fromEntityId: body.fromEntityId,
-            relationType: body.relationType as RelationType,
-            toEntityType: toEntity.entityType,
-            toEntityId: body.toEntityId,
+            projectId,
+            fromEntityType,
+            fromEntityId,
+            relationType,
+            toEntityType,
+            toEntityId,
           },
         },
       });
 
-      // Emit exactly ONE EventLog
       await tx.eventLog.create({
         data: {
           eventType: "RELATION_REMOVED",
-          entityType: fromEntity.entityType,
-          entityId: body.fromEntityId,
+          entityType: fromEntityType,
+          entityId: fromEntityId,
           actor: "human",
-          projectId: DEFAULT_PROJECT_ID,
+          projectId,
           details: {
-            relationType: body.relationType,
-            fromEntityId: body.fromEntityId,
-            toEntityId: body.toEntityId,
+            relationType: relationTypeInput,
+            fromEntityId,
+            toEntityId,
           },
         },
       });
