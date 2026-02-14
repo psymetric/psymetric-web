@@ -487,6 +487,193 @@ async function seedBaseline(projectId: string, projectSlug: string, seed: number
   };
 }
 
+async function cleanupAtomicityProbeArtifacts(projectId: string, seed: number) {
+  const entityId = deterministicUuid(seed, `${projectId}|atomicity|entity`);
+  const slug = `atomicity-${seed}`;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.eventLog.deleteMany({
+      where: {
+        projectId,
+        entityType: EntityType.guide,
+        entityId,
+        eventType: EventType.ENTITY_CREATED,
+      },
+    });
+
+    // Delete by deterministic id and also by deterministic slug in case prior failures persisted.
+    await tx.entity.deleteMany({
+      where: {
+        projectId,
+        OR: [
+          { id: entityId },
+          {
+            entityType: ContentEntityType.guide,
+            slug,
+          },
+        ],
+      },
+    });
+  });
+
+  return { entityId, slug };
+}
+
+async function runAtomicityProbe(projectId: string, seed: number) {
+  // Proves that a partial write inside prisma.$transaction() rolls back fully.
+  const { entityId, slug } = await cleanupAtomicityProbeArtifacts(projectId, seed);
+
+  const details: Prisma.InputJsonObject = {
+    seed,
+    tool: "db-hammer",
+    probe: "atomicity",
+  };
+
+  let sawIntentionalRollback = false;
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.entity.create({
+        data: {
+          id: entityId,
+          projectId,
+          entityType: ContentEntityType.guide,
+          title: `Atomicity Probe ${seed}`,
+          slug,
+          status: "draft",
+        },
+      });
+
+      await tx.eventLog.create({
+        data: {
+          eventType: EventType.ENTITY_CREATED,
+          entityType: EntityType.guide,
+          entityId,
+          actor: ActorType.system,
+          projectId,
+          details,
+        },
+      });
+
+      throw new Error("INTENTIONAL_ROLLBACK");
+    });
+
+    throw new Error("Atomicity probe failed: transaction did not roll back");
+  } catch (e) {
+    if (e instanceof Error && e.message === "INTENTIONAL_ROLLBACK") {
+      sawIntentionalRollback = true;
+    } else {
+      throw e;
+    }
+  }
+
+  if (!sawIntentionalRollback) {
+    throw new Error("Atomicity probe failed: did not observe rollback error");
+  }
+
+  const [entity, eventCount] = await Promise.all([
+    prisma.entity.findUnique({ where: { id: entityId }, select: { id: true } }),
+    prisma.eventLog.count({
+      where: {
+        projectId,
+        entityType: EntityType.guide,
+        entityId,
+        eventType: EventType.ENTITY_CREATED,
+      },
+    }),
+  ]);
+
+  if (entity) {
+    throw new Error("Atomicity probe failed: entity persisted after rollback");
+  }
+  if (eventCount !== 0) {
+    throw new Error("Atomicity probe failed: eventLog persisted after rollback");
+  }
+}
+
+async function cleanupCrossProjectProbeArtifacts(seed: number) {
+  const relationId = deterministicUuid(seed, "cross-project|relation");
+  await prisma.entityRelation.deleteMany({ where: { id: relationId } });
+  return { relationId };
+}
+
+async function runCrossProjectViolationProbe(
+  projectAId: string,
+  projectBId: string,
+  seed: number
+) {
+  // This probe proves graph isolation at the relationship layer.
+  // If EntityRelation can connect an entity from project A to an entity from project B,
+  // we have a critical invariants breach.
+
+  const { relationId } = await cleanupCrossProjectProbeArtifacts(seed);
+
+  const fromGuide = await prisma.entity.findFirst({
+    where: {
+      projectId: projectAId,
+      entityType: ContentEntityType.guide,
+      slug: `shared-slug-${seed}`,
+    },
+    select: { id: true },
+  });
+
+  const toConceptOtherProject = await prisma.entity.findFirst({
+    where: {
+      projectId: projectBId,
+      entityType: ContentEntityType.concept,
+      slug: `concept-${seed}`,
+    },
+    select: { id: true },
+  });
+
+  if (!fromGuide || !toConceptOtherProject) {
+    throw new Error(
+      "Cross-project probe prerequisites missing (seed may not have run)"
+    );
+  }
+
+  try {
+    // Attempt to create a relation row under Project A that points to an entity from Project B.
+    // This MUST fail in a properly enforced system. If it succeeds, we delete it and throw.
+    await prisma.entityRelation.create({
+      data: {
+        id: relationId,
+        projectId: projectAId,
+        fromEntityType: EntityType.guide,
+        fromEntityId: fromGuide.id,
+        relationType: RelationType.GUIDE_USES_CONCEPT,
+        toEntityType: EntityType.concept,
+        toEntityId: toConceptOtherProject.id,
+        notes: "db-hammer cross-project violation probe",
+      },
+    });
+
+    // If we got here, the invariant was violated.
+    await prisma.entityRelation.delete({ where: { id: relationId } });
+
+    throw new Error(
+      "Cross-project violation probe failed: was able to create relationship across projects"
+    );
+  } catch (e) {
+    // Any failure is acceptable (app or DB enforcement). We specifically do NOT require a given Prisma code,
+    // because enforcement can happen at different layers.
+    const code = getPrismaKnownErrorCode(e);
+
+    // If the error is our intentional failure message above, surface it.
+    if (e instanceof Error && e.message.includes("Cross-project violation probe failed")) {
+      throw e;
+    }
+
+    // If it failed for any other reason, that's a pass.
+    // Optionally log the error code for debugging.
+    if (code) {
+      console.log(`Cross-project probe blocked as expected (Prisma code: ${code}).`);
+    } else {
+      console.log("Cross-project probe blocked as expected.");
+    }
+  }
+}
+
 async function runChecks(projectAId: string, projectBId: string, seed: number) {
   // 1) Isolation: shared slug exists in both projects, but counts are project-scoped.
   const slugShared = `shared-slug-${seed}`;
@@ -525,7 +712,9 @@ async function runChecks(projectAId: string, projectBId: string, seed: number) {
         status: "draft",
       },
     });
-    throw new Error("Uniqueness check failed: duplicate entity slug should have thrown");
+    throw new Error(
+      "Uniqueness check failed: duplicate entity slug should have thrown"
+    );
   } catch (e) {
     const code = getPrismaKnownErrorCode(e);
     if (code !== "P2002") {
@@ -598,6 +787,13 @@ async function runChecks(projectAId: string, projectBId: string, seed: number) {
       }
     }
   }
+
+  // 5) Atomicity probe: a thrown error inside $transaction must roll back state + events.
+  await runAtomicityProbe(projectAId, seed);
+  await runAtomicityProbe(projectBId, seed);
+
+  // 6) Cross-project violation probe: relationships must not be able to connect across projects.
+  await runCrossProjectViolationProbe(projectAId, projectBId, seed);
 }
 
 async function cleanupProjects(projectIds: string[]) {
