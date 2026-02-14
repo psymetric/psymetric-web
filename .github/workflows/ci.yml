@@ -11,6 +11,12 @@ jobs:
   lint-build:
     runs-on: ubuntu-latest
 
+    # Prisma schema requires these env vars to exist even if we don't connect.
+    # We intentionally use dummy localhost URLs to avoid touching any real DB.
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/psymetric_ci?schema=public
+      DIRECT_DATABASE_URL: postgresql://ci:ci@localhost:5432/psymetric_ci?schema=public
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
