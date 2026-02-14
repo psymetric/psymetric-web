@@ -6,6 +6,11 @@
  * - Records time-series metric snapshots
  * - No analytics, no conclusions, just data storage
  * - Deterministic validation only
+ *
+ * Multi-project hardened:
+ * - Resolves projectId from request
+ * - Scopes GET reads and counts by projectId
+ * - POST verifies entity belongs to projectId; writes are project-scoped
  */
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -17,8 +22,17 @@ import {
   serverError,
   parsePagination,
 } from "@/lib/api-response";
-import { isValidEnum, VALID_PLATFORMS, VALID_METRIC_TYPES } from "@/lib/validation";
+import {
+  isValidEnum,
+  VALID_PLATFORMS,
+  VALID_METRIC_TYPES,
+} from "@/lib/validation";
+import { resolveProjectId } from "@/lib/project";
 import type { Prisma } from "@prisma/client";
+
+// UUID validation regex
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // =============================================================================
 // GET /api/metric-snapshots
@@ -26,10 +40,16 @@ import type { Prisma } from "@prisma/client";
 
 export async function GET(request: NextRequest) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
     const searchParams = request.nextUrl.searchParams;
     const { page, limit, skip } = parsePagination(searchParams);
 
-    const where: Prisma.MetricSnapshotWhereInput = {};
+    // Always project-scoped
+    const where: Prisma.MetricSnapshotWhereInput = { projectId };
 
     // Platform filter
     const platform = searchParams.get("platform");
@@ -56,7 +76,6 @@ export async function GET(request: NextRequest) {
     // Entity filter (with UUID validation)
     const entityId = searchParams.get("entityId");
     if (entityId) {
-      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
       if (!UUID_RE.test(entityId)) {
         return badRequest("entityId must be a valid UUID");
       }
@@ -91,7 +110,7 @@ export async function GET(request: NextRequest) {
     const [metricSnapshots, total] = await Promise.all([
       prisma.metricSnapshot.findMany({
         where,
-        orderBy: [{ capturedAt: "desc" }, { createdAt: "desc" }],
+        orderBy: [{ capturedAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
         skip,
         take: limit,
       }),
@@ -111,6 +130,11 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
     // Parse request body
     let body: unknown;
     try {
@@ -149,6 +173,9 @@ export async function POST(request: NextRequest) {
     if (!entityId || typeof entityId !== "string") {
       return badRequest("entityId is required");
     }
+    if (!UUID_RE.test(entityId)) {
+      return badRequest("entityId must be a valid UUID");
+    }
 
     // Parse capturedAt if provided
     let capturedAtDate = new Date();
@@ -163,17 +190,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate notes if provided
-    if (notes !== undefined && typeof notes !== "string") {
+    if (notes !== undefined && notes !== null && typeof notes !== "string") {
       return badRequest("notes must be a string");
     }
 
-    // Verify entity exists
+    // Verify entity exists AND belongs to this project
     const entity = await prisma.entity.findUnique({
       where: { id: entityId },
       select: { id: true, entityType: true, projectId: true },
     });
 
-    if (!entity) {
+    if (!entity || entity.projectId !== projectId) {
       return notFound("Entity not found");
     }
 
@@ -187,8 +214,8 @@ export async function POST(request: NextRequest) {
           capturedAt: capturedAtDate,
           entityType: entity.entityType,
           entityId,
-          notes: notes || null,
-          projectId: entity.projectId,
+          notes: typeof notes === "string" ? notes : null,
+          projectId,
         },
       });
 
@@ -198,7 +225,7 @@ export async function POST(request: NextRequest) {
           entityType: "metricSnapshot",
           entityId: ms.id,
           actor: "human",
-          projectId: entity.projectId,
+          projectId,
           details: {
             metricType,
             value,
