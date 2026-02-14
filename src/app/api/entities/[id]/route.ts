@@ -1,13 +1,13 @@
 /**
- * GET /api/entities/[id] — Read single entity
- * PATCH /api/entities/[id] — Update allowlisted editorial fields only
+ * GET /api/entities/[id]
+ * PATCH /api/entities/[id]
  *
- * Phase 1 deterministic endpoints
- * - GET returns full entity object
- * - PATCH updates only allowlisted fields: title, summary, contentRef, canonicalUrl, difficulty, repoUrl
- * - No lifecycle transitions, no status changes, no publish logic
- * - Strict validation and logging
+ * Multi-project hardened.
+ * - Resolves projectId from request
+ * - Verifies entity belongs to project
+ * - All state mutations + event logs inside $transaction()
  */
+
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
@@ -16,14 +16,23 @@ import {
   notFound,
   serverError,
 } from "@/lib/api-response";
-import { isNonEmptyString, isValidEnum, isValidUrl, VALID_DIFFICULTIES } from "@/lib/validation";
+import { resolveProjectId } from "@/lib/project";
+import { isValidEnum } from "@/lib/validation";
+import { Difficulty } from "@prisma/client";
 
-// UUID validation regex
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+const ALLOWED_FIELDS = new Set([
+  "title",
+  "summary",
+  "difficulty",
+  "repoUrl",
+  "canonicalUrl",
+]);
+
 // =============================================================================
-// GET /api/entities/[id]
+// GET
 // =============================================================================
 
 export async function GET(
@@ -31,13 +40,12 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) return badRequest(error);
+
     const { id } = await context.params;
 
-    if (!id || typeof id !== "string") {
-      return badRequest("Invalid id parameter");
-    }
-
-    if (!UUID_RE.test(id)) {
+    if (!id || !UUID_RE.test(id)) {
       return badRequest("id must be a valid UUID");
     }
 
@@ -45,7 +53,7 @@ export async function GET(
       where: { id },
     });
 
-    if (!entity) {
+    if (!entity || entity.projectId !== projectId) {
       return notFound("Entity not found");
     }
 
@@ -57,29 +65,32 @@ export async function GET(
 }
 
 // =============================================================================
-// PATCH /api/entities/[id]
+// PATCH
 // =============================================================================
-
-// Strict allowlist of updateable fields
-const ALLOWED_FIELDS = ["title", "summary", "contentRef", "canonicalUrl", "difficulty", "repoUrl"] as const;
-type AllowedField = (typeof ALLOWED_FIELDS)[number];
 
 export async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) return badRequest(error);
+
     const { id } = await context.params;
 
-    if (!id || typeof id !== "string") {
-      return badRequest("Invalid id parameter");
-    }
-
-    if (!UUID_RE.test(id)) {
+    if (!id || !UUID_RE.test(id)) {
       return badRequest("id must be a valid UUID");
     }
 
-    // Parse request body safely
+    const existing = await prisma.entity.findUnique({
+      where: { id },
+      select: { id: true, projectId: true, difficulty: true },
+    });
+
+    if (!existing || existing.projectId !== projectId) {
+      return notFound("Entity not found");
+    }
+
     let body: unknown;
     try {
       body = await request.json();
@@ -87,91 +98,51 @@ export async function PATCH(
       return badRequest("Invalid JSON body");
     }
 
-    if (typeof body !== "object" || body === null) {
-      return badRequest("Invalid JSON body");
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return badRequest("Request body must be an object");
     }
 
-    const requestFields = body as Record<string, unknown>;
+    const b = body as Record<string, unknown>;
+    const updateData: Record<string, unknown> = {};
 
-    // Validate allowlist - check for any non-allowed fields
-    const providedFields = Object.keys(requestFields);
-    const invalidFields = providedFields.filter(
-      (field) => !ALLOWED_FIELDS.includes(field as AllowedField)
-    );
-
-    if (invalidFields.length > 0) {
-      return badRequest("Invalid update fields");
-    }
-
-    // Must include at least one allowed field
-    if (providedFields.length === 0) {
-      return badRequest("Must provide at least one field to update");
-    }
-
-    // Validate individual fields
-    const data: Record<string, string | null> = {};
-
-    if (requestFields.title !== undefined) {
-      if (typeof requestFields.title !== "string" || !isNonEmptyString(requestFields.title)) {
-        return badRequest("title must be a non-empty string");
+    for (const key of Object.keys(b)) {
+      if (!ALLOWED_FIELDS.has(key)) {
+        return badRequest(`Field \"${key}\" is not allowed to be updated`);
       }
-      data.title = requestFields.title;
     }
 
-    if (requestFields.summary !== undefined) {
-      if (typeof requestFields.summary !== "string") {
-        return badRequest("summary must be a string");
+    if (typeof b.title === "string") {
+      if (b.title.trim().length === 0) {
+        return badRequest("title cannot be empty");
       }
-      data.summary = requestFields.summary;
+      updateData.title = b.title.trim();
     }
 
-    if (requestFields.contentRef !== undefined) {
-      if (typeof requestFields.contentRef !== "string" || !isNonEmptyString(requestFields.contentRef)) {
-        return badRequest("contentRef must be a non-empty string");
+    if (typeof b.summary === "string" || b.summary === null) {
+      updateData.summary = b.summary;
+    }
+
+    if (b.difficulty !== undefined) {
+      if (!isValidEnum(b.difficulty, Object.values(Difficulty))) {
+        return badRequest(
+          "difficulty must be one of: " + Object.values(Difficulty).join(", ")
+        );
       }
-      data.contentRef = requestFields.contentRef;
+      updateData.difficulty = b.difficulty;
     }
 
-    if (requestFields.canonicalUrl !== undefined) {
-      if (typeof requestFields.canonicalUrl !== "string") {
-        return badRequest("canonicalUrl must be a string");
-      }
-      // Accept paths (/foo/bar) or full URLs (https://...)
-      if (!requestFields.canonicalUrl.startsWith("/") && !requestFields.canonicalUrl.startsWith("https://")) {
-        return badRequest("canonicalUrl must start with '/' or 'https://'");
-      }
-      data.canonicalUrl = requestFields.canonicalUrl;
+    if (typeof b.repoUrl === "string" || b.repoUrl === null) {
+      updateData.repoUrl = b.repoUrl;
     }
 
-    if (requestFields.difficulty !== undefined) {
-      if (typeof requestFields.difficulty !== "string" || !isValidEnum(requestFields.difficulty, VALID_DIFFICULTIES)) {
-        return badRequest("difficulty must be one of: " + VALID_DIFFICULTIES.join(", "));
-      }
-      data.difficulty = requestFields.difficulty;
+    if (typeof b.canonicalUrl === "string" || b.canonicalUrl === null) {
+      updateData.canonicalUrl = b.canonicalUrl;
     }
 
-    if (requestFields.repoUrl !== undefined) {
-      if (typeof requestFields.repoUrl !== "string" || !isValidUrl(requestFields.repoUrl)) {
-        return badRequest("repoUrl must be a valid URL");
-      }
-      data.repoUrl = requestFields.repoUrl;
-    }
-
-    // Transactional update + event log (atomic)
-    // Load entity to get projectId for event log
-    const existingEntity = await prisma.entity.findUnique({
-      where: { id },
-      select: { id: true, projectId: true },
-    });
-
-    if (!existingEntity) {
-      return notFound("Entity not found");
-    }
-
-    const updatedEntity = await prisma.$transaction(async (tx) => {
+    const updated = await prisma.$transaction(async (tx) => {
       const entity = await tx.entity.update({
         where: { id },
-        data,
+        data: updateData,
       });
 
       await tx.eventLog.create({
@@ -180,9 +151,9 @@ export async function PATCH(
           entityType: entity.entityType,
           entityId: entity.id,
           actor: "human",
-          projectId: existingEntity.projectId,
+          projectId,
           details: {
-            updatedFields: Object.keys(data),
+            updatedFields: Object.keys(updateData),
           },
         },
       });
@@ -190,13 +161,8 @@ export async function PATCH(
       return entity;
     });
 
-    return successResponse(updatedEntity);
+    return successResponse(updated);
   } catch (error) {
-    // Handle Prisma not found error
-    if (error && typeof error === "object" && "code" in error && error.code === "P2025") {
-      return notFound("Entity not found");
-    }
-
     console.error("PATCH /api/entities/[id] error:", error);
     return serverError();
   }
