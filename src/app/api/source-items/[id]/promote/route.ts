@@ -1,11 +1,11 @@
 /**
  * POST /api/source-items/[id]/promote — Atomic promote-to-draft
  *
- * Combines entity creation + relationship + source status update in one transaction.
- * Replaces the 3-step client-side workflow that risked orphaned data.
- *
- * Body: { entityType, title, conceptKind? }
- * Returns: created entity summary
+ * Multi-project hardened.
+ * - Resolves projectId from request
+ * - Verifies SourceItem belongs to project
+ * - Uses composite unique (projectId, entityType, slug)
+ * - All mutations + event logs inside single $transaction
  */
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -22,16 +22,13 @@ import {
   VALID_CONTENT_ENTITY_TYPES,
   VALID_CONCEPT_KINDS,
 } from "@/lib/validation";
-import { DEFAULT_PROJECT_ID } from "@/lib/project";
+import { resolveProjectId } from "@/lib/project";
 import { ContentEntityType, EntityType, RelationType, ConceptKind } from "@prisma/client";
 
-// UUID validation regex
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function toEntityType(contentType: ContentEntityType): EntityType {
-  // ContentEntityType is a strict subset of EntityType, but Prisma generates them as distinct enums.
-  // Map explicitly to avoid unsafe casting.
+function mapToEntityType(contentType: ContentEntityType): EntityType {
   switch (contentType) {
     case "guide":
       return EntityType.guide;
@@ -62,13 +59,14 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await context.params;
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) return badRequest(error);
 
+    const { id } = await context.params;
     if (!id || !UUID_RE.test(id)) {
       return badRequest("id must be a valid UUID");
     }
 
-    // Parse body
     let body: unknown;
     try {
       body = await request.json();
@@ -82,11 +80,9 @@ export async function POST(
 
     const b = body as Record<string, unknown>;
 
-    // Validate required fields
     if (!isValidEnum(b.entityType, VALID_CONTENT_ENTITY_TYPES)) {
       return badRequest(
-        "entityType is required and must be one of: " +
-          VALID_CONTENT_ENTITY_TYPES.join(", ")
+        "entityType must be one of: " + VALID_CONTENT_ENTITY_TYPES.join(", ")
       );
     }
 
@@ -106,51 +102,42 @@ export async function POST(
     }
 
     const contentEntityType = b.entityType as ContentEntityType;
-    const entityTypeForLogs = toEntityType(contentEntityType);
-
+    const entityTypeForLogs = mapToEntityType(contentEntityType);
     const title = b.title as string;
     const conceptKindInput = b.conceptKind as string | undefined;
 
-    // Safely resolve ConceptKind enum value
     let resolvedConceptKind: ConceptKind | null = null;
-
     if (contentEntityType === "concept") {
       const value = conceptKindInput ?? "standard";
-
-      // Validate against Prisma enum values (no string casting)
       if (!Object.values(ConceptKind).includes(value as ConceptKind)) {
         return badRequest(
           "conceptKind must be one of: " + Object.values(ConceptKind).join(", ")
         );
       }
-
       resolvedConceptKind = ConceptKind[value as keyof typeof ConceptKind];
     }
 
-    // Load source item
     const sourceItem = await prisma.sourceItem.findUnique({
       where: { id },
-      select: { id: true, status: true, url: true },
+      select: { id: true, status: true, url: true, projectId: true },
     });
 
-    if (!sourceItem) {
+    if (!sourceItem || sourceItem.projectId !== projectId) {
       return notFound("Source item not found");
     }
 
-    // Only promotable from ingested or triaged
     if (sourceItem.status !== "ingested" && sourceItem.status !== "triaged") {
       return badRequest(
-        `Cannot promote source in status "${sourceItem.status}". Must be ingested or triaged.`
+        `Cannot promote source in status "${sourceItem.status}".`
       );
     }
 
-    // Generate slug and check uniqueness within project
     const slug = slugify(title);
 
     const existingSlug = await prisma.entity.findUnique({
       where: {
         projectId_entityType_slug: {
-          projectId: DEFAULT_PROJECT_ID,
+          projectId,
           entityType: contentEntityType,
           slug,
         },
@@ -164,7 +151,6 @@ export async function POST(
 
     const relationType = sourceRelationTypeFor(contentEntityType);
 
-    // --- Single atomic transaction ---
     const entity = await prisma.$transaction(async (tx) => {
       const newEntity = await tx.entity.create({
         data: {
@@ -173,11 +159,10 @@ export async function POST(
           slug,
           conceptKind: resolvedConceptKind,
           status: "draft",
-          projectId: DEFAULT_PROJECT_ID,
+          projectId,
         },
       });
 
-      // 2. Create source→entity relationship
       await tx.entityRelation.create({
         data: {
           fromEntityType: entityTypeForLogs,
@@ -185,24 +170,22 @@ export async function POST(
           relationType,
           toEntityType: EntityType.sourceItem,
           toEntityId: sourceItem.id,
-          projectId: DEFAULT_PROJECT_ID,
+          projectId,
         },
       });
 
-      // 3. Update source item status to "used"
       await tx.sourceItem.update({
         where: { id: sourceItem.id },
         data: { status: "used" },
       });
 
-      // 4. Log all events
       await tx.eventLog.create({
         data: {
           eventType: "ENTITY_CREATED",
           entityType: entityTypeForLogs,
           entityId: newEntity.id,
           actor: "human",
-          projectId: DEFAULT_PROJECT_ID,
+          projectId,
           details: {
             title: newEntity.title,
             slug: newEntity.slug,
@@ -217,7 +200,7 @@ export async function POST(
           entityType: entityTypeForLogs,
           entityId: newEntity.id,
           actor: "human",
-          projectId: DEFAULT_PROJECT_ID,
+          projectId,
           details: {
             relationType,
             fromEntityId: newEntity.id,
@@ -232,7 +215,7 @@ export async function POST(
           entityType: EntityType.sourceItem,
           entityId: sourceItem.id,
           actor: "human",
-          projectId: DEFAULT_PROJECT_ID,
+          projectId,
           details: {
             previousStatus: sourceItem.status,
             newStatus: "used",
