@@ -7,6 +7,11 @@
  * - No UI changes
  * - No schema changes
  * - No LLM integration (stub content only)
+ *
+ * Multi-project hardening:
+ * - Project-scoped reads and writes
+ * - No cross-project draft access
+ * - Draft creation + event logging is atomic inside prisma.$transaction()
  */
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -15,18 +20,15 @@ import {
   createdResponse,
   notFound,
   badRequest,
-  errorResponse,
   serverError,
 } from "@/lib/api-response";
-import { logEvent } from "@/lib/events";
+import { resolveProjectId } from "@/lib/project";
 
 type DraftStyle = "short" | "medium" | "thread";
 
-type DraftCreatedDetails = {
-  draftIds?: unknown;
-  count?: unknown;
-  style?: unknown;
-};
+// UUID validation regex
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function parseCount(raw: string | null): number | null {
   if (raw === null) return null;
@@ -37,14 +39,6 @@ function parseCount(raw: string | null): number | null {
 
 function isDraftStyle(value: unknown): value is DraftStyle {
   return value === "short" || value === "medium" || value === "thread";
-}
-
-function extractDraftIds(details: unknown): string[] | null {
-  if (!details || typeof details !== "object") return null;
-  const d = details as DraftCreatedDetails;
-  if (!Array.isArray(d.draftIds)) return null;
-  const ids = d.draftIds.filter((x): x is string => typeof x === "string");
-  return ids.length > 0 ? ids : null;
 }
 
 function buildStubReply(args: {
@@ -65,9 +59,9 @@ function buildStubReply(args: {
     // Single content blob; operator may split into multiple posts manually.
     return [
       `1/4 Quick take${v}: interesting signal — especially for tracking what actually ships.`,
-      `2/4 The question is always constraints: latency, cost, evals, and the incentives around deployment.`,
+      `2/4 The question is always constraints: latency, cost, evals, and incentives.`,
       `3/4 If you have real numbers, that’s the gold. If not, what would you measure next?`,
-      `4/4 Curious where you think the “hard part” is hiding.\n\n${sourceUrl}`,
+      `4/4 Curious where you think the hard part is hiding.\n\n${sourceUrl}`,
     ].join("\n\n");
   }
 
@@ -92,17 +86,23 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
     const { id } = await context.params;
 
-    if (!id || typeof id !== "string") {
+    if (!id || !UUID_RE.test(id)) {
       return badRequest("Invalid id parameter");
     }
 
     const sourceItem = await prisma.sourceItem.findUnique({
       where: { id },
+      select: { id: true, url: true, platform: true, projectId: true },
     });
 
-    if (!sourceItem) {
+    if (!sourceItem || sourceItem.projectId !== projectId) {
       return notFound("Source item not found");
     }
 
@@ -128,114 +128,56 @@ export async function POST(
     }
     const style: DraftStyle = styleRaw;
 
-    // --- Tighten bolts: rate-limit + idempotency guard using EventLog ---
-    // Serverless-safe (DB-backed): avoid accidental double-click spam.
-    const now = new Date();
-    const oneMinuteAgo = new Date(now.getTime() - 60_000);
-    const recent = await prisma.eventLog.findMany({
-      where: {
-        eventType: "DRAFT_CREATED",
-        entityType: "sourceItem",
-        entityId: sourceItem.id,
-        timestamp: { gte: oneMinuteAgo },
-      },
-      orderBy: { timestamp: "desc" },
-      take: 5,
-    });
-
-    // Idempotency: if the most recent generation matches the requested shape and is very recent,
-    // return its draftIds instead of creating duplicates.
-    const mostRecent = recent[0];
-    if (mostRecent) {
-      const ageMs = now.getTime() - mostRecent.timestamp.getTime();
-      const details = (mostRecent.details ?? {}) as unknown;
-      const d = details as DraftCreatedDetails;
-
-      const matchesShape = d?.count === count && d?.style === style;
-      const recentEnough = ageMs >= 0 && ageMs <= 10_000; // 10s window
-      const priorDraftIds = extractDraftIds(details);
-
-      if (recentEnough && matchesShape && priorDraftIds) {
-        const first = await prisma.draftArtifact.findUnique({
-          where: { id: priorDraftIds[0] },
-          select: { expiresAt: true },
-        });
-
-        return createdResponse({
-          draftIds: priorDraftIds,
-          ...(priorDraftIds.length === 1 ? { draftId: priorDraftIds[0] } : {}),
-          count,
-          style,
-          expiresAt: (first?.expiresAt ?? now).toISOString(),
-        });
-      }
-
-      // Rate limit: cap draft generations per SourceItem to reduce accidental spam.
-      // (Operator can still intentionally generate again after a short wait.)
-      if (recent.length >= 3) {
-        return errorResponse(
-          "RATE_LIMITED",
-          "Too many draft generations for this source item. Try again in a minute.",
-          429
-        );
-      }
-    }
-
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 30);
 
-    // --- Create draft variants (N rows) ---
-    const drafts = await prisma.$transaction(
-      Array.from({ length: count }).map((_, i) =>
-        prisma.draftArtifact.create({
-          data: {
-            kind: "x_reply",
-            status: "draft",
-            content: buildStubReply({
-              style,
-              variantIndex: i,
-              variantCount: count,
-              sourceUrl: sourceItem.url,
-            }),
-            sourceItemId: id,
-            entityId: null,
-            createdBy: "llm",
-            // Prisma Json? fields should be omitted when unknown/null.
-            // llmModel and llmMeta can be populated later when a real LLM integration exists.
-            expiresAt,
-            deletedAt: null,
-            projectId: sourceItem.projectId,
-          },
-        })
-      )
-    );
-
-    // Internal invariant assertion (defensive): transaction should create exactly N.
-    if (drafts.length !== count) {
-      console.error(
-        "Invariant violation: draft count mismatch",
-        JSON.stringify({ requested: count, created: drafts.length, sourceItemId: id })
+    // --- Create draft variants + event log atomically ---
+    const draftIds = await prisma.$transaction(async (tx) => {
+      const drafts = await Promise.all(
+        Array.from({ length: count }).map((_, i) =>
+          tx.draftArtifact.create({
+            data: {
+              kind: "x_reply",
+              status: "draft",
+              content: buildStubReply({
+                style,
+                variantIndex: i,
+                variantCount: count,
+                sourceUrl: sourceItem.url,
+              }),
+              sourceItemId: id,
+              entityId: null,
+              createdBy: "llm",
+              // Prisma Json? fields should be omitted when unknown/null.
+              // llmModel and llmMeta can be populated later when a real LLM integration exists.
+              expiresAt,
+              deletedAt: null,
+              projectId,
+            },
+          })
+        )
       );
-      return serverError("Draft generation failed");
-    }
 
-    const draftIds = drafts.map((d) => d.id);
+      const ids = drafts.map((d) => d.id);
 
-    // --- Event: single DRAFT_CREATED with batch metadata ---
-    await logEvent({
-      eventType: "DRAFT_CREATED",
-      entityType: "sourceItem",
-      entityId: sourceItem.id,
-      actor: "llm",
-      projectId: sourceItem.projectId,
-      details: {
-        draftIds,
-        count,
-        style,
-      },
+      await tx.eventLog.create({
+        data: {
+          eventType: "DRAFT_CREATED",
+          entityType: "sourceItem",
+          entityId: sourceItem.id,
+          actor: "llm",
+          projectId,
+          details: {
+            draftIds: ids,
+            count,
+            style,
+          },
+        },
+      });
+
+      return ids;
     });
 
-    // Keep response minimal and backwards-friendly.
     return createdResponse({
       draftIds,
       ...(draftIds.length === 1 ? { draftId: draftIds[0] } : {}),
@@ -258,15 +200,30 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
     const { id } = await context.params;
 
-    if (!id || typeof id !== "string") {
+    if (!id || !UUID_RE.test(id)) {
       return badRequest("Invalid id parameter");
+    }
+
+    const sourceItem = await prisma.sourceItem.findUnique({
+      where: { id },
+      select: { id: true, projectId: true },
+    });
+
+    if (!sourceItem || sourceItem.projectId !== projectId) {
+      return notFound("Source item not found");
     }
 
     const drafts = await prisma.draftArtifact.findMany({
       where: {
         sourceItemId: id,
+        projectId,
         deletedAt: null,
       },
       orderBy: {
