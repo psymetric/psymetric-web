@@ -9,6 +9,10 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 
+// This page reads from the database; it must not be statically prerendered at build time.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 interface NewsEntity {
   id: string;
   title: string;
@@ -30,7 +34,7 @@ async function getPublishedNews(): Promise<NewsEntity[]> {
       publishedAt: true,
     },
   });
-  
+
   return items;
 }
 
@@ -53,9 +57,7 @@ export default async function NewsPage() {
         {newsItems.map((item) => (
           <article key={item.id}>
             <h2>
-              <Link href={`/news/${item.slug}`}>
-                {item.title}
-              </Link>
+              <Link href={`/news/${item.slug}`}>{item.title}</Link>
             </h2>
             {item.summary && <p>{item.summary}</p>}
             {item.publishedAt && (
