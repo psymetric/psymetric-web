@@ -23,7 +23,7 @@ import {
   VALID_CONCEPT_KINDS,
   VALID_DIFFICULTIES,
 } from "@/lib/validation";
-import { DEFAULT_PROJECT_ID } from "@/lib/project";
+import { resolveProjectId } from "@/lib/project";
 import type { Prisma } from "@prisma/client";
 
 // =============================================================================
@@ -32,10 +32,16 @@ import type { Prisma } from "@prisma/client";
 
 export async function GET(request: NextRequest) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
     const searchParams = request.nextUrl.searchParams;
     const { page, limit, skip } = parsePagination(searchParams);
 
-    const where: Prisma.EntityWhereInput = {};
+    // Always scope by projectId
+    const where: Prisma.EntityWhereInput = { projectId };
 
     const entityType = searchParams.get("entityType");
     if (entityType) {
@@ -93,6 +99,11 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
     const body = await request.json();
 
     // --- Validate required fields ---
@@ -128,7 +139,9 @@ export async function POST(request: NextRequest) {
     // Per API contract: repoUrl required for projects
     if (body.entityType === "project") {
       if (!isValidUrl(body.repoUrl)) {
-        return badRequest("repoUrl is required for projects and must be a valid URL");
+        return badRequest(
+          "repoUrl is required for projects and must be a valid URL"
+        );
       }
     }
 
@@ -139,7 +152,7 @@ export async function POST(request: NextRequest) {
     const existingSlug = await prisma.entity.findUnique({
       where: {
         projectId_entityType_slug: {
-          projectId: DEFAULT_PROJECT_ID,
+          projectId,
           entityType: body.entityType,
           slug,
         },
@@ -164,7 +177,7 @@ export async function POST(request: NextRequest) {
               : null,
           repoUrl: body.repoUrl || null,
           status: "draft",
-          projectId: DEFAULT_PROJECT_ID,
+          projectId,
         },
       });
 
@@ -174,7 +187,7 @@ export async function POST(request: NextRequest) {
           entityType: body.entityType,
           entityId: newEntity.id,
           actor: "human",
-          projectId: DEFAULT_PROJECT_ID,
+          projectId,
           details: {
             title: newEntity.title,
             slug: newEntity.slug,

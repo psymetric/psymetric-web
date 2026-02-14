@@ -1,242 +1,82 @@
 /**
- * POST /api/source-items/[id]/promote — Atomic promote-to-draft
+ * GET /api/source-items
+ * Per docs/operations-planning-api/01-API-ENDPOINTS-AND-VALIDATION-CONTRACTS.md
  *
- * Multi-project hardened.
+ * Lists SourceItems with filtering by status, sourceType, platform.
+ * Supports pagination: ?page=1&limit=20
+ *
+ * Multi-project hardened:
  * - Resolves projectId from request
- * - Verifies SourceItem belongs to project
- * - Uses composite unique (projectId, entityType, slug)
- * - All mutations + event logs inside single $transaction
+ * - Scopes all reads and counts by projectId
  */
+
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
-  createdResponse,
+  listResponse,
   badRequest,
-  notFound,
   serverError,
+  parsePagination,
 } from "@/lib/api-response";
 import {
   isValidEnum,
-  isNonEmptyString,
-  slugify,
-  VALID_CONTENT_ENTITY_TYPES,
-  VALID_CONCEPT_KINDS,
+  VALID_SOURCE_TYPES,
+  VALID_SOURCE_ITEM_STATUSES,
+  VALID_PLATFORMS,
 } from "@/lib/validation";
 import { resolveProjectId } from "@/lib/project";
-import { ContentEntityType, EntityType, RelationType, ConceptKind } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function mapToEntityType(contentType: ContentEntityType): EntityType {
-  switch (contentType) {
-    case "guide":
-      return EntityType.guide;
-    case "concept":
-      return EntityType.concept;
-    case "project":
-      return EntityType.project;
-    case "news":
-      return EntityType.news;
-  }
-}
-
-function sourceRelationTypeFor(contentType: ContentEntityType): RelationType {
-  switch (contentType) {
-    case "guide":
-      return RelationType.GUIDE_REFERENCES_SOURCE;
-    case "concept":
-      return RelationType.CONCEPT_REFERENCES_SOURCE;
-    case "project":
-      return RelationType.PROJECT_REFERENCES_SOURCE;
-    case "news":
-      return RelationType.NEWS_REFERENCES_SOURCE;
-  }
-}
-
-export async function POST(
-  request: NextRequest,
-  context: { params: Promise<{ id: string }> }
-) {
+export async function GET(request: NextRequest) {
   try {
     const { projectId, error } = await resolveProjectId(request);
-    if (error) return badRequest(error);
-
-    const { id } = await context.params;
-    if (!id || !UUID_RE.test(id)) {
-      return badRequest("id must be a valid UUID");
+    if (error) {
+      return badRequest(error);
     }
 
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return badRequest("Invalid JSON body");
-    }
+    const searchParams = request.nextUrl.searchParams;
+    const { page, limit, skip } = parsePagination(searchParams);
 
-    if (!body || typeof body !== "object" || Array.isArray(body)) {
-      return badRequest("Request body must be an object");
-    }
+    // Always project-scoped
+    const where: Prisma.SourceItemWhereInput = { projectId };
 
-    const b = body as Record<string, unknown>;
-
-    if (!isValidEnum(b.entityType, VALID_CONTENT_ENTITY_TYPES)) {
-      return badRequest(
-        "entityType must be one of: " + VALID_CONTENT_ENTITY_TYPES.join(", ")
-      );
-    }
-
-    if (!isNonEmptyString(b.title)) {
-      return badRequest("title is required");
-    }
-
-    if (b.conceptKind !== undefined && b.conceptKind !== null) {
-      if (b.entityType !== "concept") {
-        return badRequest("conceptKind is only valid for concepts");
+    const status = searchParams.get("status");
+    if (status) {
+      if (!isValidEnum(status, VALID_SOURCE_ITEM_STATUSES)) {
+        return badRequest(`Invalid status: ${status}`);
       }
-      if (!isValidEnum(b.conceptKind, VALID_CONCEPT_KINDS)) {
-        return badRequest(
-          "conceptKind must be one of: " + VALID_CONCEPT_KINDS.join(", ")
-        );
+      where.status = status;
+    }
+
+    const sourceType = searchParams.get("sourceType");
+    if (sourceType) {
+      if (!isValidEnum(sourceType, VALID_SOURCE_TYPES)) {
+        return badRequest(`Invalid sourceType: ${sourceType}`);
       }
+      where.sourceType = sourceType;
     }
 
-    const contentEntityType = b.entityType as ContentEntityType;
-    const entityTypeForLogs = mapToEntityType(contentEntityType);
-    const title = b.title as string;
-    const conceptKindInput = b.conceptKind as string | undefined;
-
-    let resolvedConceptKind: ConceptKind | null = null;
-    if (contentEntityType === "concept") {
-      const value = conceptKindInput ?? "standard";
-      if (!Object.values(ConceptKind).includes(value as ConceptKind)) {
-        return badRequest(
-          "conceptKind must be one of: " + Object.values(ConceptKind).join(", ")
-        );
+    const platform = searchParams.get("platform");
+    if (platform) {
+      if (!isValidEnum(platform, VALID_PLATFORMS)) {
+        return badRequest(`Invalid platform: ${platform}`);
       }
-      resolvedConceptKind = ConceptKind[value as keyof typeof ConceptKind];
+      where.platform = platform;
     }
 
-    const sourceItem = await prisma.sourceItem.findUnique({
-      where: { id },
-      select: { id: true, status: true, url: true, projectId: true },
-    });
+    const [items, total] = await Promise.all([
+      prisma.sourceItem.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip,
+        take: limit,
+      }),
+      prisma.sourceItem.count({ where }),
+    ]);
 
-    if (!sourceItem || sourceItem.projectId !== projectId) {
-      return notFound("Source item not found");
-    }
-
-    if (sourceItem.status !== "ingested" && sourceItem.status !== "triaged") {
-      return badRequest(
-        `Cannot promote source in status "${sourceItem.status}".`
-      );
-    }
-
-    const slug = slugify(title);
-
-    const existingSlug = await prisma.entity.findUnique({
-      where: {
-        projectId_entityType_slug: {
-          projectId,
-          entityType: contentEntityType,
-          slug,
-        },
-      },
-      select: { id: true },
-    });
-
-    if (existingSlug) {
-      return badRequest(`Slug "${slug}" already exists for ${contentEntityType}`);
-    }
-
-    const relationType = sourceRelationTypeFor(contentEntityType);
-
-    const entity = await prisma.$transaction(async (tx) => {
-      const newEntity = await tx.entity.create({
-        data: {
-          entityType: contentEntityType,
-          title,
-          slug,
-          conceptKind: resolvedConceptKind,
-          status: "draft",
-          projectId,
-        },
-      });
-
-      await tx.entityRelation.create({
-        data: {
-          fromEntityType: entityTypeForLogs,
-          fromEntityId: newEntity.id,
-          relationType,
-          toEntityType: EntityType.sourceItem,
-          toEntityId: sourceItem.id,
-          projectId,
-        },
-      });
-
-      await tx.sourceItem.update({
-        where: { id: sourceItem.id },
-        data: { status: "used" },
-      });
-
-      await tx.eventLog.create({
-        data: {
-          eventType: "ENTITY_CREATED",
-          entityType: entityTypeForLogs,
-          entityId: newEntity.id,
-          actor: "human",
-          projectId,
-          details: {
-            title: newEntity.title,
-            slug: newEntity.slug,
-            promotedFromSource: sourceItem.id,
-          },
-        },
-      });
-
-      await tx.eventLog.create({
-        data: {
-          eventType: "RELATION_CREATED",
-          entityType: entityTypeForLogs,
-          entityId: newEntity.id,
-          actor: "human",
-          projectId,
-          details: {
-            relationType,
-            fromEntityId: newEntity.id,
-            toEntityId: sourceItem.id,
-          },
-        },
-      });
-
-      await tx.eventLog.create({
-        data: {
-          eventType: "SOURCE_TRIAGED",
-          entityType: EntityType.sourceItem,
-          entityId: sourceItem.id,
-          actor: "human",
-          projectId,
-          details: {
-            previousStatus: sourceItem.status,
-            newStatus: "used",
-            promotedToEntity: newEntity.id,
-          },
-        },
-      });
-
-      return newEntity;
-    });
-
-    return createdResponse({
-      id: entity.id,
-      entityType: entity.entityType,
-      title: entity.title,
-      slug: entity.slug,
-      status: entity.status,
-      createdAt: entity.createdAt.toISOString(),
-    });
+    return listResponse(items, { page, limit, total });
   } catch (error) {
-    console.error("POST /api/source-items/[id]/promote error:", error);
+    console.error("GET /api/source-items error:", error);
     return serverError();
   }
 }
