@@ -1,264 +1,211 @@
-# PsyMetric Roadmap (Authoritative — Doc-Aligned)
+# PsyMetric Roadmap (Binding)
 
-This roadmap is strictly derived from existing documentation.
-Each section references the source document that defines the requirement.
-
-If a feature is not listed in the active phase, it is out of scope.
-If a requirement exists in docs, it must appear here in a phase.
-
----
-
-# Phase 1 — AI News Launch (ACTIVE)
-
-## Objective
-Establish a traceable ingestion → interpretation → publish system for AI News.
-
-Derived from:
-- 00-SYSTEM-OVERVIEW.md
-- DB-ARCHITECTURE-PLAN.md
-- RELATIONSHIP-AND-EVENT-VOCABULARY.md
-- site-architecture docs
-- 07-ADMIN-DASHBOARD-SCOPE.md
-- 05-PUBLISHING-AND-INDEXING-RULES.md
-- 05-METRICS-AND-REPORTING.md
-- 04-LLM-OPERATING-RULES.md
-- 06-DEPLOYMENT-AND-INFRASTRUCTURE-BASELINE.md
-- 08-EXTENSION-INGESTION-ARCHITECTURE.md
-
----
-
-## 1. Database Spine (Derived from DB-ARCHITECTURE-PLAN.md)
-
-Required in Phase 1:
-- SourceItem model
-- Entity model
-- EntityRelation model
-- EventLog model
-- Video model scaffold (inactive workflow)
-- DraftArtifact model (scaffolding only, non-canonical)
-- DistributionEvent model
-- MetricSnapshot model
-- Enum vocabularies aligned with docs
-- URL deduplication for SourceItem
-- contentHash generation
-- No phantom enums
+This roadmap is the **single source of truth for scope**.
 
 Rules:
-- Database is canonical truth
-- DraftArtifact is NOT canonical truth
-- No silent mutation
-- All meaningful actions must be evented
+- If it’s not in the current active phase, it is out of scope.
+- Any scope change requires an explicit roadmap edit.
+- System invariants are non‑negotiable: project isolation, transactional mutations, event logging, determinism, API-only assistants.
+
+Related specs:
+- `docs/BYDA-S-SPEC.md`
+- `docs/VSCODE-EXTENSION-SPEC.md`
+- `docs/04-LLM-OPERATING-RULES.md`
+- `docs/07-RELATIONSHIP-AND-EVENT-VOCABULARY.md`
 
 ---
 
-## 2. Ingestion Layer (Derived from SYSTEM-OVERVIEW + EXTENSION-INGESTION-ARCHITECTURE)
+## Phase -1 — Multi-Project Hardening Milestone (DONE)
 
-Required in Phase 1:
-- Manual Source capture (dashboard)
-- Chrome extension capture (desktop)
-- Kiwi extension capture (Android)
-- Extension must capture visible X text at ingestion time
-- RSS ingestion
-- SOURCE_CAPTURED event logging
-- operatorIntent required
-- Recapture logs event, no duplicate rows
+Objective: make cross-project contamination structurally impossible and CI/build stable.
 
----
+Delivered:
+- `projectId` on major tables + composite uniqueness scoped by `projectId`
+- PostgreSQL trigger enforcement preventing cross-project `EntityRelation`
+- Deterministic DB hammer verifying:
+  - uniqueness probes
+  - event existence
+  - transaction rollback atomicity
+  - cross-project violation blocking
+- CI guardrail: lint + build + prisma generate with dummy DB URLs
+- Build-time DB access fixes for public pages
 
-## 3. Triage Layer (Derived from ADMIN-DASHBOARD-SCOPE)
-
-Required:
-- SourceItem status transitions:
-  - ingested
-  - triaged
-  - used
-  - archived
-- SOURCE_TRIAGED event logging
-- Notes append behavior
-- archivedAt set when archived
+Exit criteria: Actions green, hammer passes, repo stable. ✅
 
 ---
 
-## 4. Draft System (Derived from guardrails + extension architecture)
+## Phase 0 — AI News Launch Loop (ACTIVE)
 
-Required:
-- DraftArtifact table
-- DraftArtifact kind = x_reply (minimum)
-- DraftArtifact auto-expiry (~30 days)
-- DraftArtifact never influences canonical knowledge
-- DRAFT_CREATED event
-- DRAFT_EXPIRED event
-- Human-gated posting only
+Objective: establish a repeatable, traceable **ingest → interpret → draft → publish** loop for AI News.
 
-Rules:
-- Drafts are scaffolding
-- Drafts may be hard-deleted or tombstoned
+Scope:
+- Source capture (manual first; extension capture as available)
+- News entity creation/editing (project-scoped)
+- Publish lifecycle (human-only)
+- Event timeline visibility
+- Basic metrics snapshot recording (manual)
+
+Non-goals:
 - No autonomous publishing
+- No LLM-driven mutation
+- No BYDA-S audits required to ship news
+
+Exit criteria:
+- Consistent news cadence
+- No orphaned entities (all project-scoped)
+- Publish workflow reliable
+- Public `/news` index + detail pages stable and indexable
 
 ---
 
-## 5. Publish Lifecycle (Derived from PUBLISHING-AND-INDEXING-RULES)
+## Phase 1 — Operator Surface + MCP Read-Only Bridge (NEXT)
 
-Required:
-- Validation endpoint
-- Request publish
-- Human-only publish
-- Reject publish
-- Archive entity
-- Publish Queue UI
-- Validation visibility in dashboard
+Objective: prove the VS Code operator surface and MCP plumbing **without any write capability**.
 
-Rules:
-- Only humans may publish
-- publish sets publishedAt
-- archive sets archivedAt
-- Validation required before publish
-
----
-
-## 6. Public Website Layer (Derived from SITE-ARCHITECTURE-OVERVIEW)
-
-Required:
-- Main Site surface
-- Wiki surface
-- /news index (published only)
-- /news/[slug] detail page (published only)
-- Relationship-driven navigation
-- Canonical URLs
-- Draft entities never publicly routable
-- Sitemap generation from DB
-- Mobile-first rendering
-- Core Web Vitals compliance
-
-Rules:
-- UI is projection
-- Database is truth
-
----
-
-## 7. Admin Dashboard Layer (Derived from ADMIN-DASHBOARD-SCOPE)
-
-Required screens:
-- Source Inbox
-- Draft Library (DraftArtifact view)
-- Entity Editor
-- Relationship Management
-- Publish Queue
-- Preview (noindex)
-- Event timeline view
-- Validation failure visibility
-- LLM attribution visibility
-
----
-
-## 8. Distribution & Metrics (Derived from METRICS-AND-REPORTING)
-
-Required:
-- DistributionEvent table
-- Manual X posting workflow
-- MetricSnapshot table
-- Metrics snapshot storage (time-based)
-- MetricType vocabulary enforcement
-
-Rules:
-- Metrics are snapshots, not conclusions
-- Distribution ≠ Authority
-
----
-
-## Explicitly Out of Scope (Phase 1)
-
-- GraphRAG
-- Pattern detection engines
-- OpenClaw orchestration
-- Autonomous execution systems
-- Tool factories
-- Monetization systems
-
----
-
-## Exit Criteria
-
-Phase 1 is complete when:
-
-- Consistent AI news publishing cadence established
-- Full ingestion → publish loop operational
-- Extension capture operational (desktop + Android)
-- Draft reply workflow operational
-- Public news pages live and indexable
-- Dashboard fully operational per scope doc
-- Metrics snapshots being recorded
-- System fully rebuildable from repo + DB
-
----
-
-# Phase 2 — Structured Education Layer
-
-Derived from:
-- SYSTEM-OVERVIEW.md
-- RELATIONSHIP-AND-EVENT-VOCABULARY.md
-
-Objective:
-Expand canonical knowledge beyond News.
-
-Required:
-- Concepts fully populated
-- Guides
-- Cross-entity relationships
-- Wiki-driven navigation
-- Validation enforcement for citations
-
-Out of Scope:
-- Automated pattern detection
-
----
-
-# Phase 3 — Manual Pattern Recognition
-
-Derived from SYSTEM-OVERVIEW long-pipe model.
-
-Required:
-- Manual EventLog analysis
-- Relationship clustering
-- Friction documentation
-
----
-
-# Phase 4 — Assisted Intelligence Layer
-
-Derived from long-term architecture references in docs.
-
-Required:
-- GraphRAG
-- Pattern clustering
-- Gap detection
+Scope (MCP tools: read-only only):
+- `list_projects`
+- `search_entities`
+- `get_entity`
+- `get_entity_graph` (depth-limited)
 
 Constraints:
-- No autonomous publish
+- MCP validates request shape (UUID format, required fields), backend remains authoritative.
+- No LLM broker.
+- No caching.
+- No evidence ingest.
+- No patch apply.
+
+Exit criteria:
+- Tool input/output schemas defined (JSON schema or equivalent)
+- Standard error schema defined
+- VS Code extension can call all read tools against backend
+- projectId scoping verified end-to-end
+
+---
+
+## Phase 2 — BYDA-S Phase 3-A (S0) With Zero LLM (NEXT)
+
+Objective: implement the audit storage + rendering + apply pipeline **without LLM involvement**.
+
+Scope:
+- S0-only audit generator (deterministic, rules-based)
+- Store AuditReport as `DraftArtifact` (no schema migration required)
+- VS Code webview displays AuditReport and proposed patches (even if empty)
+- Apply endpoint exists and is fully transactional, but only supports strictly validated patch types
+
+Constraints:
+- All writes inside `prisma.$transaction()`
+- Every applied mutation emits canonical EventLog entries
+- Apply accepts **only** `auditDraftId + approvedPatchIds[]` and loads patches from stored report (no client-injected patch objects)
+
+Exit criteria:
+- DraftArtifact storage verified
+- VS Code rendering verified
+- Apply flow verified with atomic rollback behavior
+- Event logging verified
+
+---
+
+## Phase 3 — LLM Broker Integration for BYDA-S (Read + Propose Only)
+
+Objective: enable LLM-assisted audits that generate structured reports and patch proposals, while keeping mutation human-gated.
+
+Scope:
+- Backend calls broker; MCP does not call broker directly
+- Prompt versioning + model snapshot version capture
+- Deterministic checksum spec implemented and enforced
+- Cache-by-checksum (bounded TTL)
+- Strict output schema validation (reject malformed JSON)
+
+Constraints:
+- Audits may write DraftArtifact, but must not mutate canonical entities
+- Any proposed patch must carry evidence references or be severity-capped by backend rules
+
+Exit criteria:
+- Stable audit generation for one entity type
+- Caching works and is safe across model/version changes
+- Cost controls (rate limit + daily budget guard) in place
+
+---
+
+## Phase 4 — Patch Apply Expansion (Still Human-Gated)
+
+Objective: expand supported patch vocabulary while preserving safety.
+
+Scope:
+- Expand allowlisted patch types (only those mapped to backend-validated operations)
+- Idempotency guards for apply
+- Stale-audit detection (entity version / updatedAt gating)
+
+Constraints:
+- No auto-apply
+- No background runs
+- No cross-project operations
+
+Exit criteria:
+- Apply can safely handle common remediation actions
+- No injection vectors (patch IDs must exist in stored audit)
+
+---
+
+## Phase 5 — Structured Education Layer (Concepts / Guides / Wiki)
+
+Objective: expand beyond News into evergreen education and internal semantic cohesion.
+
+Scope:
+- Concepts + Guides + Projects as first-class canonical entities
+- Wiki projection and relationship-driven navigation
+- Internal linking discipline enforced by validation rules
+
+Exit criteria:
+- Canonical knowledge graph growing steadily
+- No orphan pages; relationships intentional and project-scoped
+
+---
+
+## Phase 6 — Experiments Layer
+
+Objective: publish structured experiments (e.g., BYDA validation) without destabilizing canonical education.
+
+Scope:
+- Experiments entity type (or modeled as Projects with a strict template)
+- Versioned experiment logs
+- Cross-links into Concepts/Guides/Projects
+
+Exit criteria:
+- Repeatable experiment format
+- Clear separation of experimental claims vs canonical knowledge
+
+---
+
+## Phase 7 — GraphRAG / Advanced Retrieval (FUTURE)
+
+Preconditions:
+- Mature entity graph
+- Consistent evidence ingestion
+- Stable audit and apply flows
+
+Constraints:
+- Retrieval assists drafting and audit; it does not bypass human approval.
+
+---
+
+## Phase 8 — OpenClaw Assistant / Agent Orchestration (FUTURE)
+
+Preconditions:
+- All assistants operate via API only
+- Mature dataset + strong invariants
+- Proven safe apply workflow
+
+Constraints:
+- No autonomous publishing
 - No uncontrolled state mutation
 
 ---
 
-# Phase 5 — OpenClaw / Agent Orchestration
+## Current Status Snapshot (Update as work completes)
 
-Derived from future-planning documents.
-
-Preconditions:
-- Mature structured dataset
-- Stable cadence
-- Proven manual pattern recognition
-
----
-
-# Current Status
-
-Active Phase: Phase 1
-Source Inbox: Implemented
-Extension architecture: Documented
-Public website: Missing
-DraftArtifact: Not implemented
-DistributionEvent: Not implemented
-MetricSnapshot: Not implemented
-Publish lifecycle: Partial
-
-This roadmap is binding and must be amended explicitly before scope changes occur.
+- Multi-project hardening: ✅ done
+- Phase 0 (AI News): 🟡 in progress
+- MCP read-only bridge: ⏳ next
+- BYDA-S S0 pipeline: ⏳ planned
