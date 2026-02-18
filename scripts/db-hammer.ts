@@ -42,6 +42,7 @@ import {
   SourceItemStatus,
   CapturedBy,
   MetricType,
+  ClaimType,
 } from "@prisma/client";
 import crypto from "node:crypto";
 
@@ -218,6 +219,16 @@ function safetyCheck(args: Args): void {
   if (args.projectB && !UUID_RE.test(args.projectB)) {
     throw new Error("--projectB must be a valid UUID");
   }
+}
+
+function deterministicSeoDateRange(seed: number): { dateStart: Date; dateEnd: Date } {
+  // Stable-ish but deterministic date window.
+  // Note: This is used only for reproducible uniqueness probes.
+  const base = new Date(Date.UTC(2026, 0, 1, 0, 0, 0));
+  const offsetDays = Math.abs(seed) % 28;
+  const dateStart = new Date(base.getTime() + offsetDays * 24 * 60 * 60 * 1000);
+  const dateEnd = new Date(dateStart.getTime() + 6 * 24 * 60 * 60 * 1000);
+  return { dateStart, dateEnd };
 }
 
 async function ensureProjects(
@@ -398,7 +409,7 @@ async function seedBaseline(projectId: string, projectSlug: string, seed: number
       update: { status: "published" },
     });
 
-    // MetricSnapshot
+    // MetricSnapshot (int)
     await tx.metricSnapshot.upsert({
       where: { id: metricId },
       create: {
@@ -485,6 +496,131 @@ async function seedBaseline(projectId: string, projectSlug: string, seed: number
     distributionId,
     metricId,
   };
+}
+
+async function seedSeoBaseline(params: {
+  projectId: string;
+  seed: number;
+  guideEntityId: string;
+}) {
+  const { projectId, seed, guideEntityId } = params;
+
+  const { dateStart, dateEnd } = deterministicSeoDateRange(seed);
+
+  // Use values that are intentionally identical across projects for project-scoped uniqueness proof.
+  const query = `db-hammer shared query ${seed}`;
+  const pageUrl = `https://example.com/news/shared-seo-${seed}`;
+
+  const searchPerformanceId = deterministicUuid(seed, `${projectId}|searchPerformance|seed`);
+  const quotableBlockId = deterministicUuid(seed, `${projectId}|quotableBlock|seed`);
+
+  await prisma.$transaction(async (tx) => {
+    // SearchPerformance: upsert by composite unique (projectId, query, pageUrl, dateStart, dateEnd)
+    await tx.searchPerformance.upsert({
+      where: {
+        projectId_query_pageUrl_dateStart_dateEnd: {
+          projectId,
+          query,
+          pageUrl,
+          dateStart,
+          dateEnd,
+        },
+      },
+      create: {
+        id: searchPerformanceId,
+        projectId,
+        entityId: guideEntityId,
+        pageUrl,
+        query,
+        impressions: 100,
+        clicks: 10,
+        ctr: 0.1,
+        avgPosition: 3.7,
+        dateStart,
+        dateEnd,
+      },
+      update: {
+        // Keep deterministic values stable across reruns.
+        impressions: 100,
+        clicks: 10,
+        ctr: 0.1,
+        avgPosition: 3.7,
+      },
+    });
+
+    // QuotableBlock: create/upsert by deterministic id
+    await tx.quotableBlock.upsert({
+      where: { id: quotableBlockId },
+      create: {
+        id: quotableBlockId,
+        projectId,
+        entityId: guideEntityId,
+        text: `db-hammer quotable ${seed}`,
+        claimType: ClaimType.statistic,
+        sourceCitation: "db-hammer",
+        topicTag: "db-hammer",
+      },
+      update: {
+        text: `db-hammer quotable ${seed}`,
+        claimType: ClaimType.statistic,
+      },
+    });
+
+    const details: Prisma.InputJsonObject = {
+      seed,
+      tool: "db-hammer",
+      model: "seo",
+    };
+
+    // Event: QUOTABLE_BLOCK_CREATED (canonical)
+    const qbEvent = {
+      eventType: EventType.QUOTABLE_BLOCK_CREATED,
+      entityType: EntityType.quotableBlock,
+      entityId: quotableBlockId,
+      actor: ActorType.system,
+      projectId,
+      details: {
+        ...details,
+        entityId: guideEntityId,
+      },
+    } satisfies Prisma.EventLogCreateArgs["data"];
+
+    // Event: SearchPerformance ingestion summary
+    // NOTE: EventType does not currently have a SearchPerformance-specific value.
+    // We log an ENTITY_UPDATED against the Project with details.model="searchPerformance" per SEO-RECORDING-SPEC.
+    const spEvent = {
+      eventType: EventType.ENTITY_UPDATED,
+      entityType: EntityType.project,
+      entityId: projectId,
+      actor: ActorType.system,
+      projectId,
+      details: {
+        ...details,
+        model: "searchPerformance",
+        query,
+        pageUrl,
+        dateStart: dateStart.toISOString(),
+        dateEnd: dateEnd.toISOString(),
+      },
+    } satisfies Prisma.EventLogCreateArgs["data"];
+
+    for (const l of [qbEvent, spEvent]) {
+      const existing = await tx.eventLog.findFirst({
+        where: {
+          projectId,
+          eventType: l.eventType,
+          entityType: l.entityType,
+          entityId: l.entityId,
+        },
+        select: { id: true },
+      });
+      if (!existing) {
+        await tx.eventLog.create({ data: l });
+      }
+    }
+  });
+
+  return { query, pageUrl, dateStart, dateEnd };
 }
 
 async function cleanupAtomicityProbeArtifacts(projectId: string, seed: number) {
@@ -674,6 +810,122 @@ async function runCrossProjectViolationProbe(
   }
 }
 
+async function runCrossProjectSeoViolationProbes(
+  projectAId: string,
+  projectBId: string,
+  seed: number
+) {
+  // Probes project integrity constraints on SEO tables.
+  // If these writes can cross-link entities across projects, we have a DB-layer isolation gap.
+
+  const guideA = await prisma.entity.findFirst({
+    where: {
+      projectId: projectAId,
+      entityType: ContentEntityType.guide,
+      slug: `shared-slug-${seed}`,
+    },
+    select: { id: true },
+  });
+
+  const guideB = await prisma.entity.findFirst({
+    where: {
+      projectId: projectBId,
+      entityType: ContentEntityType.guide,
+      slug: `shared-slug-${seed}`,
+    },
+    select: { id: true },
+  });
+
+  if (!guideA || !guideB) {
+    throw new Error("SEO cross-project probes missing seeded guides");
+  }
+
+  // QuotableBlock probe
+  const qbProbeId = deterministicUuid(seed, "cross-project|quotableBlock");
+  await prisma.quotableBlock.deleteMany({ where: { id: qbProbeId } });
+
+  try {
+    await prisma.quotableBlock.create({
+      data: {
+        id: qbProbeId,
+        projectId: projectAId,
+        entityId: guideB.id,
+        text: "db-hammer cross-project quotable block probe",
+        claimType: ClaimType.statistic,
+        sourceCitation: "db-hammer",
+        topicTag: "db-hammer",
+      },
+    });
+
+    // If we got here, the invariant was violated.
+    await prisma.quotableBlock.delete({ where: { id: qbProbeId } });
+    throw new Error(
+      "Cross-project SEO probe failed: was able to create QuotableBlock pointing to an entity in another project"
+    );
+  } catch (e) {
+    if (
+      e instanceof Error &&
+      e.message.includes("Cross-project SEO probe failed")
+    ) {
+      throw e;
+    }
+    const code = getPrismaKnownErrorCode(e);
+    if (code) {
+      console.log(
+        `Cross-project QuotableBlock probe blocked as expected (Prisma code: ${code}).`
+      );
+    } else {
+      console.log("Cross-project QuotableBlock probe blocked as expected.");
+    }
+  }
+
+  // SearchPerformance probe
+  const spProbeId = deterministicUuid(seed, "cross-project|searchPerformance");
+  await prisma.searchPerformance.deleteMany({ where: { id: spProbeId } });
+
+  const { dateStart, dateEnd } = deterministicSeoDateRange(seed + 1);
+  const query = `db-hammer cross-project query ${seed}`;
+  const pageUrl = `https://example.com/news/cross-project-seo-${seed}`;
+
+  try {
+    await prisma.searchPerformance.create({
+      data: {
+        id: spProbeId,
+        projectId: projectAId,
+        entityId: guideB.id,
+        pageUrl,
+        query,
+        impressions: 1,
+        clicks: 0,
+        ctr: 0,
+        avgPosition: 10,
+        dateStart,
+        dateEnd,
+      },
+    });
+
+    await prisma.searchPerformance.delete({ where: { id: spProbeId } });
+    throw new Error(
+      "Cross-project SEO probe failed: was able to create SearchPerformance pointing to an entity in another project"
+    );
+  } catch (e) {
+    if (
+      e instanceof Error &&
+      e.message.includes("Cross-project SEO probe failed")
+    ) {
+      throw e;
+    }
+    const code = getPrismaKnownErrorCode(e);
+    if (code) {
+      console.log(
+        `Cross-project SearchPerformance probe blocked as expected (Prisma code: ${code}).`
+      );
+    } else {
+      console.log("Cross-project SearchPerformance probe blocked as expected.");
+    }
+  }
+}
+
 async function runChecks(projectAId: string, projectBId: string, seed: number) {
   // 1) Isolation: shared slug exists in both projects, but counts are project-scoped.
   const slugShared = `shared-slug-${seed}`;
@@ -767,12 +1019,63 @@ async function runChecks(projectAId: string, projectBId: string, seed: number) {
     }
   }
 
-  // 4) Event invariant probe: ensure at least one of each expected event type exists per project
+  // 4) SEO uniqueness: duplicate SearchPerformance unique within same project must fail.
+  const { dateStart, dateEnd } = deterministicSeoDateRange(seed);
+  const query = `db-hammer shared query ${seed}`;
+  const pageUrl = `https://example.com/news/shared-seo-${seed}`;
+
+  try {
+    await prisma.searchPerformance.create({
+      data: {
+        id: deterministicUuid(seed, `duplicate|searchPerformance|${projectAId}`),
+        projectId: projectAId,
+        entityId: aGuide.id,
+        pageUrl,
+        query,
+        impressions: 1,
+        clicks: 0,
+        ctr: 0,
+        avgPosition: 10,
+        dateStart,
+        dateEnd,
+      },
+    });
+    throw new Error(
+      "SEO uniqueness check failed: duplicate SearchPerformance should have thrown"
+    );
+  } catch (e) {
+    const code = getPrismaKnownErrorCode(e);
+    if (code !== "P2002") {
+      throw new Error(
+        `Expected Prisma P2002 for duplicate SearchPerformance, got: ${code ?? "unknown"}`
+      );
+    }
+  }
+
+  // 5) Isolation: same SearchPerformance unique key is allowed across projects.
+  const bSpCount = await prisma.searchPerformance.count({
+    where: {
+      projectId: projectBId,
+      query,
+      pageUrl,
+      dateStart,
+      dateEnd,
+    },
+  });
+  if (bSpCount !== 1) {
+    throw new Error(
+      `SEO isolation check failed: expected project B to have 1 SearchPerformance for shared key; got ${bSpCount}`
+    );
+  }
+
+  // 6) Event invariant probe: ensure at least one of each expected event type exists per project
   const expected: EventType[] = [
     EventType.ENTITY_CREATED,
     EventType.RELATION_CREATED,
     EventType.DISTRIBUTION_PUBLISHED,
     EventType.METRIC_SNAPSHOT_RECORDED,
+    EventType.QUOTABLE_BLOCK_CREATED,
+    EventType.ENTITY_UPDATED,
   ];
 
   for (const pid of [projectAId, projectBId]) {
@@ -788,18 +1091,56 @@ async function runChecks(projectAId: string, projectBId: string, seed: number) {
     }
   }
 
-  // 5) Atomicity probe: a thrown error inside $transaction must roll back state + events.
+  // 7) Atomicity probe: a thrown error inside $transaction must roll back state + events.
   await runAtomicityProbe(projectAId, seed);
   await runAtomicityProbe(projectBId, seed);
 
-  // 6) Cross-project violation probe: relationships must not be able to connect across projects.
+  // 8) Cross-project violation probe: relationships must not be able to connect across projects.
   await runCrossProjectViolationProbe(projectAId, projectBId, seed);
+
+  // 9) Cross-project violation probes: SEO tables must not be able to cross-link entities across projects.
+  await runCrossProjectSeoViolationProbes(projectAId, projectBId, seed);
+
+  // 10) MetricSnapshot Float sanity: ensure float values persist.
+  const floatMetricId = deterministicUuid(seed, `float-metric|${projectAId}`);
+  await prisma.metricSnapshot.deleteMany({ where: { id: floatMetricId } });
+
+  await prisma.metricSnapshot.create({
+    data: {
+      id: floatMetricId,
+      projectId: projectAId,
+      metricType: MetricType.yt_ctr,
+      value: 0.05,
+      platform: Platform.youtube,
+      capturedAt: new Date(),
+      entityType: ContentEntityType.guide,
+      entityId: aGuide.id,
+      notes: "db-hammer float probe",
+    },
+  });
+
+  const floatMetric = await prisma.metricSnapshot.findUnique({
+    where: { id: floatMetricId },
+    select: { value: true },
+  });
+
+  if (!floatMetric || floatMetric.value !== 0.05) {
+    throw new Error(
+      `MetricSnapshot float probe failed: expected 0.05, got ${floatMetric?.value ?? "null"}`
+    );
+  }
 }
 
 async function cleanupProjects(projectIds: string[]) {
   // Delete in FK-safe order, strictly bounded by projectId.
   await prisma.$transaction(async (tx) => {
     await tx.eventLog.deleteMany({ where: { projectId: { in: projectIds } } });
+    await tx.searchPerformance.deleteMany({
+      where: { projectId: { in: projectIds } },
+    });
+    await tx.quotableBlock.deleteMany({
+      where: { projectId: { in: projectIds } },
+    });
     await tx.metricSnapshot.deleteMany({
       where: { projectId: { in: projectIds } },
     });
@@ -861,9 +1202,22 @@ async function main() {
     }
 
     if (args.seedData) {
-      await seedBaseline(projectAId, slugA, args.seed);
-      await seedBaseline(projectBId, slugB, args.seed);
-      console.log("Seeded baseline graph for both projects.");
+      const seededA = await seedBaseline(projectAId, slugA, args.seed);
+      const seededB = await seedBaseline(projectBId, slugB, args.seed);
+
+      await seedSeoBaseline({
+        projectId: projectAId,
+        seed: args.seed,
+        guideEntityId: seededA.entityGuideId,
+      });
+
+      await seedSeoBaseline({
+        projectId: projectBId,
+        seed: args.seed,
+        guideEntityId: seededB.entityGuideId,
+      });
+
+      console.log("Seeded baseline graph + SEO records for both projects.");
     }
 
     if (args.runChecks) {
