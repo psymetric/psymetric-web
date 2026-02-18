@@ -15,6 +15,7 @@ import {
   createdResponse,
   successResponse,
   badRequest,
+  conflict,
   serverError,
 } from "@/lib/api-response";
 import {
@@ -25,10 +26,15 @@ import {
   VALID_SOURCE_TYPES,
   VALID_PLATFORMS,
 } from "@/lib/validation";
-import { DEFAULT_PROJECT_ID } from "@/lib/project";
+import { resolveProjectId } from "@/lib/project";
 
 export async function POST(request: NextRequest) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
     const body = await request.json();
 
     // --- Validate required fields ---
@@ -57,11 +63,19 @@ export async function POST(request: NextRequest) {
     }
 
     // --- Check for existing SourceItem with this URL ---
+    // NOTE: SourceItem.url is globally unique in the schema. Enforce project isolation explicitly.
     const existing = await prisma.sourceItem.findUnique({
       where: { url: body.url },
     });
 
     if (existing) {
+      // If the URL exists but belongs to another project, do not mutate across projects.
+      if (existing.projectId !== projectId) {
+        return conflict(
+          "A SourceItem with this URL already exists in a different project"
+        );
+      }
+
       // --- Recapture: URL already exists --- (transactional)
       await prisma.$transaction(async (tx) => {
         if (body.notes) {
@@ -79,7 +93,7 @@ export async function POST(request: NextRequest) {
             entityType: "sourceItem",
             entityId: existing.id,
             actor: "human",
-            projectId: DEFAULT_PROJECT_ID,
+            projectId,
             details: {
               recapture: true,
               sourceType: body.sourceType,
@@ -115,7 +129,7 @@ export async function POST(request: NextRequest) {
           operatorIntent: body.operatorIntent,
           notes: body.notes || null,
           status: "ingested",
-          projectId: DEFAULT_PROJECT_ID,
+          projectId,
         },
       });
 
@@ -125,7 +139,7 @@ export async function POST(request: NextRequest) {
           entityType: "sourceItem",
           entityId: item.id,
           actor: "human",
-          projectId: DEFAULT_PROJECT_ID,
+          projectId,
           details: {
             sourceType: item.sourceType,
             url: item.url,

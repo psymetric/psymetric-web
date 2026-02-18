@@ -1,8 +1,8 @@
 # 07 — RELATIONSHIP & EVENT VOCABULARY
 
 **Filename:** `07-RELATIONSHIP-AND-EVENT-VOCABULARY.md`  
-**Version:** 1.2  
-**Changelog:** Renamed SOCIAL_POST_* → DISTRIBUTION_*. Added ENTITY_VALIDATION_FAILED.
+**Version:** 1.3  
+**Changelog:** v1.3: Added DRAFT_CREATED, DRAFT_EXPIRED, QUOTABLE_BLOCK_CREATED. Added EventLog conventions section. v1.2: Renamed SOCIAL_POST_* → DISTRIBUTION_*. Added ENTITY_VALIDATION_FAILED.
 
 ## Purpose
 
@@ -118,6 +118,13 @@ Note: DistributionEvents track **manual distribution only**. The system does NOT
 - `VIDEO_CREATED`
 - `VIDEO_PUBLISHED`
 
+### Draft & Artifact Events
+- `DRAFT_CREATED`
+- `DRAFT_EXPIRED`
+
+### Quotable Block Events
+- `QUOTABLE_BLOCK_CREATED`
+
 ### Metrics & System Events
 - `METRIC_SNAPSHOT_RECORDED`
 - `SYSTEM_CONFIG_CHANGED`
@@ -129,6 +136,40 @@ Note: DistributionEvents track **manual distribution only**. The system does NOT
   - `entityType`
   - `entityId`
   - `actor`
+
+---
+
+## EventLog Conventions
+
+Every `EventLog` row must set `entityType` to identify **which table** the `entityId` references. This is a strict invariant — no semantic overloading.
+
+### Standard Events (single-row mutations)
+
+| EventType | entityType | entityId points to |
+|---|---|---|
+| `ENTITY_CREATED` | the entity's `ContentEntityType` value (guide, concept, etc.) | Entity.id |
+| `ENTITY_UPDATED` | same as above | Entity.id |
+| `ENTITY_PUBLISHED` | same as above | Entity.id |
+| `ENTITY_ARCHIVED` | same as above | Entity.id |
+| `DRAFT_CREATED` | `draftArtifact` | DraftArtifact.id |
+| `DRAFT_EXPIRED` | `draftArtifact` | DraftArtifact.id |
+| `QUOTABLE_BLOCK_CREATED` | `quotableBlock` | QuotableBlock.id |
+| `METRIC_SNAPSHOT_RECORDED` (single) | `metricSnapshot` | MetricSnapshot.id |
+| `SOURCE_CAPTURED` | `sourceItem` | SourceItem.id |
+| `DISTRIBUTION_CREATED` | `distributionEvent` | DistributionEvent.id |
+| `VIDEO_CREATED` | `video` | Video.id |
+
+### Batch Ingest Events
+
+Batch operations (e.g., GSC data pull) produce a single summary event, not one event per row.
+
+| EventType | entityType | entityId | details must include |
+|---|---|---|---|
+| `METRIC_SNAPSHOT_RECORDED` (batch) | `project` | Project.id | `{ source, model, rowCount, dateStart, dateEnd }` |
+
+The `details.model` field disambiguates what was ingested (e.g., `"searchPerformance"`, `"metricSnapshot"`).
+
+This convention keeps EventLog volume proportional to operator actions, not data volume.
 
 ---
 

@@ -9,6 +9,10 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 
+// This page reads from the database; it must not be statically prerendered at build time.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 interface NewsEntity {
   id: string;
   title: string;
@@ -30,7 +34,7 @@ async function getNewsItem(slug: string): Promise<NewsEntity | null> {
       publishedAt: true,
     },
   });
-  
+
   return entity;
 }
 
@@ -47,7 +51,7 @@ export default async function NewsItemPage(
   return (
     <article>
       <h1>{newsItem.title}</h1>
-      
+
       {newsItem.summary && (
         <div>
           <h2>Summary</h2>
@@ -65,7 +69,7 @@ export default async function NewsItemPage(
       {newsItem.publishedAt && (
         <div>
           <p>
-            Published: {" "}
+            Published:{" "}
             <time dateTime={newsItem.publishedAt.toISOString()}>
               {newsItem.publishedAt.toLocaleDateString()}
             </time>

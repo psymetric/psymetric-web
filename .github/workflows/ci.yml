@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "audit/**"
+
+jobs:
+  lint-build:
+    runs-on: ubuntu-latest
+
+    # Prisma schema requires these env vars to exist even if we don't connect.
+    # We intentionally use dummy localhost URLs to avoid touching any real DB.
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/psymetric_ci?schema=public
+      DIRECT_DATABASE_URL: postgresql://ci:ci@localhost:5432/psymetric_ci?schema=public
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build

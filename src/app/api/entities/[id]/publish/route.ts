@@ -1,11 +1,13 @@
 /**
  * POST /api/entities/[id]/publish — Final publish action (human-gated)
  *
- * Phase 1 Publish Lifecycle - Chunk 3: Publish endpoint
- * - Human-gated publish with optional token authentication
- * - Enforces state transitions (publish_requested -> published)
- * - Sets publishedAt timestamp and canonical URL
+ * Multi-project hardened:
+ * - Resolves projectId from request
+ * - Verifies entity belongs to project
+ * - Enforces state transitions
+ * - All mutation + event log inside $transaction()
  */
+
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
@@ -13,31 +15,41 @@ import {
   notFound,
   errorResponse,
   unauthorized,
+  badRequest,
   serverError,
 } from "@/lib/api-response";
+import { resolveProjectId } from "@/lib/project";
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function POST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) return badRequest(error);
+
     const { id } = await context.params;
 
-    if (!id || typeof id !== "string") {
-      return errorResponse("BAD_REQUEST", "Invalid id parameter", 400);
+    if (!id || typeof id !== "string" || !UUID_RE.test(id)) {
+      return badRequest("id must be a valid UUID");
     }
 
-    // Auth guard: Optional PUBLISH_TOKEN check
+    // Optional PUBLISH_TOKEN guard
     const requiredToken = process.env.PUBLISH_TOKEN;
     if (requiredToken) {
       const auth = request.headers.get("authorization") ?? "";
-      const token = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
+      const token = auth.startsWith("Bearer ")
+        ? auth.slice("Bearer ".length)
+        : "";
       if (token !== requiredToken) {
         return unauthorized("Invalid or missing publish token");
       }
     }
 
-    // Load entity
+    // Load entity with project verification
     const entity = await prisma.entity.findUnique({
       where: { id },
       select: {
@@ -51,20 +63,18 @@ export async function POST(
       },
     });
 
-    if (!entity) {
+    if (!entity || entity.projectId !== projectId) {
       return notFound("Entity not found");
     }
 
-    // Enforce state transition: only from publish_requested
     if (entity.status !== "publish_requested") {
       return errorResponse(
         "INVALID_STATE_TRANSITION",
-        `Cannot publish from status '${entity.status}'. Entity must be in 'publish_requested' status.`,
+        `Cannot publish from status '${entity.status}'. Must be 'publish_requested'.`,
         409
       );
     }
 
-    // Guard: slug is required for canonicalUrl generation
     if (!entity.slug || entity.slug.trim().length === 0) {
       return errorResponse(
         "VALIDATION_FAILED",
@@ -74,8 +84,7 @@ export async function POST(
     }
 
     const now = new Date();
-    
-    // Generate canonical URL if not already set
+
     let canonicalUrl = entity.canonicalUrl;
     if (!canonicalUrl) {
       const urlMap = {
@@ -84,19 +93,10 @@ export async function POST(
         project: `/projects/${entity.slug}`,
         news: `/news/${entity.slug}`,
       };
-      canonicalUrl = urlMap[entity.entityType as keyof typeof urlMap];
+      canonicalUrl =
+        urlMap[entity.entityType as keyof typeof urlMap] ?? undefined;
     }
 
-    // Prepare event details
-    const eventDetails: { from: string; to: string; canonicalUrl?: string } = {
-      from: "publish_requested",
-      to: "published",
-    };
-    if (canonicalUrl) {
-      eventDetails.canonicalUrl = canonicalUrl;
-    }
-
-    // Transactional publish + event log (atomic)
     const updatedEntity = await prisma.$transaction(async (tx) => {
       const updated = await tx.entity.update({
         where: { id },
@@ -113,8 +113,12 @@ export async function POST(
           entityType: entity.entityType,
           entityId: entity.id,
           actor: "human",
-          projectId: entity.projectId,
-          details: eventDetails,
+          projectId,
+          details: {
+            from: "publish_requested",
+            to: "published",
+            canonicalUrl,
+          },
         },
       });
 

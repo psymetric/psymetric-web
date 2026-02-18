@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+
+    // PsyMetric repo ignores:
+    // MCP tools are maintained as a separate subsystem and are not held
+    // to the core app's no-`any` lint invariants.
+    "mcp/**",
   ]),
 ]);
 

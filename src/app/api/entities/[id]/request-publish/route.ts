@@ -5,6 +5,11 @@
  * - Validates entity before allowing publish request
  * - Enforces state transitions (draft -> publish_requested)
  * - Logs validation failures and publish requests
+ *
+ * Multi-project hardened:
+ * - Resolves projectId from request
+ * - Verifies entity belongs to project
+ * - Uses resolved projectId for all events
  */
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -12,23 +17,31 @@ import {
   successResponse,
   notFound,
   errorResponse,
+  badRequest,
   serverError,
 } from "@/lib/api-response";
 import { validateEntityForPublish } from "@/lib/entity-validation";
 import type { Prisma } from "@prisma/client";
+import { resolveProjectId } from "@/lib/project";
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function POST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) return badRequest(error);
+
     const { id } = await context.params;
 
-    if (!id || typeof id !== "string") {
-      return errorResponse("BAD_REQUEST", "Invalid id parameter", 400);
+    if (!id || typeof id !== "string" || !UUID_RE.test(id)) {
+      return badRequest("id must be a valid UUID");
     }
 
-    // Load entity
+    // Load entity (and verify ownership)
     const entity = await prisma.entity.findUnique({
       where: { id },
       select: {
@@ -44,7 +57,7 @@ export async function POST(
       },
     });
 
-    if (!entity) {
+    if (!entity || entity.projectId !== projectId) {
       return notFound("Entity not found");
     }
 
@@ -61,12 +74,19 @@ export async function POST(
     const validation = await validateEntityForPublish({ entity });
 
     if (validation.status === "fail") {
-      // Log validation failure event (no state change, so standalone is acceptable)
-      const details = {
+      // Log validation failure event (no state change)
+      const errorsJson: Prisma.InputJsonArray = validation.errors.map((e) => ({
+        code: e.code,
+        category: e.category,
+        level: e.level,
+        message: e.message,
+      }));
+
+      const details: Prisma.InputJsonObject = {
         status: validation.status,
         categories: validation.categories,
-        errors: validation.errors,
-      } as unknown as Prisma.InputJsonValue;
+        errors: errorsJson,
+      };
 
       await prisma.eventLog.create({
         data: {
@@ -74,7 +94,7 @@ export async function POST(
           entityType: entity.entityType,
           entityId: entity.id,
           actor: "human",
-          projectId: entity.projectId,
+          projectId,
           details,
         },
       });
@@ -103,7 +123,7 @@ export async function POST(
           entityType: entity.entityType,
           entityId: entity.id,
           actor: "human",
-          projectId: entity.projectId,
+          projectId,
           details: {
             from: "draft",
             to: "publish_requested",

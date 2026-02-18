@@ -1,11 +1,11 @@
 /**
  * GET /api/events — List EventLog entries with filtering
  *
- * Phase 1 read-only EventLog timeline endpoint
- * - Provides deterministic filtering and pagination
- * - No writes, no EventLog emissions, no aggregation
- * - Mirrors existing GET list patterns
+ * Multi-project hardened:
+ * - Resolves projectId from request
+ * - Scopes all reads and counts by projectId
  */
+
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
@@ -14,43 +14,53 @@ import {
   serverError,
   parsePagination,
 } from "@/lib/api-response";
+import { resolveProjectId } from "@/lib/project";
 import { EventType, EntityType, ActorType } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 
-// UUID validation regex
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function isEnumValue<T extends Record<string, string>>(
+  enumObj: T,
+  value: unknown
+): value is T[keyof T] {
+  return typeof value === "string" && Object.values(enumObj).includes(value);
+}
+
 export async function GET(request: NextRequest) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
     const searchParams = request.nextUrl.searchParams;
     const { page, limit, skip } = parsePagination(searchParams);
 
-    const where: Prisma.EventLogWhereInput = {};
+    // 🔒 Always project-scoped
+    const where: Prisma.EventLogWhereInput = { projectId };
 
-    // EventType filter
     const eventType = searchParams.get("eventType");
     if (eventType) {
-      if (!Object.values(EventType).includes(eventType as EventType)) {
+      if (!isEnumValue(EventType, eventType)) {
         return badRequest(
           `eventType must be one of: ${Object.values(EventType).join(", ")}`
         );
       }
-      where.eventType = eventType as EventType;
+      where.eventType = eventType;
     }
 
-    // EntityType filter
     const entityType = searchParams.get("entityType");
     if (entityType) {
-      if (!Object.values(EntityType).includes(entityType as EntityType)) {
+      if (!isEnumValue(EntityType, entityType)) {
         return badRequest(
           `entityType must be one of: ${Object.values(EntityType).join(", ")}`
         );
       }
-      where.entityType = entityType as EntityType;
+      where.entityType = entityType;
     }
 
-    // EntityId filter (validate UUID format)
     const entityId = searchParams.get("entityId");
     if (entityId) {
       if (!UUID_RE.test(entityId)) {
@@ -59,18 +69,16 @@ export async function GET(request: NextRequest) {
       where.entityId = entityId;
     }
 
-    // Actor filter
     const actor = searchParams.get("actor");
     if (actor) {
-      if (!Object.values(ActorType).includes(actor as ActorType)) {
+      if (!isEnumValue(ActorType, actor)) {
         return badRequest(
           `actor must be one of: ${Object.values(ActorType).join(", ")}`
         );
       }
-      where.actor = actor as ActorType;
+      where.actor = actor;
     }
 
-    // Date range filters
     const timestampFilter: Prisma.DateTimeFilter = {};
 
     const after = searchParams.get("after");
@@ -98,10 +106,7 @@ export async function GET(request: NextRequest) {
     const [events, total] = await Promise.all([
       prisma.eventLog.findMany({
         where,
-        orderBy: [
-          { timestamp: "desc" },
-          { id: "desc" },
-        ],
+        orderBy: [{ timestamp: "desc" }, { id: "desc" }],
         skip,
         take: limit,
       }),

@@ -1,43 +1,58 @@
 /**
  * POST /api/entities/[id]/reject — Reject publish request
  *
- * Phase 1 Publish Lifecycle - Chunk 2: Publish review flow
- * - Rejects entity publish request and returns to draft status
- * - Enforces state transitions (publish_requested -> draft)
- * - Logs rejection with optional reason
+ * Multi-project hardened:
+ * - Resolves projectId from request
+ * - Verifies entity belongs to project
+ * - Enforces state transition (publish_requested -> draft)
+ * - All mutation + event log inside $transaction()
  */
+
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   successResponse,
   notFound,
   errorResponse,
+  badRequest,
   serverError,
 } from "@/lib/api-response";
+import { resolveProjectId } from "@/lib/project";
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function readReason(body: unknown): string | undefined {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return undefined;
+  const r = (body as Record<string, unknown>).reason;
+  if (typeof r !== "string") return undefined;
+  const trimmed = r.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
 
 export async function POST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) return badRequest(error);
+
     const { id } = await context.params;
 
-    if (!id || typeof id !== "string") {
-      return errorResponse("BAD_REQUEST", "Invalid id parameter", 400);
+    if (!id || typeof id !== "string" || !UUID_RE.test(id)) {
+      return badRequest("id must be a valid UUID");
     }
 
-    // Parse optional reason from request body
+    // Parse optional reason from request body (never throws lint via any)
     let reason: string | undefined;
     try {
-      const body = await request.json();
-      if (body.reason && typeof body.reason === "string" && body.reason.trim().length > 0) {
-        reason = body.reason.trim();
-      }
+      const body: unknown = await request.json();
+      reason = readReason(body);
     } catch {
-      // JSON parsing failed or no body - continue without reason
+      // Ignore invalid JSON body; reason remains undefined
     }
 
-    // Load entity
     const entity = await prisma.entity.findUnique({
       where: { id },
       select: {
@@ -49,20 +64,18 @@ export async function POST(
       },
     });
 
-    if (!entity) {
+    if (!entity || entity.projectId !== projectId) {
       return notFound("Entity not found");
     }
 
-    // Enforce state transition: only from publish_requested
     if (entity.status !== "publish_requested") {
       return errorResponse(
         "INVALID_STATE_TRANSITION",
-        `Cannot reject from status '${entity.status}'. Entity must be in 'publish_requested' status.`,
+        `Cannot reject from status '${entity.status}'. Must be 'publish_requested'.`,
         409
       );
     }
 
-    // Prepare event details
     const eventDetails: { from: string; to: string; reason?: string } = {
       from: "publish_requested",
       to: "draft",
@@ -71,7 +84,6 @@ export async function POST(
       eventDetails.reason = reason;
     }
 
-    // Transactional reject + event log (atomic)
     const updatedEntity = await prisma.$transaction(async (tx) => {
       const updated = await tx.entity.update({
         where: { id },
@@ -86,7 +98,7 @@ export async function POST(
           entityType: entity.entityType,
           entityId: entity.id,
           actor: "human",
-          projectId: entity.projectId,
+          projectId,
           details: eventDetails,
         },
       });
