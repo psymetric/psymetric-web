@@ -1,5 +1,6 @@
 // PsyMetric Prisma Schema — Multi-Project Scoping
 // Derived from: DB-ARCHITECTURE-PLAN.md, 07-RELATIONSHIP-AND-EVENT-VOCABULARY.md
+// SEO instrumentation: SEO-SCHEMA-MIGRATION-PLAN.md, SEO-SUBSYSTEM-FINAL-CONVERGENCE.md
 // Project scoping: every domain entity belongs to exactly one Project.
 
 generator client {
@@ -30,6 +31,11 @@ enum Platform {
   x
   youtube
   github
+  reddit
+  hackernews
+  substack
+  linkedin
+  discord
   other
 }
 
@@ -56,6 +62,9 @@ enum EntityType {
   sourceItem
   sourceFeed
   metricSnapshot
+  quotableBlock
+  searchPerformance
+  draftArtifact
 }
 
 enum ContentEntityType {
@@ -108,6 +117,7 @@ enum RelationType {
 }
 
 // EventType — from docs/07-RELATIONSHIP-AND-EVENT-VOCABULARY.md
+// SEO additions: SEO-SUBSYSTEM-FINAL-CONVERGENCE.md
 enum EventType {
   ENTITY_CREATED
   ENTITY_UPDATED
@@ -129,6 +139,7 @@ enum EventType {
   SYSTEM_CONFIG_CHANGED
   DRAFT_CREATED
   DRAFT_EXPIRED
+  QUOTABLE_BLOCK_CREATED
 }
 
 enum ActorType {
@@ -139,6 +150,13 @@ enum ActorType {
 
 enum DraftArtifactKind {
   x_reply
+  seo_keyword_research
+  seo_serp_snapshot
+  seo_content_brief
+  seo_competitor_notes
+  seo_llm_mentions
+  seo_llm_response
+  byda_s_audit
 }
 
 enum DraftArtifactStatus {
@@ -152,6 +170,25 @@ enum MetricType {
   x_reposts
   x_replies
   x_bookmarks
+  gsc_impressions
+  gsc_clicks
+  ga4_pageviews
+  ga4_sessions
+  yt_views
+  yt_watch_time_hours
+  yt_ctr
+  yt_avg_retention_pct
+  geo_citability_score
+  geo_extractability_score
+  geo_factual_density
+  ai_search_volume
+}
+
+enum ClaimType {
+  statistic
+  comparison
+  definition
+  howto_step
 }
 
 // =============================================================================
@@ -177,6 +214,8 @@ model Project {
   distributionEvents DistributionEvent[]
   metricSnapshots    MetricSnapshot[]
   draftArtifacts     DraftArtifact[]
+  searchPerformanceRecords SearchPerformance[]
+  quotableBlocks     QuotableBlock[]
 }
 
 // =============================================================================
@@ -254,6 +293,7 @@ model Entity {
   contentRef        String?
   publishedAt       DateTime?
   archivedAt        DateTime?
+  lastVerifiedAt    DateTime?         // Content freshness tracking (SEO)
 
   projectId         String            @db.Uuid
   project           Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
@@ -262,8 +302,10 @@ model Entity {
   updatedAt         DateTime          @updatedAt
 
   // Relations
-  distributionEvents DistributionEvent[]
-  metricSnapshots    MetricSnapshot[]
+  distributionEvents         DistributionEvent[]
+  metricSnapshots            MetricSnapshot[]
+  quotableBlocks             QuotableBlock[]
+  searchPerformanceRecords   SearchPerformance[]
 
   @@unique([projectId, entityType, slug])
   @@index([projectId, entityType, status, createdAt])
@@ -295,6 +337,7 @@ model EntityRelation {
 // =============================================================================
 // Event Log — append-only, from DB-ARCHITECTURE-PLAN.md
 // projectId added directly to avoid joins for project-scoped audit queries.
+// Invariant: entityType always identifies the table that entityId references.
 // =============================================================================
 
 model EventLog {
@@ -343,6 +386,7 @@ model Video {
 // =============================================================================
 // Draft Artifacts — scaffolding only, non-canonical
 // Per ROADMAP.md Phase 1 Draft System requirements
+// SEO additions: schemaVersion, source, contentHash per SEO-SCHEMA-MIGRATION-PLAN.md
 // =============================================================================
 
 model DraftArtifact {
@@ -357,6 +401,9 @@ model DraftArtifact {
   llmMeta      Json?
   expiresAt    DateTime
   deletedAt    DateTime?
+  schemaVersion String?            // Versioned contract for structured JSON content (e.g., seo.keyword_research.v1)
+  source       String?             // Data provider identifier (e.g., dataforseo, gsc, manual)
+  contentHash  String?             // SHA256 for deduplication. Application-enforced, not DB-unique.
 
   projectId    String              @db.Uuid
   project      Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
@@ -367,6 +414,7 @@ model DraftArtifact {
   @@index([projectId, kind, status])
   @@index([sourceItemId, kind])
   @@index([expiresAt, deletedAt])
+  @@index([contentHash])
 }
 
 // =============================================================================
@@ -401,12 +449,13 @@ model DistributionEvent {
 // =============================================================================
 // Metrics — MetricSnapshot
 // Per PHASE-1-SLICE-DISTRIBUTION-AND-METRICS.md
+// SEO change: value Int → Float per SEO-SCHEMA-MIGRATION-PLAN.md
 // =============================================================================
 
 model MetricSnapshot {
   id          String            @id @default(uuid()) @db.Uuid
   metricType  MetricType
-  value       Int
+  value       Float
   platform    Platform
   capturedAt  DateTime          @default(now())
   entityType  ContentEntityType
@@ -426,8 +475,63 @@ model MetricSnapshot {
 }
 
 // =============================================================================
+// Search Performance — GSC query × page × date-range analytics
+// Per SEO-SCHEMA-MIGRATION-PLAN.md, SEO-RECORDING-SPEC.md
+// Source of truth for search performance data. GSC only.
+// =============================================================================
+
+model SearchPerformance {
+  id          String    @id @default(uuid()) @db.Uuid
+  projectId   String    @db.Uuid
+  entityId    String?   @db.Uuid
+  pageUrl     String
+  query       String
+  impressions Int
+  clicks      Int
+  ctr         Float
+  avgPosition Float
+  dateStart   DateTime
+  dateEnd     DateTime
+  capturedAt  DateTime  @default(now())
+
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  entity      Entity?   @relation(fields: [entityId], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, query, pageUrl, dateStart, dateEnd])
+  @@index([projectId, capturedAt])
+  @@index([projectId, pageUrl, dateStart])
+  @@index([projectId, query, dateStart])
+}
+
+// =============================================================================
+// Quotable Blocks — Canonical structured citation assets for GEO optimization
+// Per SEO-SCHEMA-MIGRATION-PLAN.md, SEO-RECORDING-SPEC.md
+// NOT a DraftArtifact. These are verified, human-approved citation units.
+// =============================================================================
+
+model QuotableBlock {
+  id              String    @id @default(uuid()) @db.Uuid
+  projectId       String    @db.Uuid
+  entityId        String    @db.Uuid
+  text            String
+  claimType       ClaimType
+  sourceCitation  String?
+  verifiedUntil   DateTime?
+  topicTag        String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  entity          Entity    @relation(fields: [entityId], references: [id], onDelete: Restrict)
+
+  @@index([projectId, entityId])
+  @@index([projectId, claimType])
+}
+
+// =============================================================================
 // System Config — from DB-ARCHITECTURE-PLAN.md
 // Intentionally NOT project-scoped. Global system configuration.
+// Per-project overrides use JSON value: { "default": N, "overrides": { "<projectId>": N } }
 // =============================================================================
 
 model SystemConfig {

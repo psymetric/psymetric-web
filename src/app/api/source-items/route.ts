@@ -19,15 +19,21 @@ import {
   VALID_SOURCE_ITEM_STATUSES,
   VALID_PLATFORMS,
 } from "@/lib/validation";
+import { resolveProjectId } from "@/lib/project";
 import type { Prisma } from "@prisma/client";
 
 export async function GET(request: NextRequest) {
   try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
     const searchParams = request.nextUrl.searchParams;
     const { page, limit, skip } = parsePagination(searchParams);
 
-    // Build filters
-    const where: Prisma.SourceItemWhereInput = {};
+    // Always scope by projectId
+    const where: Prisma.SourceItemWhereInput = { projectId };
 
     const status = searchParams.get("status");
     if (status) {
@@ -56,7 +62,7 @@ export async function GET(request: NextRequest) {
     const [items, total] = await Promise.all([
       prisma.sourceItem.findMany({
         where,
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         skip,
         take: limit,
       }),

@@ -226,9 +226,7 @@ export async function GET(
         projectId,
         deletedAt: null,
       },
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     });
 
     return successResponse(drafts);

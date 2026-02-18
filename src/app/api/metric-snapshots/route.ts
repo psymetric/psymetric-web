@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
     if (platform) {
       if (!isValidEnum(platform, VALID_PLATFORMS)) {
         return badRequest(
-          "platform must be one of: website, x, youtube, github, other"
+          "platform must be one of: " + VALID_PLATFORMS.join(", ")
         );
       }
       where.platform = platform;
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
     if (metricType) {
       if (!isValidEnum(metricType, VALID_METRIC_TYPES)) {
         return badRequest(
-          "metricType must be one of: x_impressions, x_likes, x_reposts, x_replies, x_bookmarks"
+          "metricType must be one of: " + VALID_METRIC_TYPES.join(", ")
         );
       }
       where.metricType = metricType;
@@ -153,19 +153,23 @@ export async function POST(request: NextRequest) {
     // Validate metricType
     if (!isValidEnum(metricType, VALID_METRIC_TYPES)) {
       return badRequest(
-        "metricType must be one of: x_impressions, x_likes, x_reposts, x_replies, x_bookmarks"
+        "metricType must be one of: " + VALID_METRIC_TYPES.join(", ")
       );
     }
 
-    // Validate value
-    if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-      return badRequest("value must be an integer >= 0");
+    // Validate value (Float in schema)
+    if (
+      typeof value !== "number" ||
+      !Number.isFinite(value) ||
+      value < 0
+    ) {
+      return badRequest("value must be a number >= 0");
     }
 
     // Validate platform
     if (!isValidEnum(platform, VALID_PLATFORMS)) {
       return badRequest(
-        "platform must be one of: website, x, youtube, github, other"
+        "platform must be one of: " + VALID_PLATFORMS.join(", ")
       );
     }
 

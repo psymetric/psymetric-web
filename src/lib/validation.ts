@@ -19,6 +19,11 @@ export const VALID_PLATFORMS = [
   "x",
   "youtube",
   "github",
+  "reddit",
+  "hackernews",
+  "substack",
+  "linkedin",
+  "discord",
   "other",
 ] as const;
 
@@ -56,11 +61,34 @@ export const VALID_CONCEPT_KINDS = [
 ] as const;
 
 export const VALID_METRIC_TYPES = [
+  // X
   "x_impressions",
   "x_likes",
   "x_reposts",
   "x_replies",
   "x_bookmarks",
+
+  // GSC
+  "gsc_impressions",
+  "gsc_clicks",
+
+  // GA4
+  "ga4_pageviews",
+  "ga4_sessions",
+
+  // YouTube
+  "yt_views",
+  "yt_watch_time_hours",
+  "yt_ctr",
+  "yt_avg_retention_pct",
+
+  // GEO
+  "geo_citability_score",
+  "geo_extractability_score",
+  "geo_factual_density",
+
+  // AI
+  "ai_search_volume",
 ] as const;
 
 /**
