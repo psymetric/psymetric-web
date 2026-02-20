@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "psymetric": {
+      "command": "node",
+      "args": ["C:\\dev\\psymetric\\mcp\\server\\dist\\index.js"],
+      "env": {
+        "PSYMETRIC_BASE_URL": "http://localhost:3000",
+        "PSYMETRIC_PROJECT_ID": "00000000-0000-4000-a000-000000000001",
+        "PSYMETRIC_TIMEOUT_MS": "30000"
+      }
+    }
+  }
+}

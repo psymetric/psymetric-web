@@ -65,35 +65,43 @@ Exit criteria:
 
 ---
 
-## Phase 1 — VS Code Operator Surface + MCP Read-Only Bridge (NEXT)
+## Phase 1 — VS Code Operator Surface + MCP Read-Only Bridge (DONE)
 
 Objective: prove the VS Code operator surface and MCP plumbing **without any write capability**.
 
-Scope (MCP tools: read-only only):
-- `list_projects`
-- `search_entities`
-- `get_entity`
-- `get_entity_graph` (depth-limited)
-- `list_search_performance` (project-scoped, deterministic)
-- `list_quotable_blocks` (project-scoped, deterministic)
+Delivered:
+- API-backed MCP server (stdio transport)
+- Exactly six read-only tools implemented:
+  - `list_projects`
+  - `search_entities`
+  - `get_entity`
+  - `get_entity_graph` (depth-limited, deterministic, deduplicated)
+  - `list_search_performance` (project-scoped, deterministic)
+  - `list_quotable_blocks` (project-scoped, deterministic)
+- Strict JSON Schema input validation per tool
+- Canonical MCP result envelope (`content` + compact JSON text)
+- Backend error → MCP error mapping (`isError: true`)
+- Project scoping via environment → injected `x-project-id` / `x-project-slug`
+- No direct DB access (API-only enforcement)
+- Deterministic ordering preserved end-to-end
+- Stdio smoke test validating:
+  - initialize handshake
+  - `tools/list`
+  - `tools/call`
+  - project-scoped API execution
 
-Constraints:
-- MCP validates request shape (UUID format, required fields), backend remains authoritative.
-- MCP calls backend API only (no direct DB access).
-- No LLM broker.
-- No caching.
-- No evidence ingest.
-- No patch apply.
+Constraints upheld:
+- No write tools
+- No LLM broker
+- No caching layer
+- No background jobs
+- No cross-project leakage
 
-Exit criteria:
-- Tool input/output schemas defined (JSON schema or equivalent)
-- Standard error schema defined
-- VS Code extension can call all read tools against backend
-- `projectId` scoping verified end-to-end
+Exit criteria: satisfied. ✅
 
 ---
 
-## Phase 2 — BYDA-S Phase 3-A (S0) With Zero LLM (PLANNED)
+## Phase 2 — BYDA-S Phase 3-A (S0) With Zero LLM (NEXT)
 
 Objective: implement the audit storage + rendering + apply pipeline **without LLM involvement**.
 
@@ -217,5 +225,5 @@ Constraints:
 
 - Multi-project hardening: ✅ done
 - Phase 0 (AI News + Manual SEO): 🟡 in progress
-- VS Code operator surface (read-only MCP): ⏳ next
-- BYDA-S S0 pipeline: ⏳ planned
+- Phase 1 (VS Code + MCP read-only): ✅ done
+- BYDA-S S0 pipeline: ⏳ next
