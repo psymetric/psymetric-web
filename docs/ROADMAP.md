@@ -5,7 +5,7 @@ This roadmap is the **single source of truth for scope**.
 Rules:
 - If it’s not in the current active phase, it is out of scope.
 - Any scope change requires an explicit roadmap edit.
-- System invariants are non‑negotiable: project isolation, transactional mutations, event logging, determinism, API-only assistants.
+- System invariants are non‑negotiable: **project isolation**, **transactional mutations + event logging**, **determinism**, **API-only assistants**.
 
 Related specs:
 - `docs/BYDA-S-SPEC.md`
@@ -22,43 +22,50 @@ Objective: make cross-project contamination structurally impossible and CI/build
 Delivered:
 - `projectId` on major tables + composite uniqueness scoped by `projectId`
 - PostgreSQL trigger enforcement preventing cross-project `EntityRelation`
+- SEO cross-project integrity enforcement (QuotableBlock/Entity and SearchPerformance/Entity)
 - Deterministic DB hammer verifying:
   - uniqueness probes
   - event existence
   - transaction rollback atomicity
-  - cross-project violation blocking
+  - cross-project violation blocking (relationships + SEO)
 - CI guardrail: lint + build + prisma generate with dummy DB URLs
-- Build-time DB access fixes for public pages
+- Build-time DB access not required (Vercel build discipline preserved)
 
 Exit criteria: Actions green, hammer passes, repo stable. ✅
 
 ---
 
-## Phase 0 — AI News Launch Loop (ACTIVE)
+## Phase 0 — AI News + Manual SEO Instrumentation (ACTIVE)
 
-Objective: establish a repeatable, traceable **ingest → interpret → draft → publish** loop for AI News.
+Objective: establish a repeatable, traceable **ingest → interpret → draft → publish → measure** loop for AI News, plus manual SEO instrumentation.
 
 Scope:
-- Source capture (manual first; extension capture as available)
+- Source capture (manual first; VS Code extension capture as available)
 - News entity creation/editing (project-scoped)
 - Publish lifecycle (human-only)
 - Event timeline visibility
-- Basic metrics snapshot recording (manual)
+- Manual metric snapshot recording
+- Manual SEO search-performance ingest (bulk endpoint)
+- Canonical quotable block creation for GEO optimization
+- Deterministic read APIs for operator tooling (news, SEO, quotable blocks)
+- API hammer coverage for all Phase 0 endpoints
 
 Non-goals:
 - No autonomous publishing
 - No LLM-driven mutation
-- No BYDA-S audits required to ship news
+- No background ingestion jobs
+- No dashboard UI (VS Code extension is the operator surface)
 
 Exit criteria:
 - Consistent news cadence
 - No orphaned entities (all project-scoped)
 - Publish workflow reliable
 - Public `/news` index + detail pages stable and indexable
+- SEO ingest and quotable block flows verified end-to-end
 
 ---
 
-## Phase 1 — Operator Surface + MCP Read-Only Bridge (NEXT)
+## Phase 1 — VS Code Operator Surface + MCP Read-Only Bridge (NEXT)
 
 Objective: prove the VS Code operator surface and MCP plumbing **without any write capability**.
 
@@ -67,9 +74,12 @@ Scope (MCP tools: read-only only):
 - `search_entities`
 - `get_entity`
 - `get_entity_graph` (depth-limited)
+- `list_search_performance` (project-scoped, deterministic)
+- `list_quotable_blocks` (project-scoped, deterministic)
 
 Constraints:
 - MCP validates request shape (UUID format, required fields), backend remains authoritative.
+- MCP calls backend API only (no direct DB access).
 - No LLM broker.
 - No caching.
 - No evidence ingest.
@@ -79,11 +89,11 @@ Exit criteria:
 - Tool input/output schemas defined (JSON schema or equivalent)
 - Standard error schema defined
 - VS Code extension can call all read tools against backend
-- projectId scoping verified end-to-end
+- `projectId` scoping verified end-to-end
 
 ---
 
-## Phase 2 — BYDA-S Phase 3-A (S0) With Zero LLM (NEXT)
+## Phase 2 — BYDA-S Phase 3-A (S0) With Zero LLM (PLANNED)
 
 Objective: implement the audit storage + rendering + apply pipeline **without LLM involvement**.
 
@@ -165,7 +175,7 @@ Exit criteria:
 
 ## Phase 6 — Experiments Layer
 
-Objective: publish structured experiments (e.g., BYDA validation) without destabilizing canonical education.
+Objective: publish structured experiments without destabilizing canonical education.
 
 Scope:
 - Experiments entity type (or modeled as Projects with a strict template)
@@ -206,6 +216,6 @@ Constraints:
 ## Current Status Snapshot (Update as work completes)
 
 - Multi-project hardening: ✅ done
-- Phase 0 (AI News): 🟡 in progress
-- MCP read-only bridge: ⏳ next
+- Phase 0 (AI News + Manual SEO): 🟡 in progress
+- VS Code operator surface (read-only MCP): ⏳ next
 - BYDA-S S0 pipeline: ⏳ planned
