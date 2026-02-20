@@ -4,8 +4,8 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
+  CallToolResult,
   ListToolsRequestSchema,
-  Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { createApiClient, validateConfig } from "./api-client.js";
 import { toolDefinitions } from "./tools.js";
@@ -38,14 +38,19 @@ async function main() {
   // List tools handler
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
-      tools: toolDefinitions as Tool[],
+      tools: toolDefinitions,
     };
   });
 
   // Call tool handler
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
     try {
-      return await handleToolCall(request.params.name, request.params.arguments ?? {}, apiClient);
+      const result = await handleToolCall(
+        request.params.name,
+        request.params.arguments ?? {},
+        apiClient
+      );
+      return result as CallToolResult;
     } catch (error) {
       console.error(`[PsyMetric MCP] Tool execution error:`, error);
       throw error;

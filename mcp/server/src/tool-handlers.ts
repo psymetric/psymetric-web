@@ -11,6 +11,13 @@ import { ApiClient } from "./api-client.js";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{3})?Z)?$/;
 
+interface ApiErrorBody {
+  error?: {
+    code?: string;
+    message?: string;
+  };
+}
+
 /**
  * Validate UUID format
  */
@@ -62,15 +69,14 @@ function buildQueryString(params: Record<string, unknown>): string {
  * Handle API errors and map to MCP errors
  */
 async function handleApiError(response: Response): Promise<never> {
-  let errorBody: { error?: { code?: string; message?: string } } | null = null;
+  let errorBody: ApiErrorBody | null = null;
   try {
-    errorBody = await response.json();
+    errorBody = await response.json() as ApiErrorBody;
   } catch {
     // Non-JSON error response
   }
 
   const backendMessage = errorBody?.error?.message ?? response.statusText;
-  const backendCode = errorBody?.error?.code;
 
   // Map HTTP status codes to MCP error codes
   switch (response.status) {
