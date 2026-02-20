@@ -227,10 +227,17 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const { page, limit, skip } = parsePagination(searchParams);
 
+    // Read-time TTL enforcement:
+    // - Default listing returns *non-expired* drafts only
+    // - status=draft also excludes expired drafts
+    // - status=archived returns archived artifacts regardless of expiresAt
+    const now = new Date();
+
     // Always project-scoped AND kind-scoped (Phase 2)
     const where: Prisma.DraftArtifactWhereInput = {
       projectId,
       kind: ALLOWED_KIND,
+      deletedAt: null,
     };
 
     // kind filter (if provided, must equal byda_s_audit)
@@ -258,6 +265,15 @@ export async function GET(request: NextRequest) {
         return badRequest("status must be 'draft' or 'archived'");
       }
       where.status = statusParam as DraftArtifactStatus;
+
+      // TTL enforcement for explicit status=draft
+      if (statusParam === DraftArtifactStatus.draft) {
+        where.expiresAt = { gte: now };
+      }
+    } else {
+      // Default: drafts only, excluding expired
+      where.status = DraftArtifactStatus.draft;
+      where.expiresAt = { gte: now };
     }
 
     const [rows, total] = await Promise.all([
