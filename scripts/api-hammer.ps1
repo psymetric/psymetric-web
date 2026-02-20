@@ -6,6 +6,8 @@
 # - /api/entities
 # - /api/entities/:id/graph
 # - /api/draft-artifacts (Phase 2 S0 byda_s_audit: create + list + validation + isolation)
+# - /api/draft-artifacts/:id/archive (Phase 2 lifecycle: archive semantics)
+# - /api/draft-artifacts/expire (Phase 2 lifecycle: TTL enforcement)
 
 param(
     [Parameter(Mandatory=$false)]
@@ -78,6 +80,24 @@ function Test-PostJson {
     }
 }
 
+function Test-Patch {
+    param([string]$Url,[int]$ExpectedStatus,[string]$Description,[hashtable]$RequestHeaders)
+    try {
+        Write-Host ("Testing: " + $Description) -NoNewline
+        $response = Invoke-WebRequest -Uri $Url -Method PATCH -Headers $RequestHeaders -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($response.StatusCode -eq $ExpectedStatus) {
+            Write-Host "  PASS" -ForegroundColor Green
+            return $true
+        } else {
+            Write-Host ("  FAIL (got " + $response.StatusCode + ", expected " + $ExpectedStatus + ")") -ForegroundColor Red
+            return $false
+        }
+    } catch {
+        Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+        return $false
+    }
+}
+
 function Try-GetJson {
     param([string]$Url,[hashtable]$RequestHeaders)
     try { return Invoke-RestMethod -Uri $Url -Method GET -Headers $RequestHeaders -TimeoutSec 30 } catch { return $null }
@@ -110,6 +130,8 @@ if (-not $entityId) {
 Write-Host ""
 Write-Host "=== DRAFT-ARTIFACTS TESTS (BYDA-S S0) ===" -ForegroundColor Yellow
 
+$draftId = $null
+
 if (-not $entityId) {
     Write-Host "Skipping draft-artifacts tests: no entities found" -ForegroundColor DarkYellow
     $SkipCount++
@@ -132,7 +154,29 @@ if (-not $entityId) {
         }
     }
 
-    if (Test-PostJson "$Base/api/draft-artifacts" 201 "POST /api/draft-artifacts (valid)" $Headers $valid) { $PassCount++ } else { $FailCount++ }
+    # Capture created draft id for lifecycle tests
+    try {
+        Write-Host "Testing: POST /api/draft-artifacts (valid, capture id)" -NoNewline
+        $json = $valid | ConvertTo-Json -Depth 10 -Compress
+        $resp = Invoke-WebRequest -Uri "$Base/api/draft-artifacts" -Method POST -Headers $Headers -Body $json -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 201) {
+            $PassCount++
+            Write-Host "  PASS" -ForegroundColor Green
+            try {
+                $parsed = $resp.Content | ConvertFrom-Json
+                $draftId = $parsed.data.id
+            } catch {
+                # If parsing fails, we'll skip lifecycle tests
+                $draftId = $null
+            }
+        } else {
+            $FailCount++
+            Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 201)") -ForegroundColor Red
+        }
+    } catch {
+        $FailCount++
+        Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    }
 
     # List (deterministic ordering is enforced in code; we just check 200)
     if (Test-Endpoint "GET" "$Base/api/draft-artifacts?limit=5" 200 "GET /api/draft-artifacts (list)" $Headers) { $PassCount++ } else { $FailCount++ }
@@ -170,6 +214,40 @@ if (-not $entityId) {
     if ($OtherHeaders.Count -gt 0) {
         if (Test-PostJson "$Base/api/draft-artifacts" 404 "POST draft-artifacts cross-project non-disclosure" $OtherHeaders $valid) { $PassCount++ } else { $FailCount++ }
     }
+}
+
+Write-Host ""
+Write-Host "=== DRAFT LIFECYCLE TESTS (ARCHIVE) ===" -ForegroundColor Yellow
+
+if (-not $draftId) {
+    Write-Host "Skipping archive tests: no draftId captured" -ForegroundColor DarkYellow
+    $SkipCount++
+} else {
+    if (Test-Patch "$Base/api/draft-artifacts/$draftId/archive" 200 "PATCH archive (draft -> archived)" $Headers) { $PassCount++ } else { $FailCount++ }
+    if (Test-Patch "$Base/api/draft-artifacts/$draftId/archive" 400 "PATCH archive (already archived)" $Headers) { $PassCount++ } else { $FailCount++ }
+    if ($OtherHeaders.Count -gt 0) {
+        if (Test-Patch "$Base/api/draft-artifacts/$draftId/archive" 404 "PATCH archive cross-project non-disclosure" $OtherHeaders) { $PassCount++ } else { $FailCount++ }
+    }
+    if (Test-Patch "$Base/api/draft-artifacts/not-a-uuid/archive" 400 "PATCH archive invalid uuid" $Headers) { $PassCount++ } else { $FailCount++ }
+}
+
+Write-Host ""
+Write-Host "=== DRAFT LIFECYCLE TESTS (EXPIRE) ===" -ForegroundColor Yellow
+
+# Explicit TTL enforcement endpoint. Typically returns 0 in fresh dev DBs.
+try {
+    Write-Host "Testing: POST /api/draft-artifacts/expire (ttl enforcement)" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$Base/api/draft-artifacts/expire" -Method POST -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 200) {
+        $PassCount++
+        Write-Host "  PASS" -ForegroundColor Green
+    } else {
+        $FailCount++
+        Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red
+    }
+} catch {
+    $FailCount++
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
 }
 
 Write-Host ""
