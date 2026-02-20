@@ -7,6 +7,10 @@
  * - All mutations + EventLog entries occur inside prisma.$transaction().
  * - Project-scoped via resolveProjectId() only.
  * - Read-time TTL enforcement: draft must not be expired.
+ *
+ * Promotion hardening:
+ * - Idempotency under retries/concurrency is enforced via an atomic state transition using
+ *   tx.draftArtifact.updateMany() with a conditional where clause. No schema changes required.
  */
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
@@ -183,10 +187,6 @@ export async function POST(
       return badRequest(`Draft kind must be "${ALLOWED_KIND}"`);
     }
 
-    if (draft.status !== DraftArtifactStatus.draft) {
-      return badRequest("Draft artifact must be in 'draft' status to promote");
-    }
-
     // TTL guard: expired drafts cannot be promoted.
     if (draft.expiresAt < now) {
       return badRequest("Draft artifact is expired and cannot be promoted");
@@ -219,6 +219,24 @@ export async function POST(
     const promotedEntityType = mapContentEntityTypeToEntityType(entity.entityType);
 
     const result = await prisma.$transaction(async (tx) => {
+      // Atomic idempotency guard: draft -> archived transition.
+      // Under concurrency, only one caller will affect exactly 1 row.
+      const transition = await tx.draftArtifact.updateMany({
+        where: {
+          id: draft.id,
+          projectId,
+          kind: ALLOWED_KIND,
+          status: DraftArtifactStatus.draft,
+          deletedAt: null,
+          expiresAt: { gte: now },
+        },
+        data: { status: DraftArtifactStatus.archived },
+      });
+
+      if (transition.count !== 1) {
+        return { ok: false as const };
+      }
+
       const capturedAt = now;
 
       const details: Prisma.InputJsonObject = {
@@ -269,13 +287,6 @@ export async function POST(
         }),
       ]);
 
-      // Archive draft.
-      await tx.draftArtifact.update({
-        where: { id: draft.id },
-        data: { status: DraftArtifactStatus.archived },
-        select: { id: true },
-      });
-
       // Event logs: metric snapshots + draft archived + entity update
       await tx.eventLog.createMany({
         data: snapshots.map((s) => ({
@@ -311,11 +322,16 @@ export async function POST(
       });
 
       return {
+        ok: true as const,
         draftArtifactId: draft.id,
         entityId: entity.id,
         metricSnapshotIds: snapshots.map((s) => s.id),
       };
     });
+
+    if (!result.ok) {
+      return badRequest("Draft artifact already promoted");
+    }
 
     return successResponse({
       draftArtifactId: result.draftArtifactId,
