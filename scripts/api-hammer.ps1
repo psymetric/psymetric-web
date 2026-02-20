@@ -38,19 +38,19 @@ $Base = $Base.TrimEnd('/')
 
 function Get-ProjectHeaders {
     param(
-        [string]$Pid,
-        [string]$Pslug
+        [string]$ProjectIdValue,
+        [string]$ProjectSlugValue
     )
 
     $headers = @{}
 
-    if ($Pid -and $Pid.Trim().Length -gt 0) {
-        $headers["x-project-id"] = $Pid
+    if ($ProjectIdValue -and $ProjectIdValue.Trim().Length -gt 0) {
+        $headers["x-project-id"] = $ProjectIdValue
         return $headers
     }
 
-    if ($Pslug -and $Pslug.Trim().Length -gt 0) {
-        $headers["x-project-slug"] = $Pslug
+    if ($ProjectSlugValue -and $ProjectSlugValue.Trim().Length -gt 0) {
+        $headers["x-project-slug"] = $ProjectSlugValue
         return $headers
     }
 
@@ -58,8 +58,8 @@ function Get-ProjectHeaders {
     return $headers
 }
 
-$Headers = Get-ProjectHeaders -Pid $ProjectId -Pslug $ProjectSlug
-$OtherHeaders = Get-ProjectHeaders -Pid $OtherProjectId -Pslug $OtherProjectSlug
+$Headers = Get-ProjectHeaders -ProjectIdValue $ProjectId -ProjectSlugValue $ProjectSlug
+$OtherHeaders = Get-ProjectHeaders -ProjectIdValue $OtherProjectId -ProjectSlugValue $OtherProjectSlug
 
 Write-Host ("API Hammer - Testing " + $Base) -ForegroundColor Cyan
 if ($Headers.Count -gt 0) {
