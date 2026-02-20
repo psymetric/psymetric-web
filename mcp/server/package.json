@@ -1,0 +1,26 @@
+{
+  "name": "@psymetric/mcp-server",
+  "version": "1.0.0",
+  "description": "PsyMetric MCP Server - API-backed read-only bridge",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "psymetric-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
