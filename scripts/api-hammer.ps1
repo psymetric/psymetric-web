@@ -1,7 +1,11 @@
 # API Hammer Script
 # Deterministic smoke + isolation testing for PsyMetric APIs (multi-project aware)
 #
-# Updated: Added coverage for /api/projects and /api/entities/:id/graph
+# Coverage:
+# - /api/projects
+# - /api/entities
+# - /api/entities/:id/graph
+# - /api/draft-artifacts (Phase 2 S0 byda_s_audit: create + list + validation + isolation)
 
 param(
     [Parameter(Mandatory=$false)]
@@ -55,6 +59,25 @@ function Test-Endpoint {
     }
 }
 
+function Test-PostJson {
+    param([string]$Url,[int]$ExpectedStatus,[string]$Description,[hashtable]$RequestHeaders,[object]$BodyObj)
+    try {
+        Write-Host ("Testing: " + $Description) -NoNewline
+        $json = $BodyObj | ConvertTo-Json -Depth 10 -Compress
+        $response = Invoke-WebRequest -Uri $Url -Method POST -Headers $RequestHeaders -Body $json -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($response.StatusCode -eq $ExpectedStatus) {
+            Write-Host "  PASS" -ForegroundColor Green
+            return $true
+        } else {
+            Write-Host ("  FAIL (got " + $response.StatusCode + ", expected " + $ExpectedStatus + ")") -ForegroundColor Red
+            return $false
+        }
+    } catch {
+        Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+        return $false
+    }
+}
+
 function Try-GetJson {
     param([string]$Url,[hashtable]$RequestHeaders)
     try { return Invoke-RestMethod -Uri $Url -Method GET -Headers $RequestHeaders -TimeoutSec 30 } catch { return $null }
@@ -81,6 +104,71 @@ if (-not $entityId) {
     if (Test-Endpoint "GET" "$Base/api/entities/$entityId/graph?depth=3" 400 "Invalid depth=3" $Headers) { $PassCount++ } else { $FailCount++ }
     if ($OtherHeaders.Count -gt 0) {
         if (Test-Endpoint "GET" "$Base/api/entities/$entityId/graph" 404 "Cross-project graph fetch" $OtherHeaders) { $PassCount++ } else { $FailCount++ }
+    }
+}
+
+Write-Host ""
+Write-Host "=== DRAFT-ARTIFACTS TESTS (BYDA-S S0) ===" -ForegroundColor Yellow
+
+if (-not $entityId) {
+    Write-Host "Skipping draft-artifacts tests: no entities found" -ForegroundColor DarkYellow
+    $SkipCount++
+} else {
+    # Valid create
+    $nowIso = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $valid = @{
+        kind = "byda_s_audit"
+        entityId = $entityId
+        content = @{
+            schemaVersion = "byda.s0.v1"
+            entityId = $entityId
+            scores = @{
+                citability = 50
+                extractability = 50
+                factualDensity = 50
+            }
+            notes = "api-hammer"
+            createdAt = $nowIso
+        }
+    }
+
+    if (Test-PostJson "$Base/api/draft-artifacts" 201 "POST /api/draft-artifacts (valid)" $Headers $valid) { $PassCount++ } else { $FailCount++ }
+
+    # List (deterministic ordering is enforced in code; we just check 200)
+    if (Test-Endpoint "GET" "$Base/api/draft-artifacts?limit=5" 200 "GET /api/draft-artifacts (list)" $Headers) { $PassCount++ } else { $FailCount++ }
+
+    # Validation: unknown body field
+    $unknownBody = $valid.Clone()
+    $unknownBody["nope"] = "x"
+    if (Test-PostJson "$Base/api/draft-artifacts" 400 "POST draft-artifacts rejects unknown body field" $Headers $unknownBody) { $PassCount++ } else { $FailCount++ }
+
+    # Validation: mismatched entityId
+    $mismatch = @{
+        kind = "byda_s_audit"
+        entityId = $entityId
+        content = @{
+            schemaVersion = "byda.s0.v1"
+            entityId = "00000000-0000-4000-a000-000000000002"
+            scores = @{
+                citability = 50
+                extractability = 50
+                factualDensity = 50
+            }
+            createdAt = $nowIso
+        }
+    }
+    if (Test-PostJson "$Base/api/draft-artifacts" 400 "POST draft-artifacts rejects mismatched entityId" $Headers $mismatch) { $PassCount++ } else { $FailCount++ }
+
+    # Validation: score out of range
+    $badScore = $valid.Clone()
+    $badScore.content = $valid.content.Clone()
+    $badScore.content.scores = $valid.content.scores.Clone()
+    $badScore.content.scores.citability = 101
+    if (Test-PostJson "$Base/api/draft-artifacts" 400 "POST draft-artifacts rejects score out of range" $Headers $badScore) { $PassCount++ } else { $FailCount++ }
+
+    # Isolation: cross-project create should 404 (non-disclosure)
+    if ($OtherHeaders.Count -gt 0) {
+        if (Test-PostJson "$Base/api/draft-artifacts" 404 "POST draft-artifacts cross-project non-disclosure" $OtherHeaders $valid) { $PassCount++ } else { $FailCount++ }
     }
 }
 
