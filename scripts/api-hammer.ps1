@@ -122,6 +122,20 @@ function Try-GetJson {
     try { return Invoke-RestMethod -Uri $Url -Method GET -Headers $RequestHeaders -TimeoutSec 30 } catch { return $null }
 }
 
+function Get-MetricSnapshotTotal {
+    param([string]$EntityId,[hashtable]$RequestHeaders)
+
+    $resp = Try-GetJson -Url "$Base/api/metric-snapshots?entityId=$EntityId&limit=1" -RequestHeaders $RequestHeaders
+
+    # listResponse() returns { data, pagination: { page, limit, total, hasMore } }
+    if ($resp -and $resp.pagination -and $null -ne $resp.pagination.total) {
+        return [int]$resp.pagination.total
+    }
+
+    # Deterministic delta requires a total. Do not fall back to page size.
+    return $null
+}
+
 function Create-DraftArtifact {
     param([string]$EntityId,[hashtable]$RequestHeaders,[string]$DescriptionPrefix)
 
@@ -266,8 +280,23 @@ if (-not $entityId) {
     if ($create2.ok) { $PassCount++; $draftIdForPromote = $create2.id } else { $FailCount++ }
 
     if ($draftIdForPromote) {
+        $beforeTotal = Get-MetricSnapshotTotal -EntityId $entityId -RequestHeaders $Headers
+
         if (Test-PostEmpty "$Base/api/draft-artifacts/$draftIdForPromote/promote" 200 "POST promote (draft -> metric snapshots + archive)" $Headers) { $PassCount++ } else { $FailCount++ }
-        if (Test-PostEmpty "$Base/api/draft-artifacts/$draftIdForPromote/promote" 400 "POST promote (already archived)" $Headers) { $PassCount++ } else { $FailCount++ }
+        if (Test-PostEmpty "$Base/api/draft-artifacts/$draftIdForPromote/promote" 400 "POST promote (replay/idempotent reject)" $Headers) { $PassCount++ } else { $FailCount++ }
+
+        $afterTotal = Get-MetricSnapshotTotal -EntityId $entityId -RequestHeaders $Headers
+
+        if ($null -ne $beforeTotal -and $null -ne $afterTotal -and ($afterTotal - $beforeTotal) -eq 3) {
+            Write-Host "Testing: MetricSnapshot total delta == +3  PASS" -ForegroundColor Green
+            $PassCount++
+        } else {
+            $delta = $null
+            if ($null -ne $beforeTotal -and $null -ne $afterTotal) { $delta = ($afterTotal - $beforeTotal) }
+            Write-Host ("Testing: MetricSnapshot total delta == +3  FAIL (delta=" + $delta + ")") -ForegroundColor Red
+            $FailCount++
+        }
+
         if ($OtherHeaders.Count -gt 0) {
             if (Test-PostEmpty "$Base/api/draft-artifacts/$draftIdForPromote/promote" 404 "POST promote cross-project non-disclosure" $OtherHeaders) { $PassCount++ } else { $FailCount++ }
         }
