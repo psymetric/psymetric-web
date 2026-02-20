@@ -13,7 +13,14 @@
  */
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { createdResponse, badRequest, notFound, serverError } from "@/lib/api-response";
+import {
+  listResponse,
+  createdResponse,
+  badRequest,
+  notFound,
+  serverError,
+  parsePagination,
+} from "@/lib/api-response";
 import { resolveProjectId } from "@/lib/project";
 import { ClaimType, EventType, EntityType, ActorType } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
@@ -60,6 +67,97 @@ function isValidIsoDate(value: unknown): value is string {
   // Timestamp with Z: parsing succeeded and format matched
   return true;
 }
+
+// =============================================================================
+// GET /api/quotable-blocks
+// =============================================================================
+
+export async function GET(request: NextRequest) {
+  try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
+    const searchParams = request.nextUrl.searchParams;
+    const { page, limit, skip } = parsePagination(searchParams);
+
+    // Always project-scoped
+    const where: Prisma.QuotableBlockWhereInput = { projectId };
+
+    // entityId filter (UUID validation)
+    const entityIdParam = searchParams.get("entityId");
+    if (entityIdParam) {
+      if (!UUID_RE.test(entityIdParam)) {
+        return badRequest("entityId must be a valid UUID");
+      }
+      where.entityId = entityIdParam;
+    }
+
+    // claimType filter (enum validation)
+    const claimTypeParam = searchParams.get("claimType");
+    if (claimTypeParam) {
+      if (!isValidClaimType(claimTypeParam)) {
+        return badRequest(
+          `claimType must be one of: ${VALID_CLAIM_TYPES.join(", ")}`
+        );
+      }
+      where.claimType = claimTypeParam;
+    }
+
+    // topicTag filter (contains match)
+    const topicTagParam = searchParams.get("topicTag");
+    if (topicTagParam) {
+      where.topicTag = { contains: topicTagParam, mode: "insensitive" };
+    }
+
+    // verifiedUntilBefore filter (strict ISO validation)
+    const verifiedUntilBeforeParam = searchParams.get("verifiedUntilBefore");
+    if (verifiedUntilBeforeParam) {
+      if (!isValidIsoDate(verifiedUntilBeforeParam)) {
+        return badRequest("verifiedUntilBefore must be a valid ISO date string (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ)");
+      }
+      where.verifiedUntil = {
+        ...((where.verifiedUntil as Prisma.DateTimeNullableFilter) || {}),
+        lte: new Date(verifiedUntilBeforeParam),
+      };
+    }
+
+    // verifiedUntilAfter filter (strict ISO validation)
+    const verifiedUntilAfterParam = searchParams.get("verifiedUntilAfter");
+    if (verifiedUntilAfterParam) {
+      if (!isValidIsoDate(verifiedUntilAfterParam)) {
+        return badRequest("verifiedUntilAfter must be a valid ISO date string (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ)");
+      }
+      where.verifiedUntil = {
+        ...((where.verifiedUntil as Prisma.DateTimeNullableFilter) || {}),
+        gte: new Date(verifiedUntilAfterParam),
+      };
+    }
+
+    const [rows, total] = await Promise.all([
+      prisma.quotableBlock.findMany({
+        where,
+        orderBy: [
+          { createdAt: "desc" },
+          { id: "desc" },
+        ],
+        skip,
+        take: limit,
+      }),
+      prisma.quotableBlock.count({ where }),
+    ]);
+
+    return listResponse(rows, { page, limit, total });
+  } catch (error) {
+    console.error("GET /api/quotable-blocks error:", error);
+    return serverError();
+  }
+}
+
+// =============================================================================
+// POST /api/quotable-blocks
+// =============================================================================
 
 export async function POST(request: NextRequest) {
   try {
