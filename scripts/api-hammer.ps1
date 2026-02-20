@@ -8,6 +8,7 @@
 # - /api/draft-artifacts (Phase 2 S0 byda_s_audit: create + list + validation + isolation)
 # - /api/draft-artifacts/:id/archive (Phase 2 lifecycle: archive semantics)
 # - /api/draft-artifacts/expire (Phase 2 lifecycle: TTL enforcement)
+# - /api/draft-artifacts/:id/promote (Phase 2 promotion: draft -> metric snapshots + archive)
 
 param(
     [Parameter(Mandatory=$false)]
@@ -80,6 +81,24 @@ function Test-PostJson {
     }
 }
 
+function Test-PostEmpty {
+    param([string]$Url,[int]$ExpectedStatus,[string]$Description,[hashtable]$RequestHeaders)
+    try {
+        Write-Host ("Testing: " + $Description) -NoNewline
+        $response = Invoke-WebRequest -Uri $Url -Method POST -Headers $RequestHeaders -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($response.StatusCode -eq $ExpectedStatus) {
+            Write-Host "  PASS" -ForegroundColor Green
+            return $true
+        } else {
+            Write-Host ("  FAIL (got " + $response.StatusCode + ", expected " + $ExpectedStatus + ")") -ForegroundColor Red
+            return $false
+        }
+    } catch {
+        Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+        return $false
+    }
+}
+
 function Test-Patch {
     param([string]$Url,[int]$ExpectedStatus,[string]$Description,[hashtable]$RequestHeaders)
     try {
@@ -101,6 +120,48 @@ function Test-Patch {
 function Try-GetJson {
     param([string]$Url,[hashtable]$RequestHeaders)
     try { return Invoke-RestMethod -Uri $Url -Method GET -Headers $RequestHeaders -TimeoutSec 30 } catch { return $null }
+}
+
+function Create-DraftArtifact {
+    param([string]$EntityId,[hashtable]$RequestHeaders,[string]$DescriptionPrefix)
+
+    $nowIso = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $body = @{
+        kind = "byda_s_audit"
+        entityId = $EntityId
+        content = @{
+            schemaVersion = "byda.s0.v1"
+            entityId = $EntityId
+            scores = @{
+                citability = 50
+                extractability = 50
+                factualDensity = 50
+            }
+            notes = "api-hammer"
+            createdAt = $nowIso
+        }
+    }
+
+    try {
+        Write-Host ("Testing: " + $DescriptionPrefix) -NoNewline
+        $json = $body | ConvertTo-Json -Depth 10 -Compress
+        $resp = Invoke-WebRequest -Uri "$Base/api/draft-artifacts" -Method POST -Headers $RequestHeaders -Body $json -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 201) {
+            Write-Host "  PASS" -ForegroundColor Green
+            try {
+                $parsed = $resp.Content | ConvertFrom-Json
+                return @{ ok = $true; id = $parsed.data.id; body = $body }
+            } catch {
+                return @{ ok = $false; id = $null; body = $body }
+            }
+        } else {
+            Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 201)") -ForegroundColor Red
+            return @{ ok = $false; id = $null; body = $body }
+        }
+    } catch {
+        Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+        return @{ ok = $false; id = $null; body = $body }
+    }
 }
 
 Write-Host "=== SMOKE TESTS (GET) ===" -ForegroundColor Yellow
@@ -131,62 +192,21 @@ Write-Host ""
 Write-Host "=== DRAFT-ARTIFACTS TESTS (BYDA-S S0) ===" -ForegroundColor Yellow
 
 $draftId = $null
+$draftIdForPromote = $null
 
 if (-not $entityId) {
     Write-Host "Skipping draft-artifacts tests: no entities found" -ForegroundColor DarkYellow
     $SkipCount++
 } else {
-    # Valid create
-    $nowIso = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-    $valid = @{
-        kind = "byda_s_audit"
-        entityId = $entityId
-        content = @{
-            schemaVersion = "byda.s0.v1"
-            entityId = $entityId
-            scores = @{
-                citability = 50
-                extractability = 50
-                factualDensity = 50
-            }
-            notes = "api-hammer"
-            createdAt = $nowIso
-        }
-    }
+    $create1 = Create-DraftArtifact -EntityId $entityId -RequestHeaders $Headers -DescriptionPrefix "POST /api/draft-artifacts (valid, capture id for lifecycle)"
+    if ($create1.ok) { $PassCount++; $draftId = $create1.id } else { $FailCount++ }
 
-    # Capture created draft id for lifecycle tests
-    try {
-        Write-Host "Testing: POST /api/draft-artifacts (valid, capture id)" -NoNewline
-        $json = $valid | ConvertTo-Json -Depth 10 -Compress
-        $resp = Invoke-WebRequest -Uri "$Base/api/draft-artifacts" -Method POST -Headers $Headers -Body $json -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
-        if ($resp.StatusCode -eq 201) {
-            $PassCount++
-            Write-Host "  PASS" -ForegroundColor Green
-            try {
-                $parsed = $resp.Content | ConvertFrom-Json
-                $draftId = $parsed.data.id
-            } catch {
-                # If parsing fails, we'll skip lifecycle tests
-                $draftId = $null
-            }
-        } else {
-            $FailCount++
-            Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 201)") -ForegroundColor Red
-        }
-    } catch {
-        $FailCount++
-        Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
-    }
-
-    # List (deterministic ordering is enforced in code; we just check 200)
     if (Test-Endpoint "GET" "$Base/api/draft-artifacts?limit=5" 200 "GET /api/draft-artifacts (list)" $Headers) { $PassCount++ } else { $FailCount++ }
 
-    # Validation: unknown body field
-    $unknownBody = $valid.Clone()
+    $unknownBody = $create1.body.Clone()
     $unknownBody["nope"] = "x"
     if (Test-PostJson "$Base/api/draft-artifacts" 400 "POST draft-artifacts rejects unknown body field" $Headers $unknownBody) { $PassCount++ } else { $FailCount++ }
 
-    # Validation: mismatched entityId
     $mismatch = @{
         kind = "byda_s_audit"
         entityId = $entityId
@@ -198,21 +218,19 @@ if (-not $entityId) {
                 extractability = 50
                 factualDensity = 50
             }
-            createdAt = $nowIso
+            createdAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
         }
     }
     if (Test-PostJson "$Base/api/draft-artifacts" 400 "POST draft-artifacts rejects mismatched entityId" $Headers $mismatch) { $PassCount++ } else { $FailCount++ }
 
-    # Validation: score out of range
-    $badScore = $valid.Clone()
-    $badScore.content = $valid.content.Clone()
-    $badScore.content.scores = $valid.content.scores.Clone()
+    $badScore = $create1.body.Clone()
+    $badScore.content = $create1.body.content.Clone()
+    $badScore.content.scores = $create1.body.content.scores.Clone()
     $badScore.content.scores.citability = 101
     if (Test-PostJson "$Base/api/draft-artifacts" 400 "POST draft-artifacts rejects score out of range" $Headers $badScore) { $PassCount++ } else { $FailCount++ }
 
-    # Isolation: cross-project create should 404 (non-disclosure)
     if ($OtherHeaders.Count -gt 0) {
-        if (Test-PostJson "$Base/api/draft-artifacts" 404 "POST draft-artifacts cross-project non-disclosure" $OtherHeaders $valid) { $PassCount++ } else { $FailCount++ }
+        if (Test-PostJson "$Base/api/draft-artifacts" 404 "POST draft-artifacts cross-project non-disclosure" $OtherHeaders $create1.body) { $PassCount++ } else { $FailCount++ }
     }
 }
 
@@ -234,20 +252,31 @@ if (-not $draftId) {
 Write-Host ""
 Write-Host "=== DRAFT LIFECYCLE TESTS (EXPIRE) ===" -ForegroundColor Yellow
 
-# Explicit TTL enforcement endpoint. Typically returns 0 in fresh dev DBs.
-try {
-    Write-Host "Testing: POST /api/draft-artifacts/expire (ttl enforcement)" -NoNewline
-    $resp = Invoke-WebRequest -Uri "$Base/api/draft-artifacts/expire" -Method POST -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
-    if ($resp.StatusCode -eq 200) {
-        $PassCount++
-        Write-Host "  PASS" -ForegroundColor Green
+if (Test-PostEmpty "$Base/api/draft-artifacts/expire" 200 "POST /api/draft-artifacts/expire (ttl enforcement)" $Headers) { $PassCount++ } else { $FailCount++ }
+
+Write-Host ""
+Write-Host "=== DRAFT PROMOTION TESTS (PROMOTE) ===" -ForegroundColor Yellow
+
+if (-not $entityId) {
+    Write-Host "Skipping promote tests: no entityId" -ForegroundColor DarkYellow
+    $SkipCount++
+} else {
+    # Create a fresh draft for promotion to avoid interference from archive tests.
+    $create2 = Create-DraftArtifact -EntityId $entityId -RequestHeaders $Headers -DescriptionPrefix "POST /api/draft-artifacts (valid, capture id for promote)"
+    if ($create2.ok) { $PassCount++; $draftIdForPromote = $create2.id } else { $FailCount++ }
+
+    if ($draftIdForPromote) {
+        if (Test-PostEmpty "$Base/api/draft-artifacts/$draftIdForPromote/promote" 200 "POST promote (draft -> metric snapshots + archive)" $Headers) { $PassCount++ } else { $FailCount++ }
+        if (Test-PostEmpty "$Base/api/draft-artifacts/$draftIdForPromote/promote" 400 "POST promote (already archived)" $Headers) { $PassCount++ } else { $FailCount++ }
+        if ($OtherHeaders.Count -gt 0) {
+            if (Test-PostEmpty "$Base/api/draft-artifacts/$draftIdForPromote/promote" 404 "POST promote cross-project non-disclosure" $OtherHeaders) { $PassCount++ } else { $FailCount++ }
+        }
     } else {
-        $FailCount++
-        Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red
+        Write-Host "Skipping promote tests: no draftIdForPromote captured" -ForegroundColor DarkYellow
+        $SkipCount++
     }
-} catch {
-    $FailCount++
-    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+
+    if (Test-PostEmpty "$Base/api/draft-artifacts/not-a-uuid/promote" 400 "POST promote invalid uuid" $Headers) { $PassCount++ } else { $FailCount++ }
 }
 
 Write-Host ""
