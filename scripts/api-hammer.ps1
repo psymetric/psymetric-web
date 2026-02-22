@@ -9,6 +9,7 @@
 # - /api/draft-artifacts/:id/archive (Phase 2 lifecycle: archive semantics)
 # - /api/draft-artifacts/expire (Phase 2 lifecycle: TTL enforcement)
 # - /api/draft-artifacts/:id/promote (Phase 2 promotion: draft -> metric snapshots + archive)
+# - /api/audits/run (Phase 2 S0: deterministic audit generator)
 
 param(
     [Parameter(Mandatory=$false)]
@@ -185,6 +186,27 @@ if (-not $entityId) {
     if (Test-Endpoint "GET" "$Base/api/entities/$entityId/graph?depth=3" 400 "Invalid depth=3" $Headers) { $PassCount++ } else { $FailCount++ }
     if ($OtherHeaders.Count -gt 0) {
         if (Test-Endpoint "GET" "$Base/api/entities/$entityId/graph" 404 "Cross-project graph fetch" $OtherHeaders) { $PassCount++ } else { $FailCount++ }
+    }
+}
+
+Write-Host ""
+Write-Host "=== AUDITS TESTS (S0 RUN) ===" -ForegroundColor Yellow
+
+if (-not $entityId) {
+    Write-Host "Skipping audits/run tests: no entities found" -ForegroundColor DarkYellow
+    $SkipCount++
+} else {
+    $runBody = @{ entityId = $entityId }
+    if (Test-PostJson "$Base/api/audits/run" 201 "POST /api/audits/run (valid)" $Headers $runBody) { $PassCount++ } else { $FailCount++ }
+
+    $runUnknown = @{ entityId = $entityId; nope = "x" }
+    if (Test-PostJson "$Base/api/audits/run" 400 "POST /api/audits/run rejects unknown field" $Headers $runUnknown) { $PassCount++ } else { $FailCount++ }
+
+    $runBadUuid = @{ entityId = "not-a-uuid" }
+    if (Test-PostJson "$Base/api/audits/run" 400 "POST /api/audits/run rejects invalid uuid" $Headers $runBadUuid) { $PassCount++ } else { $FailCount++ }
+
+    if ($OtherHeaders.Count -gt 0) {
+        if (Test-PostJson "$Base/api/audits/run" 404 "POST /api/audits/run cross-project non-disclosure" $OtherHeaders $runBody) { $PassCount++ } else { $FailCount++ }
     }
 }
 
