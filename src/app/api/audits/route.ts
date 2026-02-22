@@ -7,9 +7,14 @@
  * - No schema changes
  * - Project scoping via resolveProjectId()
  * - Deterministic ordering: createdAt desc, id desc
- * - TTL enforced at read-time (exclude expired)
+ * - TTL enforced at read-time by default (exclude expired)
  * - No mutation, no event logging
+ *
+ * Optional filters (explicit, validated):
+ * - status=draft|archived (default: draft)
+ * - includeExpired=true|false (default: false)
  */
+
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
@@ -36,6 +41,20 @@ function parsePagination(searchParams: URLSearchParams) {
   return { page, limit, skip };
 }
 
+function parseBoolean(value: string | null): boolean | undefined {
+  if (value === null) return undefined;
+  if (value === "true" || value === "1") return true;
+  if (value === "false" || value === "0") return false;
+  return undefined;
+}
+
+function parseStatus(value: string | null): DraftArtifactStatus | undefined {
+  if (value === null) return undefined;
+  if (value === "draft") return DraftArtifactStatus.draft;
+  if (value === "archived") return DraftArtifactStatus.archived;
+  return undefined;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { projectId, error } = await resolveProjectId(request);
@@ -46,14 +65,26 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const { page, limit, skip } = parsePagination(searchParams);
 
+    const statusParam = searchParams.get("status");
+    const status = parseStatus(statusParam);
+    if (statusParam !== null && !status) {
+      return badRequest("status must be one of: draft, archived");
+    }
+
+    const includeExpiredParam = searchParams.get("includeExpired");
+    const includeExpired = parseBoolean(includeExpiredParam);
+    if (includeExpiredParam !== null && includeExpired === undefined) {
+      return badRequest("includeExpired must be a boolean");
+    }
+
     const now = new Date();
 
     const where: Prisma.DraftArtifactWhereInput = {
       projectId,
       kind: DraftArtifactKind.byda_s_audit,
-      status: DraftArtifactStatus.draft,
+      status: status ?? DraftArtifactStatus.draft,
       deletedAt: null,
-      expiresAt: { gte: now },
+      ...(includeExpired ? {} : { expiresAt: { gte: now } }),
     };
 
     const [rows, total] = await Promise.all([

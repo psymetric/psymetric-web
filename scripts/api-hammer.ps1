@@ -210,6 +210,10 @@ if (-not $entityId) {
     }
 
     if (Test-Endpoint "GET" "$Base/api/audits?limit=5" 200 "GET /api/audits (list)" $Headers) { $PassCount++ } else { $FailCount++ }
+    if (Test-Endpoint "GET" "$Base/api/audits?status=archived" 200 "GET /api/audits status=archived" $Headers) { $PassCount++ } else { $FailCount++ }
+    if (Test-Endpoint "GET" "$Base/api/audits?includeExpired=true" 200 "GET /api/audits includeExpired=true" $Headers) { $PassCount++ } else { $FailCount++ }
+    if (Test-Endpoint "GET" "$Base/api/audits?status=invalid" 400 "GET /api/audits invalid status" $Headers) { $PassCount++ } else { $FailCount++ }
+    if (Test-Endpoint "GET" "$Base/api/audits?includeExpired=maybe" 400 "GET /api/audits invalid includeExpired" $Headers) { $PassCount++ } else { $FailCount++ }
 
     $auditList = Try-GetJson -Url "$Base/api/audits?limit=1" -RequestHeaders $Headers
     $auditId = $null
