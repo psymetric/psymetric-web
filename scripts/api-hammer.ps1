@@ -208,6 +208,25 @@ if (-not $entityId) {
     if ($OtherHeaders.Count -gt 0) {
         if (Test-PostJson "$Base/api/audits/run" 404 "POST /api/audits/run cross-project non-disclosure" $OtherHeaders $runBody) { $PassCount++ } else { $FailCount++ }
     }
+
+    if (Test-Endpoint "GET" "$Base/api/audits?limit=5" 200 "GET /api/audits (list)" $Headers) { $PassCount++ } else { $FailCount++ }
+
+    $auditList = Try-GetJson -Url "$Base/api/audits?limit=1" -RequestHeaders $Headers
+    $auditId = $null
+    if ($auditList -and $auditList.data -and $auditList.data.Count -gt 0) { $auditId = $auditList.data[0].id }
+
+    if ($auditId) {
+        if (Test-Endpoint "GET" "$Base/api/audits/$auditId" 200 "GET /api/audits/:id (valid)" $Headers) { $PassCount++ } else { $FailCount++ }
+        if ($OtherHeaders.Count -gt 0) {
+            if (Test-Endpoint "GET" "$Base/api/audits/$auditId" 404 "GET /api/audits/:id cross-project non-disclosure" $OtherHeaders) { $PassCount++ } else { $FailCount++ }
+        }
+    } else {
+        Write-Host "Skipping audits/:id tests: no audit id available" -ForegroundColor DarkYellow
+        $SkipCount++
+    }
+
+    if (Test-Endpoint "GET" "$Base/api/audits/not-a-uuid" 400 "GET /api/audits/:id invalid uuid" $Headers) { $PassCount++ } else { $FailCount++ }
+    if (Test-Endpoint "GET" "$Base/api/audits/00000000-0000-4000-a000-000000000009" 404 "GET /api/audits/:id not found" $Headers) { $PassCount++ } else { $FailCount++ }
 }
 
 Write-Host ""
