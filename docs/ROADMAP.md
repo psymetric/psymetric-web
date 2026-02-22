@@ -101,20 +101,29 @@ Exit criteria: satisfied. ✅
 
 ---
 
-## Phase 2 — BYDA-S Phase 3-A (S0) With Zero LLM (NEXT)
+## Phase 2 — BYDA-S Phase 3-A (S0) With Zero LLM (ACTIVE)
 
 Objective: implement the audit storage + rendering + apply pipeline **without LLM involvement**.
 
-Scope:
+### Completed Foundations (Promotion Hardening Checkpoint)
+- `DraftArtifact` lifecycle implemented (create, list, archive, expire)
+- Promotion endpoint (`POST /api/draft-artifacts/[id]/promote`) implemented
+- Atomic idempotency guard using conditional `updateMany()` inside `prisma.$transaction()`
+- Promotion replay protection (double-submit safe under READ COMMITTED)
+- Exactly +3 `MetricSnapshot` records per successful promotion (deterministically enforced)
+- API hammer asserts snapshot delta == +3 via pagination total
+- Cross-project non-disclosure verified for promote
+
+Scope (remaining for S0):
 - S0-only audit generator (deterministic, rules-based)
 - Store AuditReport as `DraftArtifact` (no schema migration required)
 - VS Code webview displays AuditReport and proposed patches (even if empty)
-- Apply endpoint exists and is fully transactional, but only supports strictly validated patch types
+- Apply endpoint fully transactional, limited to strictly validated patch types
 
 Constraints:
 - All writes inside `prisma.$transaction()`
 - Every applied mutation emits canonical EventLog entries
-- Apply accepts **only** `auditDraftId + approvedPatchIds[]` and loads patches from stored report (no client-injected patch objects)
+- Apply accepts **only** `auditDraftId + approvedPatchIds[]` and loads patches from stored report
 
 Exit criteria:
 - DraftArtifact storage verified
@@ -226,4 +235,6 @@ Constraints:
 - Multi-project hardening: ✅ done
 - Phase 0 (AI News + Manual SEO): 🟡 in progress
 - Phase 1 (VS Code + MCP read-only): ✅ done
-- BYDA-S S0 pipeline: ⏳ next
+- Phase 2 (BYDA-S S0 foundations + promotion hardening): 🟡 in progress
+- Promotion idempotency + snapshot determinism: ✅ verified
+- BYDA-S S0 audit generator + apply pipeline: ⏳ next
