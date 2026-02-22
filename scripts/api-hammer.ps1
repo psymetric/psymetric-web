@@ -34,6 +34,55 @@ $FailCount = 0
 $SkipCount = 0
 $Base = $Base.TrimEnd('/')
 
+function Build-QueryString {
+    param([hashtable]$Params)
+    if (-not $Params -or $Params.Count -eq 0) { return "" }
+
+    $parts = @()
+    foreach ($k in ($Params.Keys | Sort-Object)) {
+        if ($null -eq $k) { continue }
+        $key = ($k.ToString()).Trim()
+        if ([string]::IsNullOrWhiteSpace($key)) { continue }
+
+        $raw = $Params[$k]
+        if ($null -eq $raw) { continue }
+        $val = ($raw.ToString()).Trim()
+        if ([string]::IsNullOrWhiteSpace($val)) { continue }
+
+        $encK = [System.Uri]::EscapeDataString($key)
+        $encV = [System.Uri]::EscapeDataString($val)
+        $parts += "$encK=$encV"
+    }
+
+    return ($parts -join "&")
+}
+
+function Build-Url {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path,
+
+        [Parameter(Mandatory=$false)]
+        [hashtable]$Params
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Build-Url requires non-empty Path"
+    }
+
+    if (-not $Path.StartsWith('/')) {
+        $Path = '/' + $Path
+    }
+
+    $qs = Build-QueryString -Params $Params
+
+    if ([string]::IsNullOrWhiteSpace($qs)) {
+        return "$Base$Path"
+    }
+
+    return "$Base$Path`?$qs"
+}
+
 function Get-ProjectHeaders {
     param([string]$ProjectIdValue,[string]$ProjectSlugValue)
     $headers = @{}
@@ -79,6 +128,37 @@ function Test-PostJson {
     } catch {
         Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
         return $false
+    }
+}
+
+function Test-PostJsonCapture {
+    param([string]$Url,[int]$ExpectedStatus,[string]$Description,[hashtable]$RequestHeaders,[object]$BodyObj)
+
+    $result = @{ ok = $false; data = $null }
+
+    try {
+        Write-Host ("Testing: " + $Description) -NoNewline
+        $json = $BodyObj | ConvertTo-Json -Depth 10 -Compress
+        $response = Invoke-WebRequest -Uri $Url -Method POST -Headers $RequestHeaders -Body $json -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+
+        if ($response.StatusCode -eq $ExpectedStatus) {
+            Write-Host "  PASS" -ForegroundColor Green
+            try {
+                $parsed = $response.Content | ConvertFrom-Json
+                $result.ok = $true
+                $result.data = $parsed.data
+            } catch {
+                # If parsing fails, still treat request as ok; caller can fall back.
+                $result.ok = $true
+            }
+            return $result
+        } else {
+            Write-Host ("  FAIL (got " + $response.StatusCode + ", expected " + $ExpectedStatus + ")") -ForegroundColor Red
+            return $result
+        }
+    } catch {
+        Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+        return $result
     }
 }
 
@@ -197,7 +277,9 @@ if (-not $entityId) {
     $SkipCount++
 } else {
     $runBody = @{ entityId = $entityId }
-    if (Test-PostJson "$Base/api/audits/run" 201 "POST /api/audits/run (valid)" $Headers $runBody) { $PassCount++ } else { $FailCount++ }
+
+    $runResult = Test-PostJsonCapture "$Base/api/audits/run" 201 "POST /api/audits/run (valid)" $Headers $runBody
+    if ($runResult.ok) { $PassCount++ } else { $FailCount++ }
 
     $runUnknown = @{ entityId = $entityId; nope = "x" }
     if (Test-PostJson "$Base/api/audits/run" 400 "POST /api/audits/run rejects unknown field" $Headers $runUnknown) { $PassCount++ } else { $FailCount++ }
@@ -208,20 +290,67 @@ if (-not $entityId) {
     if ($OtherHeaders.Count -gt 0) {
         if (Test-PostJson "$Base/api/audits/run" 404 "POST /api/audits/run cross-project non-disclosure" $OtherHeaders $runBody) { $PassCount++ } else { $FailCount++ }
     }
+
+    if (Test-Endpoint "GET" "$Base/api/audits?limit=5" 200 "GET /api/audits (list)" $Headers) { $PassCount++ } else { $FailCount++ }
+    if (Test-Endpoint "GET" "$Base/api/audits?status=archived" 200 "GET /api/audits status=archived" $Headers) { $PassCount++ } else { $FailCount++ }
+    if (Test-Endpoint "GET" "$Base/api/audits?includeExpired=true" 200 "GET /api/audits includeExpired=true" $Headers) { $PassCount++ } else { $FailCount++ }
+    if (Test-Endpoint "GET" "$Base/api/audits?status=invalid" 400 "GET /api/audits invalid status" $Headers) { $PassCount++ } else { $FailCount++ }
+    if (Test-Endpoint "GET" "$Base/api/audits?includeExpired=maybe" 400 "GET /api/audits invalid includeExpired" $Headers) { $PassCount++ } else { $FailCount++ }
+
+    # Prefer the id from the just-created audit to avoid relying on existing project state.
+    $auditId = $null
+    if ($runResult -and $runResult.data -and $runResult.data.id) {
+        $auditId = ($runResult.data.id).ToString().Trim()
+    } else {
+        $auditList = Try-GetJson -Url "$Base/api/audits?limit=1" -RequestHeaders $Headers
+        if ($auditList -and $auditList.data -and $auditList.data.Count -gt 0) {
+            $auditId = ($auditList.data[0].id).ToString().Trim()
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($auditId) -or $auditId -notmatch '^[0-9a-fA-F-]{36}$') {
+        $auditId = $null
+    }
+
+    if ($auditId) {
+        if (Test-Endpoint "GET" "$Base/api/audits/$auditId" 200 "GET /api/audits/:id (valid)" $Headers) { $PassCount++ } else { $FailCount++ }
+
+        $auditExplainUrl = Build-Url -Path "/api/audits/$auditId" -Params @{
+            status = "draft"
+            includeExplain = "true"
+        }
+        if (Test-Endpoint "GET" $auditExplainUrl 200 "GET /api/audits/:id includeExplain=true" $Headers) { $PassCount++ } else { $FailCount++ }
+
+        if (Test-Endpoint "GET" "$Base/api/audits/$auditId?includeExplain=maybe" 400 "GET /api/audits/:id includeExplain invalid" $Headers) { $PassCount++ } else { $FailCount++ }
+        if (Test-Endpoint "GET" "$Base/api/audits/$auditId?includePromotion=maybe" 400 "GET /api/audits/:id includePromotion invalid" $Headers) { $PassCount++ } else { $FailCount++ }
+
+        if ($OtherHeaders.Count -gt 0) {
+            if (Test-Endpoint "GET" "$Base/api/audits/$auditId" 404 "GET /api/audits/:id cross-project non-disclosure" $OtherHeaders) { $PassCount++ } else { $FailCount++ }
+        }
+    } else {
+        Write-Host "Skipping audits/:id tests: no audit id available" -ForegroundColor DarkYellow
+        $SkipCount++
+    }
+
+    if (Test-Endpoint "GET" "$Base/api/audits/not-a-uuid" 400 "GET /api/audits/:id invalid uuid" $Headers) { $PassCount++ } else { $FailCount++ }
+    if (Test-Endpoint "GET" "$Base/api/audits/00000000-0000-4000-a000-000000000009" 404 "GET /api/audits/:id not found" $Headers) { $PassCount++ } else { $FailCount++ }
 }
 
 Write-Host ""
 Write-Host "=== DRAFT-ARTIFACTS TESTS (BYDA-S S0) ===" -ForegroundColor Yellow
 
 $draftId = $null
-$draftIdForPromote = $null
 
 if (-not $entityId) {
     Write-Host "Skipping draft-artifacts tests: no entities found" -ForegroundColor DarkYellow
     $SkipCount++
 } else {
     $create1 = Create-DraftArtifact -EntityId $entityId -RequestHeaders $Headers -DescriptionPrefix "POST /api/draft-artifacts (valid, capture id for lifecycle)"
-    if ($create1.ok) { $PassCount++; $draftId = $create1.id } else { $FailCount++ }
+    if ($create1.ok) { $PassCount++; $draftId = ($create1.id).ToString().Trim() } else { $FailCount++ }
+
+    if ([string]::IsNullOrWhiteSpace($draftId) -or $draftId -notmatch '^[0-9a-fA-F-]{36}$') {
+        $draftId = $null
+    }
 
     if (Test-Endpoint "GET" "$Base/api/draft-artifacts?limit=5" 200 "GET /api/draft-artifacts (list)" $Headers) { $PassCount++ } else { $FailCount++ }
 
@@ -283,12 +412,31 @@ if (-not $entityId) {
     Write-Host "Skipping promote tests: no entityId" -ForegroundColor DarkYellow
     $SkipCount++
 } else {
+    $draftIdForPromote = $null
+
     # Create a fresh draft for promotion to avoid interference from archive tests.
     $create2 = Create-DraftArtifact -EntityId $entityId -RequestHeaders $Headers -DescriptionPrefix "POST /api/draft-artifacts (valid, capture id for promote)"
-    if ($create2.ok) { $PassCount++; $draftIdForPromote = $create2.id } else { $FailCount++ }
+    if ($create2.ok) { $PassCount++; $draftIdForPromote = ($create2.id).ToString().Trim() } else { $FailCount++ }
+
+    if ([string]::IsNullOrWhiteSpace($draftIdForPromote) -or $draftIdForPromote -notmatch '^[0-9a-fA-F-]{36}$') {
+        $draftIdForPromote = $null
+    }
 
     if ($draftIdForPromote) {
         if (Test-PostEmpty "$Base/api/draft-artifacts/$draftIdForPromote/promote" 200 "POST promote (draft -> metric snapshots + archive)" $Headers) { $PassCount++ } else { $FailCount++ }
+
+        $promotedPromotionUrl = Build-Url -Path "/api/audits/$draftIdForPromote" -Params @{
+            status = "archived"
+            includePromotion = "true"
+        }
+        if (Test-Endpoint "GET" $promotedPromotionUrl 200 "GET /api/audits/:id includePromotion=true (promoted)" $Headers) { $PassCount++ } else { $FailCount++ }
+
+        $promotedExplainUrl = Build-Url -Path "/api/audits/$draftIdForPromote" -Params @{
+            status = "archived"
+            includeExplain = "true"
+        }
+        if (Test-Endpoint "GET" $promotedExplainUrl 200 "GET /api/audits/:id includeExplain=true (promoted)" $Headers) { $PassCount++ } else { $FailCount++ }
+
         if (Test-PostEmpty "$Base/api/draft-artifacts/$draftIdForPromote/promote" 400 "POST promote (already archived)" $Headers) { $PassCount++ } else { $FailCount++ }
         if ($OtherHeaders.Count -gt 0) {
             if (Test-PostEmpty "$Base/api/draft-artifacts/$draftIdForPromote/promote" 404 "POST promote cross-project non-disclosure" $OtherHeaders) { $PassCount++ } else { $FailCount++ }
