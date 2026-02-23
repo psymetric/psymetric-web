@@ -70,8 +70,8 @@ export async function POST(
       );
     }
 
-    // Run validation
-    const validation = await validateEntityForPublish({ entity });
+    // Run validation (projectId-scoped per §1.2)
+    const validation = await validateEntityForPublish({ entity, projectId });
 
     if (validation.status === "fail") {
       // Log validation failure event (no state change)
