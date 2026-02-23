@@ -35,8 +35,9 @@ interface Entity {
 
 export async function validateEntityForPublish(args: {
   entity: Entity;
+  projectId: string;
 }): Promise<ValidationResult> {
-  const { entity } = args;
+  const { entity, projectId } = args;
   const errors: ValidationError[] = [];
   
   const categories = {
@@ -96,6 +97,7 @@ export async function validateEntityForPublish(args: {
   if (entity.entityType === "guide") {
     const guideRelations = await prisma.entityRelation.findFirst({
       where: {
+        projectId,
         OR: [
           {
             fromEntityType: "guide",

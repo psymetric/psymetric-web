@@ -61,8 +61,8 @@ export async function POST(
       return notFound("Entity not found");
     }
 
-    // Run deterministic validation
-    const validation = await validateEntityForPublish({ entity });
+    // Run deterministic validation (projectId-scoped per §1.2)
+    const validation = await validateEntityForPublish({ entity, projectId });
 
     // Log validation failure event if needed (no state change)
     if (validation.status === "fail") {
