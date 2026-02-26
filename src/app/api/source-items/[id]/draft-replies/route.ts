@@ -147,9 +147,7 @@ export async function POST(
               }),
               sourceItemId: id,
               entityId: null,
-              createdBy: "llm",
-              // Prisma Json? fields should be omitted when unknown/null.
-              // llmModel and llmMeta can be populated later when a real LLM integration exists.
+              createdBy: "system",
               expiresAt,
               deletedAt: null,
               projectId,
@@ -165,12 +163,13 @@ export async function POST(
           eventType: "DRAFT_CREATED",
           entityType: "sourceItem",
           entityId: sourceItem.id,
-          actor: "llm",
+          actor: "system",
           projectId,
           details: {
             draftIds: ids,
             count,
             style,
+            stub: true,
           },
         },
       });
@@ -213,18 +212,29 @@ export async function GET(
 
     const sourceItem = await prisma.sourceItem.findUnique({
       where: { id },
-      select: { id: true, projectId: true },
+      select: { id: true, platform: true, projectId: true },
     });
 
     if (!sourceItem || sourceItem.projectId !== projectId) {
       return notFound("Source item not found");
     }
 
+    // Phase 1 invariant: only X reply drafts are supported.
+    if (sourceItem.platform !== "x") {
+      return badRequest("Draft replies are only supported for X source items");
+    }
+
+    const now = new Date();
+
     const drafts = await prisma.draftArtifact.findMany({
       where: {
         sourceItemId: id,
         projectId,
+        kind: "x_reply",
         deletedAt: null,
+        // expiresAt is required (non-null) in the schema.
+        // Read-time TTL filtering: only return non-expired drafts.
+        expiresAt: { gte: now },
       },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     });
