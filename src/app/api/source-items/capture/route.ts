@@ -18,15 +18,9 @@ import {
   conflict,
   serverError,
 } from "@/lib/api-response";
-import {
-  isValidEnum,
-  isValidUrl,
-  isNonEmptyString,
-  generateContentHash,
-  VALID_SOURCE_TYPES,
-  VALID_PLATFORMS,
-} from "@/lib/validation";
+import { generateContentHash } from "@/lib/validation";
 import { resolveProjectId } from "@/lib/project";
+import { CaptureSourceItemSchema } from "@/lib/schemas/source-item";
 
 export async function POST(request: NextRequest) {
   try {
@@ -46,37 +40,30 @@ export async function POST(request: NextRequest) {
       return badRequest("Request body must be an object");
     }
 
-    const b = body as Record<string, unknown>;
-
-    // --- Validate required fields ---
-    if (!isValidEnum(b.sourceType, VALID_SOURCE_TYPES)) {
-      return badRequest(
-        "sourceType is required and must be one of: " +
-          VALID_SOURCE_TYPES.join(", ")
-      );
+    const parsed = CaptureSourceItemSchema.safeParse(body);
+    if (!parsed.success) {
+      const flat = parsed.error.flatten();
+      return badRequest("Validation failed", [
+        ...flat.formErrors.map((msg) => ({
+          code: "VALIDATION_ERROR" as const,
+          message: msg,
+        })),
+        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
+          (messages ?? []).map((msg) => ({
+            code: "VALIDATION_ERROR" as const,
+            field,
+            message: msg,
+          }))
+        ),
+      ]);
     }
 
-    if (!isValidUrl(b.url)) {
-      return badRequest("url is required and must be a valid URL");
-    }
-
-    if (!isNonEmptyString(b.operatorIntent)) {
-      return badRequest(
-        "operatorIntent is required — explain why this was captured"
-      );
-    }
-
-    // --- Validate optional fields ---
-    if (b.platform && !isValidEnum(b.platform, VALID_PLATFORMS)) {
-      return badRequest(
-        "platform must be one of: " + VALID_PLATFORMS.join(", ")
-      );
-    }
+    const data = parsed.data;
 
     // --- Check for existing SourceItem with this URL ---
     // NOTE: SourceItem.url is globally unique in the schema. Enforce project isolation explicitly.
     const existing = await prisma.sourceItem.findUnique({
-      where: { url: b.url as string },
+      where: { url: data.url },
     });
 
     if (existing) {
@@ -88,9 +75,9 @@ export async function POST(request: NextRequest) {
 
       // --- Recapture: URL already exists --- (transactional)
       await prisma.$transaction(async (tx) => {
-        if (b.notes) {
+        if (data.notes) {
           const existingNotes = existing.notes || "";
-          const recaptureNote = `\n\n[Recapture ${new Date().toISOString()}]: ${b.notes}`;
+          const recaptureNote = `\n\n[Recapture ${new Date().toISOString()}]: ${data.notes}`;
           await tx.sourceItem.update({
             where: { id: existing.id },
             data: { notes: existingNotes + recaptureNote },
@@ -106,10 +93,10 @@ export async function POST(request: NextRequest) {
             projectId,
             details: {
               recapture: true,
-              sourceType: b.sourceType,
-              url: b.url,
-              operatorIntent: b.operatorIntent,
-              ...(b.notes ? { notes: b.notes } : {}),
+              sourceType: data.sourceType,
+              url: data.url,
+              operatorIntent: data.operatorIntent,
+              ...(data.notes ? { notes: data.notes } : {}),
             },
           },
         });
@@ -126,18 +113,18 @@ export async function POST(request: NextRequest) {
     }
 
     // --- New capture: URL does not exist --- (transactional)
-    const contentHash = await generateContentHash(b.url as string);
+    const contentHash = await generateContentHash(data.url);
 
     const sourceItem = await prisma.$transaction(async (tx) => {
       const item = await tx.sourceItem.create({
         data: {
-          sourceType: b.sourceType as string,
-          platform: (b.platform as string) || "other",
-          url: b.url as string,
+          sourceType: data.sourceType,
+          platform: data.platform || "other",
+          url: data.url,
           capturedBy: "human",
           contentHash,
-          operatorIntent: b.operatorIntent as string,
-          notes: (b.notes as string) || null,
+          operatorIntent: data.operatorIntent,
+          notes: data.notes || null,
           status: "ingested",
           projectId,
         },
@@ -153,7 +140,7 @@ export async function POST(request: NextRequest) {
           details: {
             sourceType: item.sourceType,
             url: item.url,
-            operatorIntent: b.operatorIntent,
+            operatorIntent: data.operatorIntent,
           },
         },
       });
