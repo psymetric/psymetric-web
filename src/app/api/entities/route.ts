@@ -15,15 +15,13 @@ import {
 } from "@/lib/api-response";
 import {
   isValidEnum,
-  isNonEmptyString,
-  isValidUrl,
   slugify,
   VALID_CONTENT_ENTITY_TYPES,
   VALID_ENTITY_STATUSES,
   VALID_CONCEPT_KINDS,
-  VALID_DIFFICULTIES,
 } from "@/lib/validation";
 import { resolveProjectId } from "@/lib/project";
+import { CreateEntitySchema } from "@/lib/schemas/entity";
 import type { Prisma } from "@prisma/client";
 
 // =============================================================================
@@ -115,78 +113,68 @@ export async function POST(request: NextRequest) {
       return badRequest("Request body must be an object");
     }
 
-    const b = body as Record<string, unknown>;
+    const parsed = CreateEntitySchema.safeParse(body);
+    if (!parsed.success) {
+      const flat = parsed.error.flatten();
+      return badRequest("Validation failed", [
+        ...flat.formErrors.map((msg) => ({
+          code: "VALIDATION_ERROR" as const,
+          message: msg,
+        })),
+        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
+          (messages ?? []).map((msg) => ({
+            code: "VALIDATION_ERROR" as const,
+            field,
+            message: msg,
+          }))
+        ),
+      ]);
+    }
 
-    // --- Validate required fields ---
-    if (!isValidEnum(b.entityType, VALID_CONTENT_ENTITY_TYPES)) {
+    const data = parsed.data;
+
+    // --- Cross-field validation ---
+    if (data.conceptKind && data.entityType !== "concept") {
+      return badRequest("conceptKind is only valid for concepts");
+    }
+
+    if (data.entityType === "project" && !data.repoUrl) {
       return badRequest(
-        "entityType is required and must be one of: " +
-          VALID_CONTENT_ENTITY_TYPES.join(", ")
+        "repoUrl is required for projects and must be a valid URL"
       );
-    }
-
-    if (!isNonEmptyString(b.title)) {
-      return badRequest("title is required");
-    }
-
-    // --- Validate optional fields ---
-    if (b.difficulty && !isValidEnum(b.difficulty, VALID_DIFFICULTIES)) {
-      return badRequest(
-        "difficulty must be one of: " + VALID_DIFFICULTIES.join(", ")
-      );
-    }
-
-    if (b.conceptKind) {
-      if (b.entityType !== "concept") {
-        return badRequest("conceptKind is only valid for concepts");
-      }
-      if (!isValidEnum(b.conceptKind, VALID_CONCEPT_KINDS)) {
-        return badRequest(
-          "conceptKind must be one of: " + VALID_CONCEPT_KINDS.join(", ")
-        );
-      }
-    }
-
-    // Per API contract: repoUrl required for projects
-    if (b.entityType === "project") {
-      if (!isValidUrl(b.repoUrl)) {
-        return badRequest(
-          "repoUrl is required for projects and must be a valid URL"
-        );
-      }
     }
 
     // --- Generate slug if not provided ---
-    const slug = (b.slug as string) || slugify(b.title as string);
+    const slug = data.slug || slugify(data.title);
 
     // --- Check slug uniqueness within project + entity type ---
     const existingSlug = await prisma.entity.findUnique({
       where: {
         projectId_entityType_slug: {
           projectId,
-          entityType: b.entityType as string,
+          entityType: data.entityType,
           slug,
         },
       },
     });
     if (existingSlug) {
-      return badRequest(`Slug "${slug}" already exists for ${b.entityType}`);
+      return badRequest(`Slug "${slug}" already exists for ${data.entityType}`);
     }
 
     // --- Transactional create + event log (atomic) ---
     const entity = await prisma.$transaction(async (tx) => {
       const newEntity = await tx.entity.create({
         data: {
-          entityType: b.entityType as string,
-          title: b.title as string,
+          entityType: data.entityType,
+          title: data.title,
           slug,
-          summary: (b.summary as string) || null,
-          difficulty: (b.difficulty as string) || null,
+          summary: data.summary || null,
+          difficulty: data.difficulty || null,
           conceptKind:
-            b.entityType === "concept"
-              ? (b.conceptKind as string) || "standard"
+            data.entityType === "concept"
+              ? data.conceptKind || "standard"
               : null,
-          repoUrl: (b.repoUrl as string) || null,
+          repoUrl: data.repoUrl || null,
           status: "draft",
           projectId,
         },
@@ -195,14 +183,14 @@ export async function POST(request: NextRequest) {
       await tx.eventLog.create({
         data: {
           eventType: "ENTITY_CREATED",
-          entityType: b.entityType as string,
+          entityType: data.entityType,
           entityId: newEntity.id,
           actor: "human",
           projectId,
           details: {
             title: newEntity.title,
             slug: newEntity.slug,
-            ...(b.llmAssisted ? { llmAssisted: true } : {}),
+            ...(data.llmAssisted ? { llmAssisted: true } : {}),
           },
         },
       });
