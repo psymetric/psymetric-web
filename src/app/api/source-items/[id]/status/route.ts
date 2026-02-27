@@ -11,6 +11,7 @@
  */
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import type { Prisma, SourceItemStatus } from "@prisma/client";
 import {
   successResponse,
   badRequest,
@@ -60,6 +61,9 @@ export async function PUT(
       );
     }
 
+    // Runtime validation above guarantees this cast is safe.
+    const newStatus = b.status as SourceItemStatus;
+
     // Notes must be string if provided
     if (b.notes !== undefined && b.notes !== null && typeof b.notes !== "string") {
       return badRequest("notes must be a string");
@@ -76,12 +80,13 @@ export async function PUT(
     }
 
     // --- Build update data ---
-    const updateData: { status: string; archivedAt?: Date | null; notes?: string } = {
-      status: b.status as string,
+    // Prisma expects enum-typed status; runtime validation above guarantees the cast is safe.
+    const updateData: Prisma.SourceItemUpdateInput = {
+      status: newStatus,
     };
 
     // Per DB-ARCHITECTURE-PLAN.md: archiving sets archivedAt
-    if (b.status === "archived") {
+    if (newStatus === "archived") {
       updateData.archivedAt = new Date();
     }
 
@@ -108,7 +113,7 @@ export async function PUT(
           projectId,
           details: {
             previousStatus: existing.status,
-            newStatus: b.status,
+            newStatus,
             ...(typeof b.notes === "string" && (b.notes as string).length > 0
               ? { notes: b.notes }
               : {}),
