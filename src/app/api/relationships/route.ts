@@ -8,6 +8,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   successResponse,
+  createdResponse,
   listResponse,
   badRequest,
   notFound,
@@ -258,7 +259,7 @@ export async function POST(request: NextRequest) {
       return relation;
     });
 
-    return successResponse({
+    return createdResponse({
       id: result.id,
       fromEntityType: result.fromEntityType,
       fromEntityId: result.fromEntityId,

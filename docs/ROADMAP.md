@@ -225,5 +225,10 @@ Constraints:
 
 - Multi-project hardening: ✅ done
 - Phase 0 (AI News + Manual SEO): 🟡 in progress
+  - Core endpoints (entities, source-items, draft-artifacts, quotable-blocks, search-performance ingest): ✅ implemented + hammer-verified
+  - SEO W4–W7 endpoints (keyword-research, serp-snapshot, content-brief, ai-keyword-volume): ❌ not implemented — spec exists, code does not
+  - verify-freshness: ❌ not implemented
 - Phase 1 (VS Code + MCP read-only): ✅ done
+- Phase 2 (DraftArtifact lifecycle + BYDA-S S0): ✅ done
+- Phase 2 Extension (X Capture + Draft Reply): ✅ implemented + hammer-verified
 - BYDA-S S0 pipeline: ⏳ next

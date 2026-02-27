@@ -104,32 +104,43 @@ export async function POST(request: NextRequest) {
       return badRequest(error);
     }
 
-    const body = await request.json();
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return badRequest("Invalid JSON body");
+    }
+
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return badRequest("Request body must be an object");
+    }
+
+    const b = body as Record<string, unknown>;
 
     // --- Validate required fields ---
-    if (!isValidEnum(body.entityType, VALID_CONTENT_ENTITY_TYPES)) {
+    if (!isValidEnum(b.entityType, VALID_CONTENT_ENTITY_TYPES)) {
       return badRequest(
         "entityType is required and must be one of: " +
           VALID_CONTENT_ENTITY_TYPES.join(", ")
       );
     }
 
-    if (!isNonEmptyString(body.title)) {
+    if (!isNonEmptyString(b.title)) {
       return badRequest("title is required");
     }
 
     // --- Validate optional fields ---
-    if (body.difficulty && !isValidEnum(body.difficulty, VALID_DIFFICULTIES)) {
+    if (b.difficulty && !isValidEnum(b.difficulty, VALID_DIFFICULTIES)) {
       return badRequest(
         "difficulty must be one of: " + VALID_DIFFICULTIES.join(", ")
       );
     }
 
-    if (body.conceptKind) {
-      if (body.entityType !== "concept") {
+    if (b.conceptKind) {
+      if (b.entityType !== "concept") {
         return badRequest("conceptKind is only valid for concepts");
       }
-      if (!isValidEnum(body.conceptKind, VALID_CONCEPT_KINDS)) {
+      if (!isValidEnum(b.conceptKind, VALID_CONCEPT_KINDS)) {
         return badRequest(
           "conceptKind must be one of: " + VALID_CONCEPT_KINDS.join(", ")
         );
@@ -137,8 +148,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Per API contract: repoUrl required for projects
-    if (body.entityType === "project") {
-      if (!isValidUrl(body.repoUrl)) {
+    if (b.entityType === "project") {
+      if (!isValidUrl(b.repoUrl)) {
         return badRequest(
           "repoUrl is required for projects and must be a valid URL"
         );
@@ -146,36 +157,36 @@ export async function POST(request: NextRequest) {
     }
 
     // --- Generate slug if not provided ---
-    const slug = body.slug || slugify(body.title);
+    const slug = (b.slug as string) || slugify(b.title as string);
 
     // --- Check slug uniqueness within project + entity type ---
     const existingSlug = await prisma.entity.findUnique({
       where: {
         projectId_entityType_slug: {
           projectId,
-          entityType: body.entityType,
+          entityType: b.entityType as string,
           slug,
         },
       },
     });
     if (existingSlug) {
-      return badRequest(`Slug "${slug}" already exists for ${body.entityType}`);
+      return badRequest(`Slug "${slug}" already exists for ${b.entityType}`);
     }
 
     // --- Transactional create + event log (atomic) ---
     const entity = await prisma.$transaction(async (tx) => {
       const newEntity = await tx.entity.create({
         data: {
-          entityType: body.entityType,
-          title: body.title,
+          entityType: b.entityType as string,
+          title: b.title as string,
           slug,
-          summary: body.summary || null,
-          difficulty: body.difficulty || null,
+          summary: (b.summary as string) || null,
+          difficulty: (b.difficulty as string) || null,
           conceptKind:
-            body.entityType === "concept"
-              ? body.conceptKind || "standard"
+            b.entityType === "concept"
+              ? (b.conceptKind as string) || "standard"
               : null,
-          repoUrl: body.repoUrl || null,
+          repoUrl: (b.repoUrl as string) || null,
           status: "draft",
           projectId,
         },
@@ -184,14 +195,14 @@ export async function POST(request: NextRequest) {
       await tx.eventLog.create({
         data: {
           eventType: "ENTITY_CREATED",
-          entityType: body.entityType,
+          entityType: b.entityType as string,
           entityId: newEntity.id,
           actor: "human",
           projectId,
           details: {
             title: newEntity.title,
             slug: newEntity.slug,
-            ...(body.llmAssisted ? { llmAssisted: true } : {}),
+            ...(b.llmAssisted ? { llmAssisted: true } : {}),
           },
         },
       });

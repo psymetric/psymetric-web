@@ -39,10 +39,21 @@ export async function PUT(
       return badRequest("id must be a valid UUID");
     }
 
-    const body = await request.json();
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return badRequest("Invalid JSON body");
+    }
+
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return badRequest("Request body must be an object");
+    }
+
+    const b = body as Record<string, unknown>;
 
     // --- Validate required fields ---
-    if (!isValidEnum(body.status, VALID_SOURCE_ITEM_STATUSES)) {
+    if (!isValidEnum(b.status, VALID_SOURCE_ITEM_STATUSES)) {
       return badRequest(
         "status is required and must be one of: " +
           VALID_SOURCE_ITEM_STATUSES.join(", ")
@@ -50,7 +61,7 @@ export async function PUT(
     }
 
     // Notes must be string if provided
-    if (body.notes !== undefined && body.notes !== null && typeof body.notes !== "string") {
+    if (b.notes !== undefined && b.notes !== null && typeof b.notes !== "string") {
       return badRequest("notes must be a string");
     }
 
@@ -65,19 +76,19 @@ export async function PUT(
     }
 
     // --- Build update data ---
-    const updateData: { status: typeof body.status; archivedAt?: Date | null; notes?: string } = {
-      status: body.status,
+    const updateData: { status: string; archivedAt?: Date | null; notes?: string } = {
+      status: b.status as string,
     };
 
     // Per DB-ARCHITECTURE-PLAN.md: archiving sets archivedAt
-    if (body.status === "archived") {
+    if (b.status === "archived") {
       updateData.archivedAt = new Date();
     }
 
     // Append triage notes if provided
-    if (typeof body.notes === "string" && body.notes.length > 0) {
+    if (typeof b.notes === "string" && (b.notes as string).length > 0) {
       const existingNotes = existing.notes || "";
-      const triageNote = `\n\n[Triage ${new Date().toISOString()}]: ${body.notes}`;
+      const triageNote = `\n\n[Triage ${new Date().toISOString()}]: ${b.notes}`;
       updateData.notes = existingNotes + triageNote;
     }
 
@@ -97,9 +108,9 @@ export async function PUT(
           projectId,
           details: {
             previousStatus: existing.status,
-            newStatus: body.status,
-            ...(typeof body.notes === "string" && body.notes.length > 0
-              ? { notes: body.notes }
+            newStatus: b.status,
+            ...(typeof b.notes === "string" && (b.notes as string).length > 0
+              ? { notes: b.notes }
               : {}),
           },
         },

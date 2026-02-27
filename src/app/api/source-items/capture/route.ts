@@ -35,28 +35,39 @@ export async function POST(request: NextRequest) {
       return badRequest(error);
     }
 
-    const body = await request.json();
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return badRequest("Invalid JSON body");
+    }
+
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return badRequest("Request body must be an object");
+    }
+
+    const b = body as Record<string, unknown>;
 
     // --- Validate required fields ---
-    if (!isValidEnum(body.sourceType, VALID_SOURCE_TYPES)) {
+    if (!isValidEnum(b.sourceType, VALID_SOURCE_TYPES)) {
       return badRequest(
         "sourceType is required and must be one of: " +
           VALID_SOURCE_TYPES.join(", ")
       );
     }
 
-    if (!isValidUrl(body.url)) {
+    if (!isValidUrl(b.url)) {
       return badRequest("url is required and must be a valid URL");
     }
 
-    if (!isNonEmptyString(body.operatorIntent)) {
+    if (!isNonEmptyString(b.operatorIntent)) {
       return badRequest(
         "operatorIntent is required — explain why this was captured"
       );
     }
 
     // --- Validate optional fields ---
-    if (body.platform && !isValidEnum(body.platform, VALID_PLATFORMS)) {
+    if (b.platform && !isValidEnum(b.platform, VALID_PLATFORMS)) {
       return badRequest(
         "platform must be one of: " + VALID_PLATFORMS.join(", ")
       );
@@ -65,7 +76,7 @@ export async function POST(request: NextRequest) {
     // --- Check for existing SourceItem with this URL ---
     // NOTE: SourceItem.url is globally unique in the schema. Enforce project isolation explicitly.
     const existing = await prisma.sourceItem.findUnique({
-      where: { url: body.url },
+      where: { url: b.url as string },
     });
 
     if (existing) {
@@ -77,9 +88,9 @@ export async function POST(request: NextRequest) {
 
       // --- Recapture: URL already exists --- (transactional)
       await prisma.$transaction(async (tx) => {
-        if (body.notes) {
+        if (b.notes) {
           const existingNotes = existing.notes || "";
-          const recaptureNote = `\n\n[Recapture ${new Date().toISOString()}]: ${body.notes}`;
+          const recaptureNote = `\n\n[Recapture ${new Date().toISOString()}]: ${b.notes}`;
           await tx.sourceItem.update({
             where: { id: existing.id },
             data: { notes: existingNotes + recaptureNote },
@@ -95,10 +106,10 @@ export async function POST(request: NextRequest) {
             projectId,
             details: {
               recapture: true,
-              sourceType: body.sourceType,
-              url: body.url,
-              operatorIntent: body.operatorIntent,
-              ...(body.notes ? { notes: body.notes } : {}),
+              sourceType: b.sourceType,
+              url: b.url,
+              operatorIntent: b.operatorIntent,
+              ...(b.notes ? { notes: b.notes } : {}),
             },
           },
         });
@@ -115,18 +126,18 @@ export async function POST(request: NextRequest) {
     }
 
     // --- New capture: URL does not exist --- (transactional)
-    const contentHash = await generateContentHash(body.url);
+    const contentHash = await generateContentHash(b.url as string);
 
     const sourceItem = await prisma.$transaction(async (tx) => {
       const item = await tx.sourceItem.create({
         data: {
-          sourceType: body.sourceType,
-          platform: body.platform || "other",
-          url: body.url,
+          sourceType: b.sourceType as string,
+          platform: (b.platform as string) || "other",
+          url: b.url as string,
           capturedBy: "human",
           contentHash,
-          operatorIntent: body.operatorIntent,
-          notes: body.notes || null,
+          operatorIntent: b.operatorIntent as string,
+          notes: (b.notes as string) || null,
           status: "ingested",
           projectId,
         },
@@ -142,7 +153,7 @@ export async function POST(request: NextRequest) {
           details: {
             sourceType: item.sourceType,
             url: item.url,
-            operatorIntent: body.operatorIntent,
+            operatorIntent: b.operatorIntent,
           },
         },
       });
