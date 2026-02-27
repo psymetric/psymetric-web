@@ -71,9 +71,8 @@ export async function POST(request: NextRequest) {
     if (existing) {
       // If the URL exists but belongs to another project, do not mutate across projects.
       if (existing.projectId !== projectId) {
-        return conflict(
-          "A SourceItem with this URL already exists in a different project"
-        );
+        // Preserve global uniqueness invariant without leaking cross-project existence
+        return conflict("URL already exists");
       }
 
       // --- Recapture: URL already exists --- (transactional)
