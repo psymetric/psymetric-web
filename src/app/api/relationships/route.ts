@@ -19,6 +19,7 @@ import {
 import { RelationType, ContentEntityType, EntityType } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import { resolveProjectId, assertSameProject } from "@/lib/project";
+import { CreateRelationshipSchema } from "@/lib/schemas/relationship";
 
 // UUID validation regex
 const UUID_RE =
@@ -137,65 +138,51 @@ export async function POST(request: NextRequest) {
       return badRequest("Request body must be an object");
     }
 
-    const b = body as Record<string, unknown>;
-
-    const fromEntityId = b.fromEntityId;
-    const toEntityId = b.toEntityId;
-    const relationTypeInput = b.relationType;
-
-    if (typeof fromEntityId !== "string") {
-      return badRequest("fromEntityId is required and must be a string");
+    const parsed = CreateRelationshipSchema.safeParse(body);
+    if (!parsed.success) {
+      const flat = parsed.error.flatten();
+      return badRequest("Validation failed", [
+        ...flat.formErrors.map((msg) => ({
+          code: "VALIDATION_ERROR" as const,
+          message: msg,
+        })),
+        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
+          (messages ?? []).map((msg) => ({
+            code: "VALIDATION_ERROR" as const,
+            field,
+            message: msg,
+          }))
+        ),
+      ]);
     }
 
-    if (typeof toEntityId !== "string") {
-      return badRequest("toEntityId is required and must be a string");
-    }
-
-    if (typeof relationTypeInput !== "string") {
-      return badRequest("relationType is required and must be a string");
-    }
-
-    // Validate UUID format
-    if (!UUID_RE.test(fromEntityId)) {
-      return badRequest("fromEntityId must be a valid UUID");
-    }
-
-    if (!UUID_RE.test(toEntityId)) {
-      return badRequest("toEntityId must be a valid UUID");
-    }
+    const data = parsed.data;
 
     // Prevent self-relationships
-    if (fromEntityId === toEntityId) {
+    if (data.fromEntityId === data.toEntityId) {
       return badRequest("Cannot create relationship from entity to itself");
     }
 
-    // Validate relationType against schema enum
-    if (!VALID_RELATION_TYPES.includes(relationTypeInput as RelationType)) {
-      return badRequest(
-        `relationType must be one of: ${VALID_RELATION_TYPES.join(", ")}`
-      );
-    }
-
-    const relationType = relationTypeInput as RelationType;
+    const relationType = data.relationType as RelationType;
 
     // Validate both entities exist and are in this project
     const [fromEntity, toEntity] = await Promise.all([
       prisma.entity.findUnique({
-        where: { id: fromEntityId },
+        where: { id: data.fromEntityId },
         select: { id: true, entityType: true, projectId: true },
       }),
       prisma.entity.findUnique({
-        where: { id: toEntityId },
+        where: { id: data.toEntityId },
         select: { id: true, entityType: true, projectId: true },
       }),
     ]);
 
     if (!fromEntity || fromEntity.projectId !== projectId) {
-      return notFound(`From entity not found: ${fromEntityId}`);
+      return notFound(`From entity not found: ${data.fromEntityId}`);
     }
 
     if (!toEntity || toEntity.projectId !== projectId) {
-      return notFound(`To entity not found: ${toEntityId}`);
+      return notFound(`To entity not found: ${data.toEntityId}`);
     }
 
     const crossProjectError = assertSameProject(
@@ -216,10 +203,10 @@ export async function POST(request: NextRequest) {
         projectId_fromEntityType_fromEntityId_relationType_toEntityType_toEntityId: {
           projectId,
           fromEntityType,
-          fromEntityId,
+          fromEntityId: data.fromEntityId,
           relationType,
           toEntityType,
-          toEntityId,
+          toEntityId: data.toEntityId,
         },
       },
     });
@@ -233,9 +220,9 @@ export async function POST(request: NextRequest) {
       const relation = await tx.entityRelation.create({
         data: {
           fromEntityType,
-          fromEntityId,
+          fromEntityId: data.fromEntityId,
           toEntityType,
-          toEntityId,
+          toEntityId: data.toEntityId,
           relationType,
           projectId,
         },
@@ -245,13 +232,13 @@ export async function POST(request: NextRequest) {
         data: {
           eventType: "RELATION_CREATED",
           entityType: fromEntityType,
-          entityId: fromEntityId,
+          entityId: data.fromEntityId,
           actor: "human",
           projectId,
           details: {
-            relationType: relationTypeInput,
-            fromEntityId,
-            toEntityId,
+            relationType: data.relationType,
+            fromEntityId: data.fromEntityId,
+            toEntityId: data.toEntityId,
           },
         },
       });
