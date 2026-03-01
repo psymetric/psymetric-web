@@ -1020,6 +1020,169 @@ try {
 }
 
 Write-Host ""
+Write-Host "=== W5 TESTS (OPERATOR SERP SNAPSHOT INGEST) ===" -ForegroundColor Yellow
+
+$w5RunId = (Get-Date).Ticks
+$w5Query = "W5 Hammer Query $w5RunId"
+$w5Locale = "en-US"
+$w5Device = "desktop"
+$w5BaseBody = @{
+    query  = $w5Query
+    locale = $w5Locale
+    device = $w5Device
+}
+
+# W5-1: confirm=false -> 200 + confirm_required + estimated_cost (dry-run, no DB write)
+try {
+    Write-Host "Testing: POST /api/seo/serp-snapshot confirm=false -> 200 + confirm_required" -NoNewline
+    $w5DryBody = $w5BaseBody + @{ confirm = $false }
+    $w5DryJson = $w5DryBody | ConvertTo-Json -Depth 5 -Compress
+    $w5DryResp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshot" -Method POST -Headers $Headers -Body $w5DryJson -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($w5DryResp.StatusCode -eq 200) {
+        $w5DryParsed = $w5DryResp.Content | ConvertFrom-Json
+        $w5DryData = $w5DryParsed.data
+        if ($w5DryData -ne $null -and $w5DryData.confirm_required -eq $true -and $null -ne $w5DryData.estimated_cost) {
+            Write-Host "  PASS" -ForegroundColor Green
+            $PassCount++
+        } else {
+            Write-Host "  FAIL (missing confirm_required or estimated_cost in data)" -ForegroundColor Red
+            $FailCount++
+        }
+    } else {
+        Write-Host ("  FAIL (got " + $w5DryResp.StatusCode + ", expected 200)") -ForegroundColor Red
+        $FailCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# W5-2: confirm=true -> 201 + envelope with required snapshot fields
+$w5SnapshotId = $null
+try {
+    Write-Host "Testing: POST /api/seo/serp-snapshot confirm=true -> 201 + snapshot fields" -NoNewline
+    $w5ConfirmBody = $w5BaseBody + @{ confirm = $true }
+    $w5ConfirmJson = $w5ConfirmBody | ConvertTo-Json -Depth 5 -Compress
+    $w5ConfirmResp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshot" -Method POST -Headers $Headers -Body $w5ConfirmJson -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($w5ConfirmResp.StatusCode -eq 201) {
+        $w5ConfirmParsed = $w5ConfirmResp.Content | ConvertFrom-Json
+        $w5Data = $w5ConfirmParsed.data
+        $w5HasFields = (
+            $w5Data -ne $null -and
+            $null -ne $w5Data.query -and
+            $null -ne $w5Data.locale -and
+            $null -ne $w5Data.device -and
+            $null -ne $w5Data.capturedAt
+        )
+        if ($w5HasFields) {
+            $w5SnapshotId = $w5Data.id
+            Write-Host "  PASS" -ForegroundColor Green
+            $PassCount++
+        } else {
+            Write-Host "  FAIL (missing required snapshot fields in data)" -ForegroundColor Red
+            $FailCount++
+        }
+    } else {
+        Write-Host ("  FAIL (got " + $w5ConfirmResp.StatusCode + ", expected 201)") -ForegroundColor Red
+        $FailCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# W5-3: Idempotent replay (same body, immediate re-fire) -> 200 or 201 (timing-sensitive)
+# capturedAt is server-assigned to now(); collision only if both requests land in same ms.
+# Both 200 (replay hit) and 201 (no collision) are correct. FAIL only on other status.
+try {
+    Write-Host "Testing: POST /api/seo/serp-snapshot replay -> 200 or 201 (idempotency timing-sensitive)" -NoNewline
+    $w5ReplayBody = $w5BaseBody + @{ confirm = $true }
+    $w5ReplayJson = $w5ReplayBody | ConvertTo-Json -Depth 5 -Compress
+    $w5ReplayResp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshot" -Method POST -Headers $Headers -Body $w5ReplayJson -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($w5ReplayResp.StatusCode -eq 200 -or $w5ReplayResp.StatusCode -eq 201) {
+        Write-Host ("  PASS (" + $w5ReplayResp.StatusCode + ")") -ForegroundColor Green
+        $PassCount++
+    } else {
+        Write-Host ("  FAIL (got " + $w5ReplayResp.StatusCode + ", expected 200 or 201)") -ForegroundColor Red
+        $FailCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# W5-4: confirm as string "true" -> 400 (Zod strict: boolean required)
+try {
+    Write-Host "Testing: POST /api/seo/serp-snapshot confirm=string -> 400" -NoNewline
+    $w5StringConfirmJson = '{"query":"' + $w5Query + '","locale":"en-US","device":"desktop","confirm":"true"}'
+    $w5StringConfirmResp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshot" -Method POST -Headers $Headers -Body $w5StringConfirmJson -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($w5StringConfirmResp.StatusCode -eq 400) {
+        Write-Host "  PASS" -ForegroundColor Green
+        $PassCount++
+    } else {
+        Write-Host ("  FAIL (got " + $w5StringConfirmResp.StatusCode + ", expected 400)") -ForegroundColor Red
+        $FailCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# W5-5: invalid device -> 400
+try {
+    Write-Host "Testing: POST /api/seo/serp-snapshot device=tablet -> 400" -NoNewline
+    $w5BadDeviceBody = @{ query = $w5Query; locale = "en-US"; device = "tablet"; confirm = $true }
+    $w5BadDeviceJson = $w5BadDeviceBody | ConvertTo-Json -Depth 5 -Compress
+    $w5BadDeviceResp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshot" -Method POST -Headers $Headers -Body $w5BadDeviceJson -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($w5BadDeviceResp.StatusCode -eq 400) {
+        Write-Host "  PASS" -ForegroundColor Green
+        $PassCount++
+    } else {
+        Write-Host ("  FAIL (got " + $w5BadDeviceResp.StatusCode + ", expected 400)") -ForegroundColor Red
+        $FailCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# W5-6: malformed JSON body -> 400
+try {
+    Write-Host "Testing: POST /api/seo/serp-snapshot malformed JSON -> 400" -NoNewline
+    $w5MalformedResp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshot" -Method POST -Headers $Headers -Body "{not valid json{" -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($w5MalformedResp.StatusCode -eq 400) {
+        Write-Host "  PASS" -ForegroundColor Green
+        $PassCount++
+    } else {
+        Write-Host ("  FAIL (got " + $w5MalformedResp.StatusCode + ", expected 400)") -ForegroundColor Red
+        $FailCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# W5-7: cross-project write isolation -> 201 (other project can write same query independently)
+if ($OtherHeaders.Count -gt 0) {
+    try {
+        Write-Host "Testing: POST /api/seo/serp-snapshot cross-project write -> 201 (isolated)" -NoNewline
+        $w5CrossBody = $w5BaseBody + @{ confirm = $true }
+        $w5CrossJson = $w5CrossBody | ConvertTo-Json -Depth 5 -Compress
+        $w5CrossResp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshot" -Method POST -Headers $OtherHeaders -Body $w5CrossJson -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($w5CrossResp.StatusCode -eq 201) {
+            Write-Host "  PASS" -ForegroundColor Green
+            $PassCount++
+        } else {
+            Write-Host ("  FAIL (got " + $w5CrossResp.StatusCode + ", expected 201)") -ForegroundColor Red
+            $FailCount++
+        }
+    } catch {
+        Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+        $FailCount++
+    }
+}
+
+Write-Host ""
 Write-Host "=== DETERMINISTIC ORDERING TEST ==="  -ForegroundColor Yellow
 
 $list1 = Try-GetJson -Url "$Base/api/entities?limit=10" -RequestHeaders $Headers
