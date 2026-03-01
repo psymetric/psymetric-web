@@ -305,6 +305,47 @@ if (-not $entityId) {
 }
 
 Write-Host ""
+Write-Host "=== VERIFY FRESHNESS TESTS (W2) ===" -ForegroundColor Yellow
+
+if (-not $entityId) {
+    Write-Host "Skipping verify-freshness tests: no entityId" -ForegroundColor DarkYellow
+    $SkipCount++
+} else {
+    # W2-1: Valid verify-freshness (no body) -> 200 + lastVerifiedAt set
+    try {
+        Write-Host "Testing: POST /api/entities/:id/verify-freshness (valid, no body) -> 200" -NoNewline
+        $vfResp = Invoke-WebRequest -Uri "$Base/api/entities/$entityId/verify-freshness" -Method POST -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($vfResp.StatusCode -eq 200) {
+            $vfParsed = $vfResp.Content | ConvertFrom-Json
+            if ($vfParsed.data -ne $null -and $null -ne $vfParsed.data.lastVerifiedAt) {
+                Write-Host "  PASS" -ForegroundColor Green
+                $PassCount++
+            } else {
+                Write-Host "  FAIL (missing data or lastVerifiedAt not populated)" -ForegroundColor Red
+                $FailCount++
+            }
+        } else {
+            Write-Host ("  FAIL (got " + $vfResp.StatusCode + ", expected 200)") -ForegroundColor Red
+            $FailCount++
+        }
+    } catch {
+        Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+        $FailCount++
+    }
+
+    # W2-2: Invalid UUID -> 400
+    if (Test-PostEmpty "$Base/api/entities/not-a-uuid/verify-freshness" 400 "POST verify-freshness invalid UUID -> 400" $Headers) { $PassCount++ } else { $FailCount++ }
+
+    # W2-3: Entity not found -> 404
+    if (Test-PostEmpty "$Base/api/entities/00000000-0000-4000-a000-000000000099/verify-freshness" 404 "POST verify-freshness not found -> 404" $Headers) { $PassCount++ } else { $FailCount++ }
+
+    # W2-4: Cross-project non-disclosure -> 404
+    if ($OtherHeaders.Count -gt 0) {
+        if (Test-PostEmpty "$Base/api/entities/$entityId/verify-freshness" 404 "POST verify-freshness cross-project -> 404" $OtherHeaders) { $PassCount++ } else { $FailCount++ }
+    }
+}
+
+Write-Host ""
 Write-Host "=== AUDITS TESTS (S0 RUN) ===" -ForegroundColor Yellow
 
 if (-not $entityId) {
