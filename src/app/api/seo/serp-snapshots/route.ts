@@ -1,18 +1,183 @@
 /**
  * POST /api/seo/serp-snapshots — Record a SERPSnapshot
+ * GET  /api/seo/serp-snapshots — List SERPSnapshots
+ *
+ * Per SIL-1-OBSERVATION-LEDGER.md and SIL-1-INGEST-DISCIPLINE.md:
+ * - Immutable observation records (append-only)
+ * - Unique on (projectId, query, locale, device, capturedAt)
+ * - Query normalized at API boundary
+ * - 200 idempotent replay on duplicate (observation, not governance)
+ * - EventLog emitted in same transaction (POST only)
+ *
+ * GET constraints:
+ * - Project-scoped (resolveProjectId)
+ * - Deterministic ordering: capturedAt desc, id desc
+ * - Strict query param validation
+ * - includePayload controls rawPayload field via Prisma select
+ * - No write behavior
  */
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   createdResponse,
   successResponse,
+  listResponse,
   badRequest,
   serverError,
+  parsePagination,
 } from "@/lib/api-response";
 import { resolveProjectId } from "@/lib/project";
 import { normalizeQuery } from "@/lib/validation";
 import { RecordSERPSnapshotSchema } from "@/lib/schemas/serp-snapshot";
 import { Prisma } from "@prisma/client";
+
+// Allowed device values — enforced at API boundary
+const ALLOWED_DEVICES = ["desktop", "mobile"] as const;
+type Device = (typeof ALLOWED_DEVICES)[number];
+
+// ISO 8601 datetime with timezone (matches serp-snapshot schema validator)
+const ISO_8601_DATETIME_TZ =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+
+function isValidIsoTimestamp(value: string): boolean {
+  if (!ISO_8601_DATETIME_TZ.test(value)) return false;
+  return !isNaN(new Date(value).getTime());
+}
+
+// =============================================================================
+// GET /api/seo/serp-snapshots
+// =============================================================================
+
+export async function GET(request: NextRequest) {
+  try {
+    const { projectId, error } = await resolveProjectId(request);
+    if (error) {
+      return badRequest(error);
+    }
+
+    const searchParams = request.nextUrl.searchParams;
+    const { page, limit, skip } = parsePagination(searchParams);
+
+    // Always project-scoped
+    const where: Prisma.SERPSnapshotWhereInput = { projectId };
+
+    // query filter (optional — normalize if present)
+    const queryParam = searchParams.get("query");
+    if (queryParam !== null) {
+      if (queryParam.trim() === "") {
+        return badRequest("query must not be empty");
+      }
+      where.query = normalizeQuery(queryParam);
+    }
+
+    // locale filter (optional, string)
+    const localeParam = searchParams.get("locale");
+    if (localeParam !== null) {
+      if (localeParam.trim() === "") {
+        return badRequest("locale must not be empty");
+      }
+      where.locale = localeParam;
+    }
+
+    // device filter (optional, enum-restricted)
+    const deviceParam = searchParams.get("device");
+    if (deviceParam !== null) {
+      if (!(ALLOWED_DEVICES as readonly string[]).includes(deviceParam)) {
+        return badRequest(`device must be one of: ${ALLOWED_DEVICES.join(", ")}`);
+      }
+      where.device = deviceParam as Device;
+    }
+
+    // from filter — capturedAt >= from
+    const fromParam = searchParams.get("from");
+    if (fromParam !== null) {
+      if (!isValidIsoTimestamp(fromParam)) {
+        return badRequest(
+          'from must be a valid ISO 8601 datetime with timezone (e.g. 2025-01-01T00:00:00Z)'
+        );
+      }
+      where.capturedAt = {
+        ...(where.capturedAt as Prisma.DateTimeFilter ?? {}),
+        gte: new Date(fromParam),
+      };
+    }
+
+    // to filter — capturedAt <= to
+    const toParam = searchParams.get("to");
+    if (toParam !== null) {
+      if (!isValidIsoTimestamp(toParam)) {
+        return badRequest(
+          'to must be a valid ISO 8601 datetime with timezone (e.g. 2025-12-31T23:59:59Z)'
+        );
+      }
+      where.capturedAt = {
+        ...(where.capturedAt as Prisma.DateTimeFilter ?? {}),
+        lte: new Date(toParam),
+      };
+    }
+
+    // includePayload filter (optional, strict true/false)
+    const includePayloadParam = searchParams.get("includePayload");
+    let includePayload = false;
+    if (includePayloadParam !== null) {
+      if (
+        includePayloadParam !== "true" &&
+        includePayloadParam !== "false"
+      ) {
+        return badRequest('includePayload must be "true" or "false"');
+      }
+      includePayload = includePayloadParam === "true";
+    }
+
+    // Base select — always returned fields
+    const baseSelect = {
+      id: true,
+      query: true,
+      locale: true,
+      device: true,
+      capturedAt: true,
+      validAt: true,
+      aiOverviewStatus: true,
+      aiOverviewText: true,
+      payloadSchemaVersion: true,
+      source: true,
+      batchRef: true,
+      createdAt: true,
+    };
+
+    // Conditionally include rawPayload to avoid always returning JSONB blobs
+    const select = includePayload
+      ? { ...baseSelect, rawPayload: true }
+      : baseSelect;
+
+    const [rows, total] = await Promise.all([
+      prisma.sERPSnapshot.findMany({
+        where,
+        orderBy: [{ capturedAt: "desc" }, { id: "desc" }],
+        skip,
+        take: limit,
+        select,
+      }),
+      prisma.sERPSnapshot.count({ where }),
+    ]);
+
+    const items = rows.map((r) => ({
+      ...r,
+      capturedAt: r.capturedAt.toISOString(),
+      validAt: r.validAt?.toISOString() ?? null,
+      createdAt: r.createdAt.toISOString(),
+    }));
+
+    return listResponse(items, { page, limit, total });
+  } catch (err) {
+    console.error("GET /api/seo/serp-snapshots error:", err);
+    return serverError();
+  }
+}
+
+// =============================================================================
+// POST /api/seo/serp-snapshots
+// =============================================================================
 
 export async function POST(request: NextRequest) {
   try {
@@ -51,7 +216,7 @@ export async function POST(request: NextRequest) {
     }
 
     const data = parsed.data;
-    const normalizedQuery = normalizeQuery(data.query);
+    const normalizedQueryStr = normalizeQuery(data.query);
 
     const capturedAt = data.capturedAt ? new Date(data.capturedAt) : new Date();
     const validAt = data.validAt ? new Date(data.validAt) : capturedAt;
@@ -61,7 +226,7 @@ export async function POST(request: NextRequest) {
         const created = await tx.sERPSnapshot.create({
           data: {
             projectId,
-            query: normalizedQuery,
+            query: normalizedQueryStr,
             locale: data.locale,
             device: data.device,
             capturedAt,
@@ -83,7 +248,7 @@ export async function POST(request: NextRequest) {
             actor: "human",
             projectId,
             details: {
-              query: normalizedQuery,
+              query: normalizedQueryStr,
               locale: data.locale,
               device: data.device,
               source: data.source,
@@ -116,7 +281,7 @@ export async function POST(request: NextRequest) {
           where: {
             projectId_query_locale_device_capturedAt: {
               projectId,
-              query: normalizedQuery,
+              query: normalizedQueryStr,
               locale: data.locale,
               device: data.device,
               capturedAt,
