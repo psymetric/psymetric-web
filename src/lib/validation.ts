@@ -154,6 +154,17 @@ export function isNonEmptyString(value: unknown): value is string {
 }
 
 /**
+ * Normalize a search query for deterministic matching.
+ * Per SIL-1-INGEST-DISCIPLINE.md §4:
+ * 1. trim leading/trailing whitespace
+ * 2. collapse internal whitespace to single spaces
+ * 3. lowercase
+ */
+export function normalizeQuery(query: string): string {
+  return query.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/**
  * Generate a slug from a title.
  * Per docs: slugs are lowercase, hyphens, no spaces.
  */

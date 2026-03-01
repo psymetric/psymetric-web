@@ -15,6 +15,8 @@
 # - /api/seo/search-performance/ingest (Phase 0-SEO: bulk GSC ingestion)
 # - /api/seo/search-performance (Phase 0-SEO: list with filters)
 # - /api/quotable-blocks (Phase 0-SEO: create + list GEO citation assets)
+# - /api/seo/keyword-targets (SIL-1: create + normalization + isolation)
+# - /api/seo/serp-snapshots (SIL-1: create + idempotent replay + validation)
 # - Deterministic ordering verification (entities list)
 # - Response envelope validation (data + pagination fields)
 
@@ -514,6 +516,161 @@ if (-not $entityId) {
 
     if (Test-ResponseEnvelope "$Base/api/quotable-blocks?limit=5" $Headers "GET quotable-blocks (list envelope)" $true) { $PassCount++ } else { $FailCount++ }
 }
+
+Write-Host ""
+Write-Host "=== SIL-1 TESTS (KEYWORD TARGETS + SERP SNAPSHOTS) ===" -ForegroundColor Yellow
+
+# --- Keyword Targets ---
+
+$ktRunId = (Get-Date).Ticks
+$ktBody = @{
+    query = "  Best CRM  Software $ktRunId  "
+    locale = "en-US"
+    device = "desktop"
+    isPrimary = $true
+}
+$ktExpectedQuery = "best crm software $ktRunId"
+
+$ktResult = Test-PostJsonCapture "$Base/api/seo/keyword-targets" 201 "POST keyword-targets (valid, normalization)" $Headers $ktBody
+if ($ktResult.ok) {
+    $PassCount++
+    # Verify query normalization in response
+    if ($ktResult.data -and $ktResult.data.query -eq $ktExpectedQuery) {
+        Write-Host "Testing: keyword-target query normalized correctly  PASS" -ForegroundColor Green
+        $PassCount++
+    } else {
+        Write-Host "Testing: keyword-target query normalized correctly  FAIL (got '$($ktResult.data.query)', expected '$ktExpectedQuery')" -ForegroundColor Red
+        $FailCount++
+    }
+} else {
+    $FailCount++
+    Write-Host "Testing: keyword-target query normalized correctly  SKIP (create failed)" -ForegroundColor DarkYellow
+    $SkipCount++
+}
+
+# Duplicate create -> 409
+if (Test-PostJson "$Base/api/seo/keyword-targets" 409 "POST keyword-targets (duplicate -> 409)" $Headers $ktBody) { $PassCount++ } else { $FailCount++ }
+
+# Invalid device -> 400
+$ktBadDevice = @{
+    query = "test query $ktRunId"
+    locale = "en-US"
+    device = "tablet"
+}
+if (Test-PostJson "$Base/api/seo/keyword-targets" 400 "POST keyword-targets (invalid device -> 400)" $Headers $ktBadDevice) { $PassCount++ } else { $FailCount++ }
+
+# Malformed JSON -> 400
+try {
+    Write-Host "Testing: POST keyword-targets (malformed JSON -> 400)" -NoNewline
+    $malformedResp = Invoke-WebRequest -Uri "$Base/api/seo/keyword-targets" -Method POST -Headers $Headers -Body "not json{" -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($malformedResp.StatusCode -eq 400) {
+        Write-Host "  PASS" -ForegroundColor Green
+        $PassCount++
+    } else {
+        Write-Host ("  FAIL (got " + $malformedResp.StatusCode + ", expected 400)") -ForegroundColor Red
+        $FailCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# Cross-project non-disclosure: create same keyword under other project should not leak
+if ($OtherHeaders.Count -gt 0) {
+    # Other project can create the same keyword independently (201 or 409 depending on prior state)
+    # The key invariant: no error message leaks project A's data
+    $ktCrossBody = @{
+        query = "cross project probe $ktRunId"
+        locale = "en-US"
+        device = "desktop"
+    }
+    # Create in project A first
+    if (Test-PostJson "$Base/api/seo/keyword-targets" 201 "POST keyword-targets (cross-project setup in A)" $Headers $ktCrossBody) { $PassCount++ } else { $FailCount++ }
+    # Attempt same in project B — should succeed (201) because targets are project-scoped
+    if (Test-PostJson "$Base/api/seo/keyword-targets" 201 "POST keyword-targets (cross-project B creates independently)" $OtherHeaders $ktCrossBody) { $PassCount++ } else { $FailCount++ }
+}
+
+# --- SERP Snapshots ---
+
+$ssRunId = (Get-Date).Ticks
+$ssCapturedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+$ssBody = @{
+    query = "serp hammer $ssRunId"
+    locale = "en-US"
+    device = "desktop"
+    capturedAt = $ssCapturedAt
+    rawPayload = @{ results = @(); features = @() }
+    source = "dataforseo"
+    batchRef = "hammer-$ssRunId"
+}
+
+$ssResult = Test-PostJsonCapture "$Base/api/seo/serp-snapshots" 201 "POST serp-snapshots (valid)" $Headers $ssBody
+if ($ssResult.ok) {
+    $PassCount++
+    # Verify aiOverviewStatus defaults when omitted
+    if ($ssResult.data -and $ssResult.data.aiOverviewStatus) {
+        Write-Host "Testing: serp-snapshot aiOverviewStatus default populated  PASS" -ForegroundColor Green
+        $PassCount++
+    } else {
+        Write-Host "Testing: serp-snapshot aiOverviewStatus default populated  FAIL" -ForegroundColor Red
+        $FailCount++
+    }
+} else {
+    $FailCount++
+    Write-Host "Testing: serp-snapshot aiOverviewStatus default populated  SKIP (create failed)" -ForegroundColor DarkYellow
+    $SkipCount++
+}
+
+# Idempotent replay: same capturedAt -> 200
+if (Test-PostJson "$Base/api/seo/serp-snapshots" 200 "POST serp-snapshots (idempotent replay -> 200)" $Headers $ssBody) { $PassCount++ } else { $FailCount++ }
+
+# Invalid aiOverviewStatus -> 400
+$ssBadAio = @{
+    query = "test aio $ssRunId"
+    locale = "en-US"
+    device = "desktop"
+    rawPayload = @{ results = @() }
+    source = "dataforseo"
+    aiOverviewStatus = "maybe"
+}
+if (Test-PostJson "$Base/api/seo/serp-snapshots" 400 "POST serp-snapshots (invalid aiOverviewStatus -> 400)" $Headers $ssBadAio) { $PassCount++ } else { $FailCount++ }
+
+# Malformed JSON -> 400
+try {
+    Write-Host "Testing: POST serp-snapshots (malformed JSON -> 400)" -NoNewline
+    $malformedSsResp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshots" -Method POST -Headers $Headers -Body "{broken" -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($malformedSsResp.StatusCode -eq 400) {
+        Write-Host "  PASS" -ForegroundColor Green
+        $PassCount++
+    } else {
+        Write-Host ("  FAIL (got " + $malformedSsResp.StatusCode + ", expected 400)") -ForegroundColor Red
+        $FailCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# Invalid capturedAt datetime -> 400
+$ssBadDate = @{
+    query = "test date $ssRunId"
+    locale = "en-US"
+    device = "desktop"
+    capturedAt = "not-a-date"
+    rawPayload = @{ results = @() }
+    source = "dataforseo"
+}
+if (Test-PostJson "$Base/api/seo/serp-snapshots" 400 "POST serp-snapshots (invalid capturedAt -> 400)" $Headers $ssBadDate) { $PassCount++ } else { $FailCount++ }
+
+# Source not in allowlist -> 400
+$ssBadSource = @{
+    query = "test source $ssRunId"
+    locale = "en-US"
+    device = "desktop"
+    rawPayload = @{ results = @() }
+    source = "other"
+}
+if (Test-PostJson "$Base/api/seo/serp-snapshots" 400 "POST serp-snapshots (source not in allowlist -> 400)" $Headers $ssBadSource) { $PassCount++ } else { $FailCount++ }
 
 Write-Host ""
 Write-Host "=== DETERMINISTIC ORDERING TEST ===" -ForegroundColor Yellow
