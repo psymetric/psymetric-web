@@ -2,7 +2,19 @@
 
 **Project:** PsyMetric / Veda
 
-**Status:** Draft (SIL-1 scope definition; implementation not yet started)
+**Status:** Schema implemented. Create endpoints implemented. List endpoints pending.
+
+**Implementation state as of last reconciliation:**
+- `KeywordTarget` and `SERPSnapshot` models: ✅ in production schema
+- `POST /api/seo/keyword-targets`: ✅ implemented
+- `POST /api/seo/serp-snapshots`: ✅ implemented (idempotent replay)
+- `GET` list endpoints: ⏳ not yet implemented
+- Hammer coverage: ✅ included in 62 PASS run
+
+**Schema drift flags (do not fix without explicit instruction):**
+- Spec Section 5.2 shows `aiOverviewStatus @default("absent")` — production schema omits the default; value is application-validated at ingest boundary.
+- Spec Section 5.2 shows `validAt DateTime` (required) — production schema has `validAt DateTime?` (nullable); fallback rule (set `validAt = capturedAt` when provider omits it) is enforced at API boundary, not at schema level.
+- Spec Section 4.2 uniqueness constraint includes `source` — production schema `@@unique` omits `source`: `@@unique([projectId, query, locale, device, capturedAt])`. This is a known divergence; idempotency is enforced on this 5-field key.
 
 **Related:**
 - `docs/specs/SEARCH-INTELLIGENCE-LAYER.md` (SIL overview)
@@ -14,7 +26,7 @@
 
 SIL-1 establishes a **minimum viable, deterministic, immutable observation ledger** for search reality.
 
-SIL-1’s purpose is to store what we saw on the SERP (and the intent to track keywords) with sufficient provenance and determinism so that:
+SIL-1's purpose is to store what we saw on the SERP (and the intent to track keywords) with sufficient provenance and determinism so that:
 
 - Rule-based insights (SIL-2) can compute deltas reliably.
 - LLM planning (Phase 3) can reason over stable, queryable observations.
@@ -83,13 +95,13 @@ SERP observations must capture two time semantics:
 - `capturedAt`: when PsyMetric captured the observation.
 - `validAt`: the timestamp the provider asserts the data is valid for.
 
-**Fallback rule (binding for SIL-1):** if the provider does not supply `validAt`, set `validAt = capturedAt`.
+**Fallback rule (binding for SIL-1):** if the provider does not supply `validAt`, set `validAt = capturedAt` at the API boundary. `validAt` is nullable in the schema; the fallback is enforced in application code, not at the DB level.
 
 This prevents replay confusion and enables accurate delta detection when ingest is delayed.
 
 ### 3.4 Loose Coupling Between Targets and Observations
 
-SERP observations should not require an FK to `KeywordTarget`.
+SERP observations do not require an FK to `KeywordTarget`.
 
 Rationale:
 - We may ingest snapshots for exploratory keywords not yet promoted to a target.
@@ -103,7 +115,7 @@ SIL-1 introduces exactly two models.
 
 ### 4.1 `KeywordTarget`
 
-Purpose: define “we care about this keyword in this locale/device.”
+Purpose: define "we care about this keyword in this locale/device."
 
 **Required fields**
 - `projectId`
@@ -131,29 +143,30 @@ Purpose: immutable record of a SERP observation.
 - `locale`
 - `device`
 - `capturedAt`
-- `validAt`
+- `validAt` (nullable in schema; API boundary enforces fallback to `capturedAt`)
 - `rawPayload` (JSON)
 - `source` (e.g. `dataforseo`)
+- `aiOverviewStatus` (application-validated: `"present"` | `"absent"` | `"parse_error"`)
 
 **Optional fields**
 - `batchRef` (string grouping identifier; does not require a separate table in SIL-1)
 - `payloadSchemaVersion` (provider payload format identifier)
-- `aiOverviewStatus` (tri-state)
 - `aiOverviewText` (nullable)
 
 **Constraints**
-- Uniqueness: `(projectId, query, locale, device, capturedAt, source)`.
+- Uniqueness (production): `(projectId, query, locale, device, capturedAt)`.
+  - Note: `source` is excluded from the production unique key (diverges from original spec). See drift flags at top of document.
 
 Notes:
 - `rawPayload` stores provider-specific JSON for replay and future extraction.
 - `payloadSchemaVersion` enables future extraction code to branch safely as provider schemas evolve.
-- `aiOverviewStatus` distinguishes confirmed absence from parse failure.
+- `aiOverviewStatus` distinguishes confirmed absence from parse failure. No DB default; enforced at API boundary.
 
 ---
 
-## 5. Proposed Prisma Schema (Draft)
+## 5. Implemented Prisma Schema
 
-> This is the intended shape; final field types must match existing project conventions (UUID ids, `@db.Uuid` projectId).
+> This is the production shape as implemented in `prisma/schema.prisma`.
 
 ### 5.1 KeywordTarget
 
@@ -185,36 +198,32 @@ model KeywordTarget {
 
 ```prisma
 model SERPSnapshot {
-  id                 String   @id @default(uuid()) @db.Uuid
+  id                   String   @id @default(uuid()) @db.Uuid
 
-  projectId          String   @db.Uuid
-  project            Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  projectId            String   @db.Uuid
+  project              Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
-  query              String
-  locale             String
-  device             String
+  query                String
+  locale               String
+  device               String
 
-  capturedAt         DateTime
-  validAt            DateTime
+  capturedAt           DateTime
+  validAt              DateTime?
 
-  rawPayload         Json
-
-  // Provider payload format identifier (e.g. "dataforseo_serp_v3").
+  rawPayload           Json
   payloadSchemaVersion String?
 
-  // Tri-state: "present" | "absent" | "parse_error"
-  aiOverviewStatus    String  @default("absent")
-  aiOverviewText      String?
+  aiOverviewStatus     String   // Application-validated: "present" | "absent" | "parse_error"
+  aiOverviewText       String?
 
-  source             String
-  batchRef           String?
+  source               String
+  batchRef             String?
 
-  createdAt          DateTime @default(now())
+  createdAt            DateTime @default(now())
 
-  @@unique([projectId, query, locale, device, capturedAt, source])
-  @@index([projectId])
-  // Primary access path: all snapshots for a keyword within a project over time.
+  @@unique([projectId, query, locale, device, capturedAt])
   @@index([projectId, query, locale, device, capturedAt])
+  @@index([projectId])
 }
 ```
 
@@ -222,36 +231,30 @@ model SERPSnapshot {
 
 ## 6. Event Logging Requirements
 
-SIL-1 introduces two new event types (names tentative; must align with existing `EventType` enum conventions):
+SIL-1 uses the following event types (implemented in production schema):
 
-- `KEYWORD_TARGET_CREATED`
-- `SERP_SNAPSHOT_RECORDED`
+- `KEYWORD_TARGET_CREATED` — emitted in the same transaction as `KeywordTarget` creation
+- `SERP_SNAPSHOT_RECORDED` — emitted in the same transaction as `SERPSnapshot` creation
 
-Rules:
-- Creation of a `KeywordTarget` emits `KEYWORD_TARGET_CREATED` in the same transaction.
-- Recording a `SERPSnapshot` emits `SERP_SNAPSHOT_RECORDED` in the same transaction.
-
-No other SIL events are in scope for SIL-1.
-
-**Blocking requirement:** because `EventLog.entityType` is an enum, SIL-1 also requires adding corresponding `EntityType` enum values (tentative):
-
+Corresponding `EntityType` values (implemented):
 - `keywordTarget`
 - `serpSnapshot`
 
-Without these, SIL-1 cannot satisfy the event logging invariant.
-
 ---
 
-## 7. API Surface (Not Implemented Yet)
+## 7. API Surface
 
-SIL-1 does not mandate endpoints today, but implementation will likely require:
+### Implemented
 
-- `POST /api/seo/keyword-targets` (create target)
-- `GET /api/seo/keyword-targets` (list targets)
-- `POST /api/seo/serp-snapshots` (record snapshot)
-- `GET /api/seo/serp-snapshots` (list snapshots)
+- `POST /api/seo/keyword-targets` — create target with query normalization, uniqueness enforcement, EventLog entry
+- `POST /api/seo/serp-snapshots` — record snapshot with idempotent replay (200 on duplicate), strict Zod validation, EventLog entry
 
-These endpoints are out of scope for this spec until explicitly approved.
+### Not Yet Implemented
+
+- `GET /api/seo/keyword-targets` — list targets (next authorized increment)
+- `GET /api/seo/serp-snapshots` — list snapshots (next authorized increment)
+
+No update or delete endpoints are in scope for SIL-1.
 
 ---
 
@@ -285,33 +288,20 @@ Not included in SIL-1:
 
 ---
 
-## 10. Open Questions (To Resolve Before Implementation)
+## 10. Resolved Implementation Decisions
 
-1. **Locale and device vocabularies:**
-   - Do we enforce a strict enum for device (`desktop` | `mobile`) at schema level?
-   - Do we enforce locale format validation at API boundary only?
+The following open questions from the original spec have been resolved in the implementation:
 
-2. **`capturedAt` ownership:**
-   - Is `capturedAt` always server-assigned at ingest time?
-   - If backfilling is required, do we allow client-supplied `capturedAt` only for trusted operator tooling?
-
-3. **Raw payload size:**
-   - Confirm typical DataForSEO snapshot size.
-   - Ensure Postgres JSON storage is acceptable.
-
-4. **Indexing:**
-   - The compound index `@@index([projectId, query, locale, device, capturedAt])` is included because it matches the primary read path.
-   - Additional indexes (e.g. on `aiOverviewStatus`) should be deferred until query patterns are proven.
+1. **Device vocabulary:** Enforced at API boundary only (string validation), not as a DB enum.
+2. **Locale format validation:** Enforced at API boundary only.
+3. **`capturedAt` ownership:** Server-assigned at ingest time. No client-supplied `capturedAt` in current implementation.
+4. **`validAt` nullability:** Nullable in schema; API boundary applies fallback (`validAt = capturedAt`) when provider omits it.
+5. **`source` in unique key:** Omitted from production unique constraint. Idempotency enforced on `(projectId, query, locale, device, capturedAt)`.
 
 ---
 
 ## 11. Next Steps
 
-1. Review this spec for alignment with invariants.
-2. Update `docs/ROADMAP.md` to introduce SIL-1 as the next schema phase (if not already).
-3. Only after approval:
-   - implement Prisma models + migration
-   - add minimal endpoints (manual ingest only)
-   - add hammer coverage
-
-**No implementation occurs until SIL-1 is approved in the roadmap.**
+1. Implement `GET /api/seo/keyword-targets` with deterministic ordering and project-scoped filtering.
+2. Implement `GET /api/seo/serp-snapshots` with deterministic ordering and project-scoped filtering.
+3. Extend hammer with list endpoint coverage.

@@ -3,7 +3,7 @@
 This roadmap is the **single source of truth for scope**.
 
 Rules:
-- If it’s not in the current active phase, it is out of scope.
+- If it's not in the current active phase, it is out of scope.
 - Any scope change requires an explicit roadmap edit.
 - System invariants are non‑negotiable: **project isolation**, **transactional mutations + event logging**, **determinism**, **API-only assistants**.
 
@@ -13,6 +13,89 @@ Related specs:
 - `docs/04-LLM-OPERATING-RULES.md`
 - `docs/07-RELATIONSHIP-AND-EVENT-VOCABULARY.md`
 - `docs/specs/SIL-1-OBSERVATION-LEDGER.md`
+
+---
+
+## Current System State Snapshot
+
+> This section reflects the actual implemented state of `main` as of the last documentation reconciliation.
+> It is the authoritative reference for what exists, what does not exist, and what is intentionally deferred.
+
+### What Exists
+
+**Core Architecture**
+- Multi-project isolation via `resolveProjectId()` header scoping
+- `projectId` on all domain tables
+- Cross-project non-disclosure (404)
+- `prisma.$transaction()` wrapping every mutation with co-located EventLog entry
+- Deterministic ordering enforced in all read endpoints
+- Enum vocabularies canonicalized in Prisma schema and validation layer
+- UUID conventions throughout (`@default(uuid()) @db.Uuid`)
+
+**Zod Migration — Phases 1–5 (Complete)**
+
+All write endpoints below are migrated to Zod with `safeParse()`, `.strict()` where appropriate, flattened error mapping, malformed JSON guards, and enum-safe typing:
+- `POST /api/entities`
+- `POST /api/source-items/capture`
+- `PUT /api/source-items/[id]/status`
+- `POST /api/relationships`
+- `POST /api/draft-artifacts`
+
+**SIL-1 — Observation Ledger (Schema + Create Endpoints Implemented)**
+
+Prisma models in production schema:
+- `KeywordTarget`
+- `SERPSnapshot`
+
+Schema hardening applied:
+- UUID conventions (`@default(uuid()) @db.Uuid`) on both models
+- `updatedAt` on `KeywordTarget`
+- `payloadSchemaVersion` on `SERPSnapshot`
+- `aiOverviewStatus` as application-validated tri-state string (`"present"` | `"absent"` | `"parse_error"`)
+- Nullable `validAt` on `SERPSnapshot`
+- Compound index on `(projectId, query, locale, device, capturedAt)`
+- `EntityType` enum expanded with `keywordTarget`, `serpSnapshot`
+- `EventType` enum expanded with `KEYWORD_TARGET_CREATED`, `SERP_SNAPSHOT_RECORDED`
+- Reverse relations on `Project` for both models
+
+Create endpoints implemented:
+- `POST /api/seo/keyword-targets` — query normalization, uniqueness enforcement, EventLog discipline
+- `POST /api/seo/serp-snapshots` — idempotent replay (200 on duplicate), strict Zod validation, EventLog discipline
+
+**Hammer Coverage: 62 PASS, 0 FAIL, 2 SKIP**
+
+SIL-1 hammer coverage includes:
+- Query normalization
+- Duplicate handling
+- Cross-project isolation
+- Validation failures
+- Idempotency
+- Malformed JSON guards
+
+### What Does Not Exist
+
+**SIL-1 list/update/delete endpoints** — not implemented. Create endpoints only.
+
+**W4–W7 SEO endpoints** — not implemented. Formally superseded by SIL-1 scope boundaries:
+- `POST /api/seo/keyword-research` (W4)
+- `POST /api/seo/serp-snapshot` (W5, the pre-SIL-1 DraftArtifact-based version)
+- `POST /api/seo/content-brief` (W6)
+- `POST /api/seo/ai-keyword-volume` (W7)
+
+**verify-freshness endpoint** — not implemented.
+
+**SIL-2 (delta detection, volatility scoring)** — not started. No schema work, no endpoints.
+
+**Phase 3+ features** — LLM broker integration, patch apply, structured education layer, experiments layer, GraphRAG — all future.
+
+### What Is Intentionally Deferred
+
+- No volatility scoring (SIL-2 scope)
+- No keyword clustering (SIL-2 scope)
+- No AI citation extraction beyond status flags (SIL-2+ scope)
+- No background ingestion jobs (explicitly excluded from all current phases)
+- No autonomous publishing (system invariant)
+- No list/GET endpoints for `KeywordTarget` or `SERPSnapshot` (next increment within SIL-1)
 
 ---
 
@@ -54,7 +137,7 @@ Exit criteria:
 
 ---
 
-## Phase 0.1 — Search Intelligence Layer (SIL-1) — Observation Ledger (NEXT)
+## Phase 0.1 — Search Intelligence Layer (SIL-1) — Observation Ledger (IN PROGRESS)
 
 Objective: introduce a minimal, deterministic, immutable observation ledger for search reality.
 
@@ -62,15 +145,16 @@ Authoritative spec:
 - `docs/specs/SIL-1-OBSERVATION-LEDGER.md`
 
 Scope (SIL-1 only):
-- Add Prisma models:
-  - `KeywordTarget`
-  - `SERPSnapshot`
-- Enforce UUID consistency (`@default(uuid()) @db.Uuid`)
-- Add required `EntityType` + `EventType` enum values
-- Enforce query normalization at API boundary
-- Implement compound index for primary read path
-- Ensure full transactional event logging compliance
-- Manual ingest endpoints only (no automation)
+- ✅ Add Prisma models: `KeywordTarget`, `SERPSnapshot`
+- ✅ Enforce UUID consistency (`@default(uuid()) @db.Uuid`)
+- ✅ Add required `EntityType` + `EventType` enum values
+- ✅ Enforce query normalization at API boundary
+- ✅ Implement compound index for primary read path
+- ✅ Ensure full transactional event logging compliance
+- ✅ Manual ingest endpoints: `POST /api/seo/keyword-targets`, `POST /api/seo/serp-snapshots`
+- ✅ Hammer coverage extended with SIL-1 cases
+- ⏳ List endpoints (`GET /api/seo/keyword-targets`, `GET /api/seo/serp-snapshots`) — not yet implemented
+- ⏳ Update and delete endpoints — intentionally deferred
 
 Explicit non-goals (SIL-1):
 - No volatility scoring
@@ -81,10 +165,10 @@ Explicit non-goals (SIL-1):
 - No autonomous planning
 
 Exit criteria:
-- Prisma migration applied cleanly
-- Event logging verified for both models
-- Deterministic list queries implemented
-- Core hammer extended with SIL-1 coverage
+- ✅ Prisma migration applied cleanly
+- ✅ Event logging verified for both models
+- ✅ Core hammer extended with SIL-1 coverage
+- ⏳ Deterministic list queries implemented
 
 ---
 
@@ -150,25 +234,13 @@ Constraints:
 
 ---
 
-## Current Status Snapshot
+## Hammer Status
 
-- Multi-project hardening: ✅ done
-- Phase 0 (AI News + Manual SEO): 🟡 active
-  - Core endpoints: ✅ implemented + hammer-verified
-  - Zod validation hardening (Phases 1–5): ✅ complete
-- SIL-1 (Observation Ledger): 🟡 next — spec finalized, no schema migration yet
-- Phase 1 (VS Code + MCP read-only): ✅ done
-- Phase 2 (DraftArtifact lifecycle + BYDA-S S0): ✅ done
-- Phase 3+: ⏳ not started
-
-### Hammer Status
-
-- Core hammer: 48 PASS, 0 FAIL, 2 SKIP
-- Extended hammer: 77 PASS, 23 FAIL, 2 SKIP
-  - Remaining FAILs correspond to unimplemented SEO W4–W7 endpoints
-  - These endpoints are now formally superseded by SIL-1 scope
+- Core + SIL-1 hammer: **62 PASS, 0 FAIL, 2 SKIP**
+  - 2 SKIPs correspond to missing cross-project header in test environment configuration
+  - W4–W7 FAILs from prior extended hammer runs are no longer tracked: those endpoints are not in current scope
 
 ---
 
 **Roadmap authority note:**
-SIL-1 schema work is authorized. No additional SEO endpoint implementation occurs outside the SIL-1 specification.
+SIL-1 list endpoint work is the next authorized increment. No additional SEO endpoint implementation occurs outside the SIL-1 specification. W4–W7 are formally deferred and will not be implemented in their original DraftArtifact-based form without an explicit roadmap amendment.
