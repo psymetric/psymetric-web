@@ -65,6 +65,8 @@ enum EntityType {
   quotableBlock
   searchPerformance
   draftArtifact
+  keywordTarget
+  serpSnapshot
 }
 
 enum ContentEntityType {
@@ -140,6 +142,8 @@ enum EventType {
   DRAFT_CREATED
   DRAFT_EXPIRED
   QUOTABLE_BLOCK_CREATED
+  KEYWORD_TARGET_CREATED
+  SERP_SNAPSHOT_RECORDED
 }
 
 enum ActorType {
@@ -216,6 +220,8 @@ model Project {
   draftArtifacts     DraftArtifact[]
   searchPerformanceRecords SearchPerformance[]
   quotableBlocks     QuotableBlock[]
+  keywordTargets     KeywordTarget[]
+  serpSnapshots      SERPSnapshot[]
 }
 
 // =============================================================================
@@ -526,6 +532,64 @@ model QuotableBlock {
 
   @@index([projectId, entityId])
   @@index([projectId, claimType])
+}
+
+// =============================================================================
+// SIL-1 — Search Intelligence Layer: Observation Ledger
+// Per docs/specs/SIL-1-OBSERVATION-LEDGER.md
+// KeywordTarget: mutable governance record ("we care about this keyword")
+// SERPSnapshot: immutable observation (append-only SERP capture)
+// =============================================================================
+
+model KeywordTarget {
+  id         String   @id @default(uuid()) @db.Uuid
+
+  projectId  String   @db.Uuid
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  query      String
+  locale     String
+  device     String
+
+  isPrimary  Boolean  @default(false)
+
+  intent     String?
+  notes      String?
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([projectId, query, locale, device])
+  @@index([projectId])
+}
+
+model SERPSnapshot {
+  id                   String   @id @default(uuid()) @db.Uuid
+
+  projectId            String   @db.Uuid
+  project              Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  query                String
+  locale               String
+  device               String
+
+  capturedAt           DateTime
+  validAt              DateTime?
+
+  rawPayload           Json
+  payloadSchemaVersion String?
+
+  aiOverviewStatus     String   // Application-validated: "present" | "absent" | "parse_error"
+  aiOverviewText       String?
+
+  source               String
+  batchRef             String?
+
+  createdAt            DateTime @default(now())
+
+  @@unique([projectId, query, locale, device, capturedAt])
+  @@index([projectId, query, locale, device, capturedAt])
+  @@index([projectId])
 }
 
 // =============================================================================
