@@ -29,6 +29,7 @@ import {
   ActorType,
 } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
+import { CreateDraftArtifactSchema } from "@/lib/schemas/draft-artifact";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -84,134 +85,6 @@ async function generateContentHash(content: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/**
- * Validate S0 audit content structure
- */
-interface S0AuditContent {
-  schemaVersion: string;
-  entityId: string;
-  scores: {
-    citability: number;
-    extractability: number;
-    factualDensity: number;
-  };
-  notes?: string;
-  createdAt: string;
-}
-
-function validateS0Content(content: unknown): {
-  valid: boolean;
-  error?: string;
-  parsed?: S0AuditContent;
-} {
-  if (typeof content !== "object" || content === null || Array.isArray(content)) {
-    return { valid: false, error: "content must be an object" };
-  }
-
-  const c = content as Record<string, unknown>;
-
-  // Reject unknown fields
-  const allowedKeys = new Set([
-    "schemaVersion",
-    "entityId",
-    "scores",
-    "notes",
-    "createdAt",
-  ]);
-  for (const k of Object.keys(c)) {
-    if (!allowedKeys.has(k)) {
-      return { valid: false, error: `Unknown content field: ${k}` };
-    }
-  }
-
-  // schemaVersion (must match)
-  if (c.schemaVersion !== BYDA_S0_SCHEMA_VERSION) {
-    return {
-      valid: false,
-      error: `content.schemaVersion must be "${BYDA_S0_SCHEMA_VERSION}"`,
-    };
-  }
-
-  // entityId (must be UUID)
-  if (typeof c.entityId !== "string" || !UUID_RE.test(c.entityId)) {
-    return { valid: false, error: "content.entityId must be a valid UUID" };
-  }
-
-  // scores (must be object with 3 numeric fields)
-  if (typeof c.scores !== "object" || c.scores === null || Array.isArray(c.scores)) {
-    return { valid: false, error: "content.scores must be an object" };
-  }
-
-  const scores = c.scores as Record<string, unknown>;
-
-  const allowedScoreKeys = new Set([
-    "citability",
-    "extractability",
-    "factualDensity",
-  ]);
-  for (const k of Object.keys(scores)) {
-    if (!allowedScoreKeys.has(k)) {
-      return { valid: false, error: `Unknown scores field: ${k}` };
-    }
-  }
-
-  if (typeof scores.citability !== "number") {
-    return { valid: false, error: "content.scores.citability must be a number" };
-  }
-  if (typeof scores.extractability !== "number") {
-    return {
-      valid: false,
-      error: "content.scores.extractability must be a number",
-    };
-  }
-  if (typeof scores.factualDensity !== "number") {
-    return {
-      valid: false,
-      error: "content.scores.factualDensity must be a number",
-    };
-  }
-
-  // Scores must be in range 0-100
-  if (
-    scores.citability < 0 ||
-    scores.citability > 100 ||
-    scores.extractability < 0 ||
-    scores.extractability > 100 ||
-    scores.factualDensity < 0 ||
-    scores.factualDensity > 100
-  ) {
-    return { valid: false, error: "All scores must be between 0 and 100" };
-  }
-
-  // notes (optional string)
-  if (c.notes !== undefined && typeof c.notes !== "string") {
-    return { valid: false, error: "content.notes must be a string if provided" };
-  }
-
-  // createdAt (must be valid ISO timestamp)
-  if (!isValidIsoTimestamp(c.createdAt)) {
-    return {
-      valid: false,
-      error:
-        "content.createdAt must be a valid ISO 8601 timestamp (YYYY-MM-DDTHH:mm:ssZ)",
-    };
-  }
-
-  return {
-    valid: true,
-    parsed: {
-      schemaVersion: c.schemaVersion as string,
-      entityId: c.entityId,
-      scores: {
-        citability: scores.citability,
-        extractability: scores.extractability,
-        factualDensity: scores.factualDensity,
-      },
-      notes: c.notes as string | undefined,
-      createdAt: c.createdAt as string,
-    },
-  };
-}
 
 // =============================================================================
 // GET /api/draft-artifacts
@@ -316,33 +189,27 @@ export async function POST(request: NextRequest) {
       return badRequest("Request body must be an object");
     }
 
-    const b = body as Record<string, unknown>;
-
-    // Reject unknown fields
-    const allowedBodyKeys = new Set(["kind", "entityId", "content"]);
-    for (const k of Object.keys(b)) {
-      if (!allowedBodyKeys.has(k)) {
-        return badRequest(`Unknown body field: ${k}`);
-      }
+    const parsed = CreateDraftArtifactSchema.safeParse(body);
+    if (!parsed.success) {
+      const flat = parsed.error.flatten();
+      return badRequest("Validation failed", [
+        ...flat.formErrors.map((msg) => ({
+          code: "VALIDATION_ERROR" as const,
+          message: msg,
+        })),
+        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
+          (messages ?? []).map((msg) => ({
+            code: "VALIDATION_ERROR" as const,
+            field,
+            message: msg,
+          }))
+        ),
+      ]);
     }
 
-    // Validate kind (must be byda_s_audit)
-    if (b.kind !== ALLOWED_KIND) {
-      return badRequest(`kind must be "${ALLOWED_KIND}"`);
-    }
-
-    // Validate entityId (required, UUID)
-    if (typeof b.entityId !== "string" || !UUID_RE.test(b.entityId)) {
-      return badRequest("entityId is required and must be a valid UUID");
-    }
-    const entityId = b.entityId;
-
-    // Validate content (required, strict structure)
-    const contentValidation = validateS0Content(b.content);
-    if (!contentValidation.valid) {
-      return badRequest(contentValidation.error!);
-    }
-    const parsedContent = contentValidation.parsed!;
+    const data = parsed.data;
+    const entityId = data.entityId;
+    const parsedContent = data.content;
 
     // Cross-check: body.entityId must match content.entityId
     if (entityId !== parsedContent.entityId) {

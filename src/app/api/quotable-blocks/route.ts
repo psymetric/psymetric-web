@@ -24,6 +24,7 @@ import {
 import { resolveProjectId } from "@/lib/project";
 import { ClaimType, EventType, EntityType, ActorType } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
+import { CreateQuotableBlockSchema } from "@/lib/schemas/quotable-block";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -178,57 +179,33 @@ export async function POST(request: NextRequest) {
       return badRequest("Request body must be an object");
     }
 
-    const b = body as Record<string, unknown>;
-
-    // Validate entityId (required)
-    if (typeof b.entityId !== "string") {
-      return badRequest("entityId is required and must be a string");
-    }
-    if (!UUID_RE.test(b.entityId)) {
-      return badRequest("entityId must be a valid UUID");
-    }
-    const entityId = b.entityId;
-
-    // Validate text (required, non-empty)
-    if (typeof b.text !== "string" || b.text.trim().length === 0) {
-      return badRequest("text is required and must be a non-empty string");
-    }
-    const text = b.text.trim();
-
-    // Validate claimType (required, must match enum)
-    if (!isValidClaimType(b.claimType)) {
-      return badRequest(
-        `claimType must be one of: ${VALID_CLAIM_TYPES.join(", ")}`
-      );
-    }
-    const claimType = b.claimType;
-
-    // Validate sourceCitation (optional, must be string if provided)
-    let sourceCitation: string | null = null;
-    if (b.sourceCitation !== undefined && b.sourceCitation !== null) {
-      if (typeof b.sourceCitation !== "string") {
-        return badRequest("sourceCitation must be a string");
-      }
-      sourceCitation = b.sourceCitation.trim() || null;
+    const parsed = CreateQuotableBlockSchema.safeParse(body);
+    if (!parsed.success) {
+      const flat = parsed.error.flatten();
+      return badRequest("Validation failed", [
+        ...flat.formErrors.map((msg) => ({
+          code: "VALIDATION_ERROR" as const,
+          message: msg,
+        })),
+        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
+          (messages ?? []).map((msg) => ({
+            code: "VALIDATION_ERROR" as const,
+            field,
+            message: msg,
+          }))
+        ),
+      ]);
     }
 
-    // Validate topicTag (optional, must be string if provided)
-    let topicTag: string | null = null;
-    if (b.topicTag !== undefined && b.topicTag !== null) {
-      if (typeof b.topicTag !== "string") {
-        return badRequest("topicTag must be a string");
-      }
-      topicTag = b.topicTag.trim() || null;
-    }
-
-    // Validate verifiedUntil (optional, must be valid ISO date if provided)
-    let verifiedUntil: Date | null = null;
-    if (b.verifiedUntil !== undefined && b.verifiedUntil !== null) {
-      if (!isValidIsoDate(b.verifiedUntil)) {
-        return badRequest("verifiedUntil must be a valid ISO date string");
-      }
-      verifiedUntil = new Date(b.verifiedUntil);
-    }
+    const data = parsed.data;
+    const entityId = data.entityId;
+    const text = data.text.trim();
+    const claimType = data.claimType;
+    const sourceCitation = data.sourceCitation?.trim() || null;
+    const topicTag = data.topicTag?.trim() || null;
+    const verifiedUntil = data.verifiedUntil
+      ? new Date(data.verifiedUntil)
+      : null;
 
     // Verify entity exists AND belongs to this project
     const entity = await prisma.entity.findUnique({

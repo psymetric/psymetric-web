@@ -29,9 +29,7 @@ import {
   EventType,
 } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+import { RunAuditSchema } from "@/lib/schemas/audit";
 
 const BYDA_S0_SCHEMA_VERSION = "byda.s0.v1";
 const ALLOWED_KIND = DraftArtifactKind.byda_s_audit;
@@ -124,20 +122,25 @@ export async function POST(request: NextRequest) {
       return badRequest("Request body must be an object");
     }
 
-    const b = body as Record<string, unknown>;
-
-    // Strict keys
-    const allowedKeys = new Set(["entityId"]);
-    for (const k of Object.keys(b)) {
-      if (!allowedKeys.has(k)) {
-        return badRequest(`Unknown body field: ${k}`);
-      }
+    const parsed = RunAuditSchema.safeParse(body);
+    if (!parsed.success) {
+      const flat = parsed.error.flatten();
+      return badRequest("Validation failed", [
+        ...flat.formErrors.map((msg) => ({
+          code: "VALIDATION_ERROR" as const,
+          message: msg,
+        })),
+        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
+          (messages ?? []).map((msg) => ({
+            code: "VALIDATION_ERROR" as const,
+            field,
+            message: msg,
+          }))
+        ),
+      ]);
     }
 
-    if (typeof b.entityId !== "string" || !UUID_RE.test(b.entityId)) {
-      return badRequest("entityId is required and must be a valid UUID");
-    }
-    const entityId = b.entityId;
+    const entityId = parsed.data.entityId;
 
     // Canonical read: entity must exist and belong to project
     const entity = await prisma.entity.findUnique({

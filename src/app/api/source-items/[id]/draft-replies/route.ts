@@ -23,23 +23,13 @@ import {
   serverError,
 } from "@/lib/api-response";
 import { resolveProjectId } from "@/lib/project";
+import { CreateDraftReplySchema } from "@/lib/schemas/draft-reply";
 
 type DraftStyle = "short" | "medium" | "thread";
 
 // UUID validation regex
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function parseCount(raw: string | null): number | null {
-  if (raw === null) return null;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || !Number.isInteger(n)) return null;
-  return n;
-}
-
-function isDraftStyle(value: unknown): value is DraftStyle {
-  return value === "short" || value === "medium" || value === "thread";
-}
 
 function buildStubReply(args: {
   style: DraftStyle;
@@ -113,20 +103,32 @@ export async function POST(
 
     // --- Inputs (query params only; Phase 1 tight + boring) ---
     const url = new URL(request.url);
-    const qCount = url.searchParams.get("count");
-    const qStyle = url.searchParams.get("style");
+    const rawCount = url.searchParams.get("count");
+    const rawStyle = url.searchParams.get("style");
 
-    const parsedCount = parseCount(qCount);
-    const count = parsedCount ?? 1;
-    if (count < 1 || count > 5) {
-      return badRequest("count must be an integer between 1 and 5");
+    const parsed = CreateDraftReplySchema.safeParse({
+      count: rawCount !== null ? Number(rawCount) : undefined,
+      style: rawStyle ?? undefined,
+    });
+    if (!parsed.success) {
+      const flat = parsed.error.flatten();
+      return badRequest("Validation failed", [
+        ...flat.formErrors.map((msg) => ({
+          code: "VALIDATION_ERROR" as const,
+          message: msg,
+        })),
+        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
+          (messages ?? []).map((msg) => ({
+            code: "VALIDATION_ERROR" as const,
+            field,
+            message: msg,
+          }))
+        ),
+      ]);
     }
 
-    const styleRaw = qStyle ?? "short";
-    if (!isDraftStyle(styleRaw)) {
-      return badRequest("style must be one of: short, medium, thread");
-    }
-    const style: DraftStyle = styleRaw;
+    const count = parsed.data.count;
+    const style: DraftStyle = parsed.data.style;
 
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 30);

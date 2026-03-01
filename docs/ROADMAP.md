@@ -232,3 +232,18 @@ Constraints:
 - Phase 2 (DraftArtifact lifecycle + BYDA-S S0): ✅ done
 - Phase 2 Extension (X Capture + Draft Reply): ✅ implemented + hammer-verified
 - BYDA-S S0 pipeline: ⏳ next
+
+### Validation Hardening (Cross-Phase)
+
+- Zod v4 installed (`zod@4.3.6`)
+- Zod schema pattern established and applied to:
+  - ✅ `POST /api/entities` — `CreateEntitySchema` (`src/lib/schemas/entity.ts`)
+  - ✅ `POST /api/source-items/capture` — `CaptureSourceItemSchema` (`src/lib/schemas/source-item.ts`)
+  - ✅ `PUT /api/source-items/[id]/status` — `UpdateSourceItemStatusSchema` (`src/lib/schemas/source-item-status.ts`)
+  - ✅ `POST /api/relationships` — `CreateRelationshipSchema` (`src/lib/schemas/relationship.ts`)
+- JSON parse guards (malformed body → 400) added to: `POST /api/entities`, `POST /api/source-items/capture`, `PUT /api/source-items/[id]/status`
+- `POST /api/relationships` returns 201 (was 200, corrected to HTTP-correct resource creation status)
+- Extended hammer (`scripts/api-hammer.extended.ps1`) tracked in repo (non-CI): 77 PASS, 23 FAIL, 2 SKIP
+  - 19 FAILs are unimplemented SEO W4–W7 + verify-freshness endpoints (expected)
+  - 4 FAILs were fixed (3 JSON guards + 1 relationship 201)
+- Core hammer: 48 PASS, 0 FAIL, 2 SKIP
