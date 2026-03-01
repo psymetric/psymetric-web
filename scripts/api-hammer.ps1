@@ -1079,14 +1079,61 @@ if (-not $entityId) {
     if ($draftIdForPromote) {
         if (Test-PostEmpty "$Base/api/draft-artifacts/$draftIdForPromote/promote" 200 "POST promote (draft -> metric snapshots + archive)" $Headers) { $PassCount++ } else { $FailCount++ }
 
-        # NOTE: GET /api/audits/:id currently hardcoded to status=draft (cannot read archived audits by ID)
-        # This is inconsistent with GET /api/audits (list) which supports status=archived.
-        # Skipping archived audit read tests until endpoint supports status query parameter.
-        # See: src/app/api/audits/[id]/route.ts line 45 (status: DraftArtifactStatus.draft)
-        Write-Host "Testing: GET /api/audits/:id includePromotion=true (promoted)  SKIP (endpoint limitation)" -ForegroundColor DarkYellow
-        $SkipCount++
-        Write-Host "Testing: GET /api/audits/:id includeExplain=true (promoted)  SKIP (endpoint limitation)" -ForegroundColor DarkYellow
-        $SkipCount++
+        # GET /api/audits/:id includePromotion=true (promoted/archived)
+        try {
+            Write-Host "Testing: GET /api/audits/:id includePromotion=true (promoted)" -NoNewline
+            $promUrl = "$Base/api/audits/$draftIdForPromote`?includePromotion=true"
+            $promResp = Invoke-WebRequest -Uri $promUrl -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+            if ($promResp.StatusCode -eq 200) {
+                $promParsed = $promResp.Content | ConvertFrom-Json
+                if ($promParsed.data -ne $null) {
+                    $promProps = $promParsed.data | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
+                    if ($promProps -contains "promotion") {
+                        Write-Host "  PASS" -ForegroundColor Green
+                    } else {
+                        Write-Host "  FAIL (promotion field missing from response)" -ForegroundColor Red
+                    }
+                    $PassCount++
+                } else {
+                    Write-Host "  FAIL (missing data envelope)" -ForegroundColor Red
+                    $FailCount++
+                }
+            } else {
+                Write-Host ("  FAIL (got " + $promResp.StatusCode + ", expected 200)") -ForegroundColor Red
+                $FailCount++
+            }
+        } catch {
+            Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+            $FailCount++
+        }
+
+        # GET /api/audits/:id includeExplain=true (promoted/archived)
+        try {
+            Write-Host "Testing: GET /api/audits/:id includeExplain=true (promoted)" -NoNewline
+            $explainUrl = "$Base/api/audits/$draftIdForPromote`?includeExplain=true"
+            $explainResp = Invoke-WebRequest -Uri $explainUrl -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+            if ($explainResp.StatusCode -eq 200) {
+                $explainParsed = $explainResp.Content | ConvertFrom-Json
+                if ($explainParsed.data -ne $null) {
+                    $explainProps = $explainParsed.data | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
+                    if ($explainProps -contains "explain") {
+                        Write-Host "  PASS" -ForegroundColor Green
+                    } else {
+                        Write-Host "  FAIL (explain field missing from response)" -ForegroundColor Red
+                    }
+                    $PassCount++
+                } else {
+                    Write-Host "  FAIL (missing data envelope)" -ForegroundColor Red
+                    $FailCount++
+                }
+            } else {
+                Write-Host ("  FAIL (got " + $explainResp.StatusCode + ", expected 200)") -ForegroundColor Red
+                $FailCount++
+            }
+        } catch {
+            Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+            $FailCount++
+        }
 
         # Verify idempotency: second promote should fail cleanly
         if (Test-PostEmpty "$Base/api/draft-artifacts/$draftIdForPromote/promote" 400 "POST promote (already archived)" $Headers) { $PassCount++ } else { $FailCount++ }
