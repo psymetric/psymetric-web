@@ -15,9 +15,9 @@
 # - /api/seo/search-performance/ingest (Phase 0-SEO: bulk GSC ingestion)
 # - /api/seo/search-performance (Phase 0-SEO: list with filters)
 # - /api/quotable-blocks (Phase 0-SEO: create + list GEO citation assets)
-# - /api/seo/keyword-targets (SIL-1: create + normalization + isolation)
-# - /api/seo/serp-snapshots (SIL-1: create + idempotent replay + validation)
-# - Deterministic ordering verification (entities list)
+# - /api/seo/keyword-targets (SIL-1: create + normalization + isolation + list read surface)
+# - /api/seo/serp-snapshots (SIL-1: create + idempotent replay + validation + list read surface)
+# - Deterministic ordering verification (entities list, keyword-targets, serp-snapshots)
 # - Response envelope validation (data + pagination fields)
 
 param(
@@ -673,7 +673,354 @@ $ssBadSource = @{
 if (Test-PostJson "$Base/api/seo/serp-snapshots" 400 "POST serp-snapshots (source not in allowlist -> 400)" $Headers $ssBadSource) { $PassCount++ } else { $FailCount++ }
 
 Write-Host ""
-Write-Host "=== DETERMINISTIC ORDERING TEST ===" -ForegroundColor Yellow
+Write-Host "=== SIL-1 LIST TESTS (READ SURFACE) ===" -ForegroundColor Yellow
+
+# --- Keyword Targets: GET list ---
+
+# KT-L-1: Basic list -> 200, envelope present, pagination.total >= 0
+try {
+    Write-Host "Testing: GET keyword-targets (basic list -> 200, envelope)" -NoNewline
+    $ktListResp = Invoke-WebRequest -Uri "$Base/api/seo/keyword-targets" -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($ktListResp.StatusCode -eq 200) {
+        $ktListParsed = $ktListResp.Content | ConvertFrom-Json
+        if ($ktListParsed.data -ne $null -and $ktListParsed.pagination -ne $null -and $ktListParsed.pagination.total -ge 0) {
+            Write-Host "  PASS" -ForegroundColor Green
+            $PassCount++
+        } else {
+            Write-Host "  FAIL (missing data/pagination or total < 0)" -ForegroundColor Red
+            $FailCount++
+        }
+    } else {
+        Write-Host ("  FAIL (got " + $ktListResp.StatusCode + ", expected 200)") -ForegroundColor Red
+        $FailCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# KT-L-2: Filter by device=desktop -> 200, all items have device=desktop
+try {
+    Write-Host "Testing: GET keyword-targets device=desktop filter (all items match)" -NoNewline
+    $ktDesktopUrl = Build-Url -Path "/api/seo/keyword-targets" -Params @{ device = "desktop" }
+    $ktDesktopResp = Invoke-WebRequest -Uri $ktDesktopUrl -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($ktDesktopResp.StatusCode -eq 200) {
+        $ktDesktopParsed = $ktDesktopResp.Content | ConvertFrom-Json
+        $allDesktop = $true
+        foreach ($item in $ktDesktopParsed.data) {
+            if ($item.device -ne "desktop") { $allDesktop = $false; break }
+        }
+        if ($allDesktop) {
+            Write-Host "  PASS" -ForegroundColor Green
+            $PassCount++
+        } else {
+            Write-Host "  FAIL (non-desktop item in filtered result)" -ForegroundColor Red
+            $FailCount++
+        }
+    } else {
+        Write-Host ("  FAIL (got " + $ktDesktopResp.StatusCode + ", expected 200)") -ForegroundColor Red
+        $FailCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# KT-L-3: Invalid device -> 400
+$ktInvalidDeviceUrl = Build-Url -Path "/api/seo/keyword-targets" -Params @{ device = "tablet" }
+if (Test-Endpoint "GET" $ktInvalidDeviceUrl 400 "GET keyword-targets invalid device -> 400" $Headers) { $PassCount++ } else { $FailCount++ }
+
+# KT-L-4: Invalid isPrimary -> 400
+$ktInvalidIsPrimaryUrl = Build-Url -Path "/api/seo/keyword-targets" -Params @{ isPrimary = "1" }
+if (Test-Endpoint "GET" $ktInvalidIsPrimaryUrl 400 "GET keyword-targets isPrimary=1 -> 400" $Headers) { $PassCount++ } else { $FailCount++ }
+
+# KT-L-4b: isPrimary=yes -> 400
+$ktInvalidIsPrimaryYesUrl = Build-Url -Path "/api/seo/keyword-targets" -Params @{ isPrimary = "yes" }
+if (Test-Endpoint "GET" $ktInvalidIsPrimaryYesUrl 400 "GET keyword-targets isPrimary=yes -> 400" $Headers) { $PassCount++ } else { $FailCount++ }
+
+# KT-L-5: Deterministic ordering (createdAt desc, id desc)
+try {
+    Write-Host "Testing: GET keyword-targets ordering deterministic (createdAt desc, id tiebreak)" -NoNewline
+    $ktOrd1 = Try-GetJson -Url "$Base/api/seo/keyword-targets?limit=20" -RequestHeaders $Headers
+    $ktOrd2 = Try-GetJson -Url "$Base/api/seo/keyword-targets?limit=20" -RequestHeaders $Headers
+    if ($ktOrd1 -and $ktOrd2 -and $ktOrd1.data -and $ktOrd2.data) {
+        # Two sequential calls must return identical id order
+        $ktIds1 = $ktOrd1.data | ForEach-Object { $_.id }
+        $ktIds2 = $ktOrd2.data | ForEach-Object { $_.id }
+        $ktOrderMatch = ($ktIds1.Count -eq $ktIds2.Count)
+        if ($ktOrderMatch) {
+            for ($i = 0; $i -lt $ktIds1.Count; $i++) {
+                if ($ktIds1[$i] -ne $ktIds2[$i]) { $ktOrderMatch = $false; break }
+            }
+        }
+        # Additionally verify createdAt descending within single result
+        $ktCreatedAtOk = $true
+        $ktItems = $ktOrd1.data
+        for ($i = 0; $i -lt ($ktItems.Count - 1); $i++) {
+            $tA = [datetime]::Parse($ktItems[$i].createdAt)
+            $tB = [datetime]::Parse($ktItems[$i+1].createdAt)
+            if ($tA -lt $tB) { $ktCreatedAtOk = $false; break }
+        }
+        if ($ktOrderMatch -and $ktCreatedAtOk) {
+            Write-Host "  PASS" -ForegroundColor Green
+            $PassCount++
+        } else {
+            Write-Host "  FAIL (ordering not deterministic or createdAt not descending)" -ForegroundColor Red
+            $FailCount++
+        }
+    } else {
+        Write-Host "  SKIP (no keyword targets to order)" -ForegroundColor DarkYellow
+        $SkipCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# KT-L-6: Filter by isPrimary=true -> all returned items have isPrimary=true
+try {
+    Write-Host "Testing: GET keyword-targets isPrimary=true filter (all items match)" -NoNewline
+    $ktPrimaryUrl = Build-Url -Path "/api/seo/keyword-targets" -Params @{ isPrimary = "true" }
+    $ktPrimaryResp = Invoke-WebRequest -Uri $ktPrimaryUrl -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($ktPrimaryResp.StatusCode -eq 200) {
+        $ktPrimaryParsed = $ktPrimaryResp.Content | ConvertFrom-Json
+        $allPrimary = $true
+        foreach ($item in $ktPrimaryParsed.data) {
+            if ($item.isPrimary -ne $true) { $allPrimary = $false; break }
+        }
+        if ($allPrimary) {
+            Write-Host "  PASS" -ForegroundColor Green
+            $PassCount++
+        } else {
+            Write-Host "  FAIL (non-primary item in isPrimary=true filtered result)" -ForegroundColor Red
+            $FailCount++
+        }
+    } else {
+        Write-Host ("  FAIL (got " + $ktPrimaryResp.StatusCode + ", expected 200)") -ForegroundColor Red
+        $FailCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# --- SERP Snapshots: GET list ---
+
+# The normalized query from the POST section (already lowercase, no extra spaces)
+$ssNormalizedQuery = "serp hammer $ssRunId"
+
+# SS-L-1: Basic list -> 200, envelope present, pagination.total >= 0
+try {
+    Write-Host "Testing: GET serp-snapshots (basic list -> 200, envelope)" -NoNewline
+    $ssListResp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshots" -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($ssListResp.StatusCode -eq 200) {
+        $ssListParsed = $ssListResp.Content | ConvertFrom-Json
+        if ($ssListParsed.data -ne $null -and $ssListParsed.pagination -ne $null -and $ssListParsed.pagination.total -ge 0) {
+            Write-Host "  PASS" -ForegroundColor Green
+            $PassCount++
+        } else {
+            Write-Host "  FAIL (missing data/pagination or total < 0)" -ForegroundColor Red
+            $FailCount++
+        }
+    } else {
+        Write-Host ("  FAIL (got " + $ssListResp.StatusCode + ", expected 200)") -ForegroundColor Red
+        $FailCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# SS-L-2: includePayload=false (default) -> rawPayload NOT present on items
+try {
+    Write-Host "Testing: GET serp-snapshots includePayload=false -> rawPayload absent" -NoNewline
+    $ssNoPayloadUrl = Build-Url -Path "/api/seo/serp-snapshots" -Params @{ includePayload = "false"; limit = "5" }
+    $ssNoPayloadResp = Invoke-WebRequest -Uri $ssNoPayloadUrl -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($ssNoPayloadResp.StatusCode -eq 200) {
+        $ssNoPayloadParsed = $ssNoPayloadResp.Content | ConvertFrom-Json
+        $payloadAbsent = $true
+        foreach ($item in $ssNoPayloadParsed.data) {
+            # ConvertFrom-Json adds a NoteProperty for each JSON key present;
+            # if rawPayload was returned it will appear as a property.
+            $props = $item | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
+            if ($props -contains "rawPayload") { $payloadAbsent = $false; break }
+        }
+        if ($payloadAbsent) {
+            Write-Host "  PASS" -ForegroundColor Green
+            $PassCount++
+        } else {
+            Write-Host "  FAIL (rawPayload present when includePayload=false)" -ForegroundColor Red
+            $FailCount++
+        }
+    } else {
+        Write-Host ("  FAIL (got " + $ssNoPayloadResp.StatusCode + ", expected 200)") -ForegroundColor Red
+        $FailCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# SS-L-3: includePayload=true -> rawPayload IS present on items (skip if no snapshots)
+try {
+    Write-Host "Testing: GET serp-snapshots includePayload=true -> rawPayload present" -NoNewline
+    $ssWithPayloadUrl = Build-Url -Path "/api/seo/serp-snapshots" -Params @{ includePayload = "true"; limit = "5" }
+    $ssWithPayloadResp = Invoke-WebRequest -Uri $ssWithPayloadUrl -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($ssWithPayloadResp.StatusCode -eq 200) {
+        $ssWithPayloadParsed = $ssWithPayloadResp.Content | ConvertFrom-Json
+        if ($ssWithPayloadParsed.data.Count -eq 0) {
+            Write-Host "  SKIP (no snapshots to inspect)" -ForegroundColor DarkYellow
+            $SkipCount++
+        } else {
+            $payloadPresent = $true
+            foreach ($item in $ssWithPayloadParsed.data) {
+                $props = $item | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
+                if (-not ($props -contains "rawPayload")) { $payloadPresent = $false; break }
+            }
+            if ($payloadPresent) {
+                Write-Host "  PASS" -ForegroundColor Green
+                $PassCount++
+            } else {
+                Write-Host "  FAIL (rawPayload absent when includePayload=true)" -ForegroundColor Red
+                $FailCount++
+            }
+        }
+    } else {
+        Write-Host ("  FAIL (got " + $ssWithPayloadResp.StatusCode + ", expected 200)") -ForegroundColor Red
+        $FailCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# SS-L-4: Invalid ISO datetime (from=badvalue) -> 400
+$ssInvalidFromUrl = Build-Url -Path "/api/seo/serp-snapshots" -Params @{ from = "badvalue" }
+if (Test-Endpoint "GET" $ssInvalidFromUrl 400 "GET serp-snapshots from=badvalue -> 400" $Headers) { $PassCount++ } else { $FailCount++ }
+
+# SS-L-4b: Date-only (no timezone) -> 400 (must include TZ offset)
+$ssDateOnlyUrl = Build-Url -Path "/api/seo/serp-snapshots" -Params @{ from = "2025-01-01" }
+if (Test-Endpoint "GET" $ssDateOnlyUrl 400 "GET serp-snapshots from=date-only (no TZ) -> 400" $Headers) { $PassCount++ } else { $FailCount++ }
+
+# SS-L-5: Invalid includePayload (includePayload=1) -> 400
+$ssInvalidPayloadFlagUrl = Build-Url -Path "/api/seo/serp-snapshots" -Params @{ includePayload = "1" }
+if (Test-Endpoint "GET" $ssInvalidPayloadFlagUrl 400 "GET serp-snapshots includePayload=1 -> 400" $Headers) { $PassCount++ } else { $FailCount++ }
+
+# SS-L-5b: includePayload=yes -> 400
+$ssInvalidPayloadYesUrl = Build-Url -Path "/api/seo/serp-snapshots" -Params @{ includePayload = "yes" }
+if (Test-Endpoint "GET" $ssInvalidPayloadYesUrl 400 "GET serp-snapshots includePayload=yes -> 400" $Headers) { $PassCount++ } else { $FailCount++ }
+
+# SS-L-6: Deterministic ordering (capturedAt desc, id desc)
+try {
+    Write-Host "Testing: GET serp-snapshots ordering deterministic (capturedAt desc, id tiebreak)" -NoNewline
+    $ssOrd1 = Try-GetJson -Url "$Base/api/seo/serp-snapshots?limit=20" -RequestHeaders $Headers
+    $ssOrd2 = Try-GetJson -Url "$Base/api/seo/serp-snapshots?limit=20" -RequestHeaders $Headers
+    if ($ssOrd1 -and $ssOrd2 -and $ssOrd1.data -and $ssOrd2.data) {
+        # Two sequential calls must return identical id order
+        $ssIds1 = $ssOrd1.data | ForEach-Object { $_.id }
+        $ssIds2 = $ssOrd2.data | ForEach-Object { $_.id }
+        $ssOrderMatch = ($ssIds1.Count -eq $ssIds2.Count)
+        if ($ssOrderMatch) {
+            for ($i = 0; $i -lt $ssIds1.Count; $i++) {
+                if ($ssIds1[$i] -ne $ssIds2[$i]) { $ssOrderMatch = $false; break }
+            }
+        }
+        # Verify capturedAt descending within single result
+        $ssCapturedAtOk = $true
+        $ssItems = $ssOrd1.data
+        for ($i = 0; $i -lt ($ssItems.Count - 1); $i++) {
+            $tA = [datetime]::Parse($ssItems[$i].capturedAt)
+            $tB = [datetime]::Parse($ssItems[$i+1].capturedAt)
+            if ($tA -lt $tB) { $ssCapturedAtOk = $false; break }
+        }
+        if ($ssOrderMatch -and $ssCapturedAtOk) {
+            Write-Host "  PASS" -ForegroundColor Green
+            $PassCount++
+        } else {
+            Write-Host "  FAIL (ordering not deterministic or capturedAt not descending)" -ForegroundColor Red
+            $FailCount++
+        }
+    } else {
+        Write-Host "  SKIP (no serp snapshots to order)" -ForegroundColor DarkYellow
+        $SkipCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+# SS-L-7: Filter by query (normalized) -> only matching snapshots returned
+if (-not $ssResult.ok) {
+    Write-Host "Testing: GET serp-snapshots filter by query (normalized)  SKIP (POST snapshot failed)" -ForegroundColor DarkYellow
+    $SkipCount++
+} else {
+    try {
+        Write-Host "Testing: GET serp-snapshots filter by query -> only matching items" -NoNewline
+        $ssQueryFilterUrl = Build-Url -Path "/api/seo/serp-snapshots" -Params @{ query = $ssNormalizedQuery; limit = "20" }
+        $ssQueryFilterResp = Invoke-WebRequest -Uri $ssQueryFilterUrl -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($ssQueryFilterResp.StatusCode -eq 200) {
+            $ssQueryFilterParsed = $ssQueryFilterResp.Content | ConvertFrom-Json
+            # All returned items must have query = normalized form
+            $allMatch = $true
+            foreach ($item in $ssQueryFilterParsed.data) {
+                if ($item.query -ne $ssNormalizedQuery) { $allMatch = $false; break }
+            }
+            # At least the one we created must be present
+            $containsOurs = $false
+            foreach ($item in $ssQueryFilterParsed.data) {
+                if ($item.query -eq $ssNormalizedQuery) { $containsOurs = $true; break }
+            }
+            if ($allMatch -and $containsOurs) {
+                Write-Host "  PASS" -ForegroundColor Green
+                $PassCount++
+            } else {
+                Write-Host "  FAIL (filter returned non-matching items or did not include our snapshot)" -ForegroundColor Red
+                $FailCount++
+            }
+        } else {
+            Write-Host ("  FAIL (got " + $ssQueryFilterResp.StatusCode + ", expected 200)") -ForegroundColor Red
+            $FailCount++
+        }
+    } catch {
+        Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+        $FailCount++
+    }
+}
+
+# SS-L-8: from/to range filter -> capturedAt within bounds
+try {
+    Write-Host "Testing: GET serp-snapshots from/to range filter -> capturedAt within bounds" -NoNewline
+    $ssFromVal = "2020-01-01T00:00:00Z"
+    $ssToVal   = (Get-Date).AddDays(1).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $ssRangeUrl = Build-Url -Path "/api/seo/serp-snapshots" -Params @{ from = $ssFromVal; to = $ssToVal; limit = "20" }
+    $ssRangeResp = Invoke-WebRequest -Uri $ssRangeUrl -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($ssRangeResp.StatusCode -eq 200) {
+        $ssRangeParsed = $ssRangeResp.Content | ConvertFrom-Json
+        $fromDt = [datetime]::Parse($ssFromVal)
+        $toDt   = [datetime]::Parse($ssToVal)
+        $allInRange = $true
+        foreach ($item in $ssRangeParsed.data) {
+            $cAt = [datetime]::Parse($item.capturedAt)
+            if ($cAt -lt $fromDt -or $cAt -gt $toDt) { $allInRange = $false; break }
+        }
+        if ($allInRange) {
+            Write-Host "  PASS" -ForegroundColor Green
+            $PassCount++
+        } else {
+            Write-Host "  FAIL (items outside from/to range returned)" -ForegroundColor Red
+            $FailCount++
+        }
+    } else {
+        Write-Host ("  FAIL (got " + $ssRangeResp.StatusCode + ", expected 200)") -ForegroundColor Red
+        $FailCount++
+    }
+} catch {
+    Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red
+    $FailCount++
+}
+
+Write-Host ""
+Write-Host "=== DETERMINISTIC ORDERING TEST ==="  -ForegroundColor Yellow
 
 $list1 = Try-GetJson -Url "$Base/api/entities?limit=10" -RequestHeaders $Headers
 $list2 = Try-GetJson -Url "$Base/api/entities?limit=10" -RequestHeaders $Headers
