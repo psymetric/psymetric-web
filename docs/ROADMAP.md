@@ -12,6 +12,7 @@ Related specs:
 - `docs/VSCODE-EXTENSION-SPEC.md`
 - `docs/04-LLM-OPERATING-RULES.md`
 - `docs/07-RELATIONSHIP-AND-EVENT-VOCABULARY.md`
+- `docs/specs/SIL-1-OBSERVATION-LEDGER.md`
 
 ---
 
@@ -19,19 +20,7 @@ Related specs:
 
 Objective: make cross-project contamination structurally impossible and CI/build stable.
 
-Delivered:
-- `projectId` on major tables + composite uniqueness scoped by `projectId`
-- PostgreSQL trigger enforcement preventing cross-project `EntityRelation`
-- SEO cross-project integrity enforcement (QuotableBlock/Entity and SearchPerformance/Entity)
-- Deterministic DB hammer verifying:
-  - uniqueness probes
-  - event existence
-  - transaction rollback atomicity
-  - cross-project violation blocking (relationships + SEO)
-- CI guardrail: lint + build + prisma generate with dummy DB URLs
-- Build-time DB access not required (Vercel build discipline preserved)
-
-Exit criteria: Actions green, hammer passes, repo stable. ✅
+Status: ✅ complete
 
 ---
 
@@ -65,134 +54,73 @@ Exit criteria:
 
 ---
 
-## Phase 1 — VS Code Operator Surface + MCP Read-Only Bridge (DONE)
+## Phase 0.1 — Search Intelligence Layer (SIL-1) — Observation Ledger (NEXT)
 
-Objective: prove the VS Code operator surface and MCP plumbing **without any write capability**.
+Objective: introduce a minimal, deterministic, immutable observation ledger for search reality.
 
-Delivered:
-- API-backed MCP server (stdio transport)
-- Exactly six read-only tools implemented:
-  - `list_projects`
-  - `search_entities`
-  - `get_entity`
-  - `get_entity_graph` (depth-limited, deterministic, deduplicated)
-  - `list_search_performance` (project-scoped, deterministic)
-  - `list_quotable_blocks` (project-scoped, deterministic)
-- Strict JSON Schema input validation per tool
-- Canonical MCP result envelope (`content` + compact JSON text)
-- Backend error → MCP error mapping (`isError: true`)
-- Project scoping via environment → injected `x-project-id` / `x-project-slug`
-- No direct DB access (API-only enforcement)
-- Deterministic ordering preserved end-to-end
-- Stdio smoke test validating:
-  - initialize handshake
-  - `tools/list`
-  - `tools/call`
-  - project-scoped API execution
+Authoritative spec:
+- `docs/specs/SIL-1-OBSERVATION-LEDGER.md`
 
-Constraints upheld:
-- No write tools
-- No LLM broker
-- No caching layer
+Scope (SIL-1 only):
+- Add Prisma models:
+  - `KeywordTarget`
+  - `SERPSnapshot`
+- Enforce UUID consistency (`@default(uuid()) @db.Uuid`)
+- Add required `EntityType` + `EventType` enum values
+- Enforce query normalization at API boundary
+- Implement compound index for primary read path
+- Ensure full transactional event logging compliance
+- Manual ingest endpoints only (no automation)
+
+Explicit non-goals (SIL-1):
+- No volatility scoring
+- No clustering
+- No AI citation extraction beyond flags
+- No GraphRAG
 - No background jobs
-- No cross-project leakage
+- No autonomous planning
 
-Exit criteria: satisfied. ✅
+Exit criteria:
+- Prisma migration applied cleanly
+- Event logging verified for both models
+- Deterministic list queries implemented
+- Core hammer extended with SIL-1 coverage
 
 ---
 
-## Phase 2 — BYDA-S Phase 3-A (S0) With Zero LLM (NEXT)
+## Phase 1 — VS Code Operator Surface + MCP Read-Only Bridge (DONE)
 
-Objective: implement the audit storage + rendering + apply pipeline **without LLM involvement**.
+Status: ✅ complete
 
-Scope:
-- S0-only audit generator (deterministic, rules-based)
-- Store AuditReport as `DraftArtifact` (no schema migration required)
-- VS Code webview displays AuditReport and proposed patches (even if empty)
-- Apply endpoint exists and is fully transactional, but only supports strictly validated patch types
+---
 
-Constraints:
-- All writes inside `prisma.$transaction()`
-- Every applied mutation emits canonical EventLog entries
-- Apply accepts **only** `auditDraftId + approvedPatchIds[]` and loads patches from stored report (no client-injected patch objects)
+## Phase 2 — BYDA-S Phase 3-A (S0) With Zero LLM (DONE)
 
-Exit criteria:
-- DraftArtifact storage verified
-- VS Code rendering verified
-- Apply flow verified with atomic rollback behavior
-- Event logging verified
+Status: ✅ complete
 
 ---
 
 ## Phase 3 — LLM Broker Integration for BYDA-S (Read + Propose Only)
 
-Objective: enable LLM-assisted audits that generate structured reports and patch proposals, while keeping mutation human-gated.
-
-Scope:
-- Backend calls broker; MCP does not call broker directly
-- Prompt versioning + model snapshot version capture
-- Deterministic checksum spec implemented and enforced
-- Cache-by-checksum (bounded TTL)
-- Strict output schema validation (reject malformed JSON)
-
-Constraints:
-- Audits may write DraftArtifact, but must not mutate canonical entities
-- Any proposed patch must carry evidence references or be severity-capped by backend rules
-
-Exit criteria:
-- Stable audit generation for one entity type
-- Caching works and is safe across model/version changes
-- Cost controls (rate limit + daily budget guard) in place
+Status: ⏳ future
 
 ---
 
 ## Phase 4 — Patch Apply Expansion (Still Human-Gated)
 
-Objective: expand supported patch vocabulary while preserving safety.
-
-Scope:
-- Expand allowlisted patch types (only those mapped to backend-validated operations)
-- Idempotency guards for apply
-- Stale-audit detection (entity version / updatedAt gating)
-
-Constraints:
-- No auto-apply
-- No background runs
-- No cross-project operations
-
-Exit criteria:
-- Apply can safely handle common remediation actions
-- No injection vectors (patch IDs must exist in stored audit)
+Status: ⏳ future
 
 ---
 
 ## Phase 5 — Structured Education Layer (Concepts / Guides / Wiki)
 
-Objective: expand beyond News into evergreen education and internal semantic cohesion.
-
-Scope:
-- Concepts + Guides + Projects as first-class canonical entities
-- Wiki projection and relationship-driven navigation
-- Internal linking discipline enforced by validation rules
-
-Exit criteria:
-- Canonical knowledge graph growing steadily
-- No orphan pages; relationships intentional and project-scoped
+Status: ⏳ future
 
 ---
 
 ## Phase 6 — Experiments Layer
 
-Objective: publish structured experiments without destabilizing canonical education.
-
-Scope:
-- Experiments entity type (or modeled as Projects with a strict template)
-- Versioned experiment logs
-- Cross-links into Concepts/Guides/Projects
-
-Exit criteria:
-- Repeatable experiment format
-- Clear separation of experimental claims vs canonical knowledge
+Status: ⏳ future
 
 ---
 
@@ -202,6 +130,7 @@ Preconditions:
 - Mature entity graph
 - Consistent evidence ingestion
 - Stable audit and apply flows
+- SIL-1 observation ledger operational
 
 Constraints:
 - Retrieval assists drafting and audit; it does not bypass human approval.
@@ -221,39 +150,25 @@ Constraints:
 
 ---
 
-## Current Status Snapshot (Update as work completes)
+## Current Status Snapshot
 
 - Multi-project hardening: ✅ done
-- Phase 0 (AI News + Manual SEO): 🟡 in progress
-  - Core endpoints (entities, source-items, draft-artifacts, quotable-blocks, search-performance ingest): ✅ implemented + hammer-verified
-  - SEO W4–W7 endpoints (keyword-research, serp-snapshot, content-brief, ai-keyword-volume): ❌ not implemented — spec exists, code does not
-  - verify-freshness: ❌ not implemented
+- Phase 0 (AI News + Manual SEO): 🟡 active
+  - Core endpoints: ✅ implemented + hammer-verified
+  - Zod validation hardening (Phases 1–5): ✅ complete
+- SIL-1 (Observation Ledger): 🟡 next — spec finalized, no schema migration yet
 - Phase 1 (VS Code + MCP read-only): ✅ done
 - Phase 2 (DraftArtifact lifecycle + BYDA-S S0): ✅ done
-- Phase 2 Extension (X Capture + Draft Reply): ✅ implemented + hammer-verified
-- BYDA-S S0 pipeline: ⏳ next
+- Phase 3+: ⏳ not started
 
-### Validation Hardening (Cross-Phase)
+### Hammer Status
 
-- Zod v4 installed (`zod@4.3.6`)
-- Zod schema pattern established and applied across core write surfaces (Phases 1–5 complete):
-  - ✅ `POST /api/entities` — `CreateEntitySchema` (`src/lib/schemas/entity.ts`)
-  - ✅ `POST /api/source-items/capture` — `CaptureSourceItemSchema` (`src/lib/schemas/source-item.ts`)
-  - ✅ `PUT /api/source-items/[id]/status` — `UpdateSourceItemStatusSchema` (`src/lib/schemas/source-item-status.ts`)
-  - ✅ `POST /api/relationships` — `CreateRelationshipSchema` (`src/lib/schemas/relationship.ts`)
-  - ✅ `POST /api/draft-artifacts` — `CreateDraftArtifactSchema` (`src/lib/schemas/draft-artifact.ts`)
-  - ✅ `POST /api/audits/run` — `RunAuditSchema` (`src/lib/schemas/audit.ts`)
-  - ✅ `POST /api/source-items/[id]/draft-replies` — `CreateDraftReplySchema` (`src/lib/schemas/draft-reply.ts`)
-  - ✅ `POST /api/seo/search-performance/ingest` — `SearchPerformanceIngestSchema` (`src/lib/schemas/search-performance.ts`)
-  - ✅ `POST /api/quotable-blocks` — `CreateQuotableBlockSchema` (`src/lib/schemas/quotable-block.ts`)
-- JSON parse guards (malformed body → 400) added to: `POST /api/entities`, `POST /api/source-items/capture`, `PUT /api/source-items/[id]/status`
-- `POST /api/relationships` returns 201 (was 200, corrected to HTTP-correct resource creation status)
-- Extended hammer (`scripts/api-hammer.extended.ps1`) tracked in repo (non-CI): 77 PASS, 23 FAIL, 2 SKIP
-  - 19 FAILs are unimplemented SEO W4–W7 + verify-freshness endpoints (expected)
-  - 4 FAILs were fixed (3 JSON guards + 1 relationship 201)
 - Core hammer: 48 PASS, 0 FAIL, 2 SKIP
+- Extended hammer: 77 PASS, 23 FAIL, 2 SKIP
+  - Remaining FAILs correspond to unimplemented SEO W4–W7 endpoints
+  - These endpoints are now formally superseded by SIL-1 scope
 
-### Search Intelligence Layer (SIL)
+---
 
-- SIL defined in `docs/specs/SEARCH-INTELLIGENCE-LAYER.md` (SIL-0: documentation + roadmap alignment only)
-- SIL-1 (observation ledger) planned next; no schema changes implemented yet
+**Roadmap authority note:**
+SIL-1 schema work is authorized. No additional SEO endpoint implementation occurs outside the SIL-1 specification.
