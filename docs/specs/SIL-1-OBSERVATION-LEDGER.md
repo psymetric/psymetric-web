@@ -62,16 +62,32 @@ SIL-1 observation records are append-only.
 - Corrections or re-runs create new observations.
 - Unwanted data is handled via operational suppression (future) or batch invalidation (future).
 
-### 3.2 Bitemporal Timestamps
+**Important:** `KeywordTarget` is **not** an observation row. It is a governance/config record and may be updated (e.g. `isPrimary`, `intent`, `notes`). Observation immutability applies to `SERPSnapshot`.
+
+### 3.2 Query Normalization (Required)
+
+`query` must be normalized at the API boundary for both `KeywordTarget` and `SERPSnapshot` writes.
+
+Minimum normalization rule (binding for SIL-1):
+
+- Trim leading/trailing whitespace
+- Collapse internal whitespace to single spaces
+- Lowercase
+
+This prevents silent fragmentation ("Best CRM" vs "best crm") and ensures soft-joins remain reliable.
+
+### 3.3 Bitemporal Timestamps
 
 SERP observations must capture two time semantics:
 
 - `capturedAt`: when PsyMetric captured the observation.
 - `validAt`: the timestamp the provider asserts the data is valid for.
 
+**Fallback rule (binding for SIL-1):** if the provider does not supply `validAt`, set `validAt = capturedAt`.
+
 This prevents replay confusion and enables accurate delta detection when ingest is delayed.
 
-### 3.3 Loose Coupling Between Targets and Observations
+### 3.4 Loose Coupling Between Targets and Observations
 
 SERP observations should not require an FK to `KeywordTarget`.
 
@@ -91,7 +107,7 @@ Purpose: define “we care about this keyword in this locale/device.”
 
 **Required fields**
 - `projectId`
-- `query`
+- `query` (normalized)
 - `locale` (e.g. `en-US`)
 - `device` (e.g. `desktop` | `mobile`)
 
@@ -111,7 +127,7 @@ Purpose: immutable record of a SERP observation.
 
 **Required fields**
 - `projectId`
-- `query`
+- `query` (normalized)
 - `locale`
 - `device`
 - `capturedAt`
@@ -121,29 +137,31 @@ Purpose: immutable record of a SERP observation.
 
 **Optional fields**
 - `batchRef` (string grouping identifier; does not require a separate table in SIL-1)
-- `aiOverviewPresent` (boolean, default false)
+- `payloadSchemaVersion` (provider payload format identifier)
+- `aiOverviewStatus` (tri-state)
 - `aiOverviewText` (nullable)
 
 **Constraints**
-- Uniqueness: `(projectId, query, locale, device, capturedAt)`.
+- Uniqueness: `(projectId, query, locale, device, capturedAt, source)`.
 
 Notes:
 - `rawPayload` stores provider-specific JSON for replay and future extraction.
-- `aiOverviewPresent/Text` are convenience fields for early filtering; richer extraction is deferred.
+- `payloadSchemaVersion` enables future extraction code to branch safely as provider schemas evolve.
+- `aiOverviewStatus` distinguishes confirmed absence from parse failure.
 
 ---
 
 ## 5. Proposed Prisma Schema (Draft)
 
-> This is the intended shape; final field types should match existing project conventions.
+> This is the intended shape; final field types must match existing project conventions (UUID ids, `@db.Uuid` projectId).
 
 ### 5.1 KeywordTarget
 
 ```prisma
 model KeywordTarget {
-  id         String   @id @default(cuid())
+  id         String   @id @default(uuid()) @db.Uuid
 
-  projectId  String
+  projectId  String   @db.Uuid
   project    Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
   query      String
@@ -156,6 +174,7 @@ model KeywordTarget {
   notes      String?
 
   createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@unique([projectId, query, locale, device])
   @@index([projectId])
@@ -166,30 +185,36 @@ model KeywordTarget {
 
 ```prisma
 model SERPSnapshot {
-  id               String   @id @default(cuid())
+  id                 String   @id @default(uuid()) @db.Uuid
 
-  projectId        String
-  project          Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  projectId          String   @db.Uuid
+  project            Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
-  query            String
-  locale           String
-  device           String
+  query              String
+  locale             String
+  device             String
 
-  capturedAt       DateTime
-  validAt          DateTime
+  capturedAt         DateTime
+  validAt            DateTime
 
-  rawPayload       Json
+  rawPayload         Json
 
-  aiOverviewPresent Boolean @default(false)
-  aiOverviewText    String?
+  // Provider payload format identifier (e.g. "dataforseo_serp_v3").
+  payloadSchemaVersion String?
 
-  source           String
-  batchRef         String?
+  // Tri-state: "present" | "absent" | "parse_error"
+  aiOverviewStatus    String  @default("absent")
+  aiOverviewText      String?
 
-  createdAt        DateTime @default(now())
+  source             String
+  batchRef           String?
 
-  @@unique([projectId, query, locale, device, capturedAt])
+  createdAt          DateTime @default(now())
+
+  @@unique([projectId, query, locale, device, capturedAt, source])
   @@index([projectId])
+  // Primary access path: all snapshots for a keyword within a project over time.
+  @@index([projectId, query, locale, device, capturedAt])
 }
 ```
 
@@ -207,6 +232,13 @@ Rules:
 - Recording a `SERPSnapshot` emits `SERP_SNAPSHOT_RECORDED` in the same transaction.
 
 No other SIL events are in scope for SIL-1.
+
+**Blocking requirement:** because `EventLog.entityType` is an enum, SIL-1 also requires adding corresponding `EntityType` enum values (tentative):
+
+- `keywordTarget`
+- `serpSnapshot`
+
+Without these, SIL-1 cannot satisfy the event logging invariant.
 
 ---
 
@@ -259,17 +291,17 @@ Not included in SIL-1:
    - Do we enforce a strict enum for device (`desktop` | `mobile`) at schema level?
    - Do we enforce locale format validation at API boundary only?
 
-2. **`validAt` semantics:**
-   - How does DataForSEO represent SERP validity time? Is it always available?
-   - If missing, do we set `validAt = capturedAt`?
+2. **`capturedAt` ownership:**
+   - Is `capturedAt` always server-assigned at ingest time?
+   - If backfilling is required, do we allow client-supplied `capturedAt` only for trusted operator tooling?
 
 3. **Raw payload size:**
    - Confirm typical DataForSEO snapshot size.
    - Ensure Postgres JSON storage is acceptable.
 
 4. **Indexing:**
-   - Should we add `@@index([projectId, query, locale, device, capturedAt])` for retrieval patterns?
-   - Defer until query patterns are proven.
+   - The compound index `@@index([projectId, query, locale, device, capturedAt])` is included because it matches the primary read path.
+   - Additional indexes (e.g. on `aiOverviewStatus`) should be deferred until query patterns are proven.
 
 ---
 
