@@ -236,14 +236,24 @@ Constraints:
 ### Validation Hardening (Cross-Phase)
 
 - Zod v4 installed (`zod@4.3.6`)
-- Zod schema pattern established and applied to:
+- Zod schema pattern established and applied across core write surfaces (Phases 1–5 complete):
   - ✅ `POST /api/entities` — `CreateEntitySchema` (`src/lib/schemas/entity.ts`)
   - ✅ `POST /api/source-items/capture` — `CaptureSourceItemSchema` (`src/lib/schemas/source-item.ts`)
   - ✅ `PUT /api/source-items/[id]/status` — `UpdateSourceItemStatusSchema` (`src/lib/schemas/source-item-status.ts`)
   - ✅ `POST /api/relationships` — `CreateRelationshipSchema` (`src/lib/schemas/relationship.ts`)
+  - ✅ `POST /api/draft-artifacts` — `CreateDraftArtifactSchema` (`src/lib/schemas/draft-artifact.ts`)
+  - ✅ `POST /api/audits/run` — `RunAuditSchema` (`src/lib/schemas/audit.ts`)
+  - ✅ `POST /api/source-items/[id]/draft-replies` — `CreateDraftReplySchema` (`src/lib/schemas/draft-reply.ts`)
+  - ✅ `POST /api/seo/search-performance/ingest` — `SearchPerformanceIngestSchema` (`src/lib/schemas/search-performance.ts`)
+  - ✅ `POST /api/quotable-blocks` — `CreateQuotableBlockSchema` (`src/lib/schemas/quotable-block.ts`)
 - JSON parse guards (malformed body → 400) added to: `POST /api/entities`, `POST /api/source-items/capture`, `PUT /api/source-items/[id]/status`
 - `POST /api/relationships` returns 201 (was 200, corrected to HTTP-correct resource creation status)
 - Extended hammer (`scripts/api-hammer.extended.ps1`) tracked in repo (non-CI): 77 PASS, 23 FAIL, 2 SKIP
   - 19 FAILs are unimplemented SEO W4–W7 + verify-freshness endpoints (expected)
   - 4 FAILs were fixed (3 JSON guards + 1 relationship 201)
 - Core hammer: 48 PASS, 0 FAIL, 2 SKIP
+
+### Search Intelligence Layer (SIL)
+
+- SIL defined in `docs/specs/SEARCH-INTELLIGENCE-LAYER.md` (SIL-0: documentation + roadmap alignment only)
+- SIL-1 (observation ledger) planned next; no schema changes implemented yet
