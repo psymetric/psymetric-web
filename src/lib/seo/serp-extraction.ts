@@ -7,6 +7,7 @@
  * Consumers:
  *   - src/app/api/seo/serp-deltas/route.ts
  *   - src/app/api/seo/keyword-targets/[id]/serp-history/route.ts
+ *   - src/app/api/seo/keyword-targets/[id]/feature-transitions/route.ts (SIL-8 A3)
  *
  * Rules:
  *   - Pure functions. No DB access. No side effects.
@@ -56,6 +57,70 @@ function sortResults(results: ExtractedResult[]): ExtractedResult[] {
     if (a.rank !== b.rank) return a.rank - b.rank;
     return a.url.localeCompare(b.url);
   });
+}
+
+// =============================================================================
+// extractFeatureSortedArray -- SIL-8 A3
+// =============================================================================
+
+/**
+ * Extract SERP feature type strings from a rawPayload and return them as a
+ * sorted array for deterministic key construction (SIL-8 A3 feature transitions).
+ *
+ * Strategy 1 -- DataForSEO items array (primary):
+ *   All items where item.type is a non-empty string and !== "organic".
+ *
+ * Strategy 2 -- Simple / test payloads:
+ *   Top-level payload.features[] -- string entries or objects with .type.
+ *
+ * Returns: string[] sorted lexicographically ascending. Empty array when no
+ *   features are present or payload is unrecognized.
+ *
+ * Invariant: same rawPayload always produces the same array (deterministic).
+ * The separator character U+2192 (right arrow) used in transitionKey is
+ * guaranteed not to appear in DataForSEO feature type strings.
+ */
+export function extractFeatureSortedArray(rawPayload: unknown): string[] {
+  if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) {
+    return [];
+  }
+  const p = rawPayload as Record<string, unknown>;
+  const types = new Set<string>();
+
+  if (Array.isArray(p.items)) {
+    for (const item of p.items) {
+      if (
+        item !== null &&
+        typeof item === "object" &&
+        !Array.isArray(item) &&
+        typeof (item as Record<string, unknown>).type === "string" &&
+        (item as Record<string, unknown>).type !== "organic"
+      ) {
+        const t = (item as Record<string, unknown>).type as string;
+        if (t.length > 0) types.add(t);
+      }
+    }
+    return Array.from(types).sort();
+  }
+
+  if (Array.isArray(p.features)) {
+    for (const f of p.features) {
+      if (typeof f === "string" && f.length > 0) {
+        types.add(f);
+      } else if (
+        f !== null &&
+        typeof f === "object" &&
+        !Array.isArray(f) &&
+        typeof (f as Record<string, unknown>).type === "string"
+      ) {
+        const t = (f as Record<string, unknown>).type as string;
+        if (t.length > 0) types.add(t);
+      }
+    }
+    return Array.from(types).sort();
+  }
+
+  return [];
 }
 
 // =============================================================================
