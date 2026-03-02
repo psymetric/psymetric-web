@@ -103,7 +103,7 @@ interface SuppressionOpts {
 }
 
 // =============================================================================
-// Severity rank
+// Severity scoring — SIL-9.3 magnitude-aware, integer [0, 100]
 // =============================================================================
 
 const REGIME_TO_INT: Record<VolatilityRegime, number> = {
@@ -113,14 +113,58 @@ const REGIME_TO_INT: Record<VolatilityRegime, number> = {
   chaotic:  3,
 };
 
-function t1SeverityRank(fromRegime: VolatilityRegime, toRegime: VolatilityRegime): number {
-  const from = REGIME_TO_INT[fromRegime];
-  const to   = REGIME_TO_INT[toRegime];
-  if (from >= to) return 1; // recovery
-  const jump = to - from;
-  if (to === 3) return jump >= 2 ? 5 : 4;
-  if (to === 2) return jump === 2 ? 4 : 3;
-  return 2;
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * T1 severity — regime-direction base + pair-score magnitude.
+ *
+ * direction = toOrder - fromOrder  (negative = recovery)
+ * base      = 50 + direction * 20
+ * magnitude = clamp(round(|lastPairScore - previousPairScore|), 0, 50)
+ * result    = clamp(base + magnitude, 0, 100)
+ */
+function computeT1SeverityRank(
+  fromRegime:        VolatilityRegime,
+  toRegime:          VolatilityRegime,
+  lastPairScore:     number,
+  previousPairScore: number | null,
+): number {
+  const direction = REGIME_TO_INT[toRegime] - REGIME_TO_INT[fromRegime];
+  const base      = 50 + direction * 20;
+  const magnitude = previousPairScore !== null
+    ? clamp(Math.round(Math.abs(lastPairScore - previousPairScore)), 0, 50)
+    : 0;
+  return clamp(base + magnitude, 0, 100);
+}
+
+/**
+ * T2 severity — exceedance above spike threshold.
+ *
+ * exceed = pairVolatilityScore - spikeThreshold
+ * result = clamp(round(60 + exceed * 2), 0, 100)
+ */
+function computeT2SeverityRank(
+  pairVolatilityScore: number,
+  spikeThreshold:      number,
+): number {
+  const exceed = pairVolatilityScore - spikeThreshold;
+  return clamp(Math.round(60 + exceed * 2), 0, 100);
+}
+
+/**
+ * T3 severity — concentration ratio exceedance.
+ *
+ * exceed = ratio - threshold
+ * result = clamp(round(70 + exceed * 200), 0, 100)
+ */
+function computeT3SeverityRank(
+  volatilityConcentrationRatio: number,
+  concentrationThreshold:       number,
+): number {
+  const exceed = volatilityConcentrationRatio - concentrationThreshold;
+  return clamp(Math.round(70 + exceed * 200), 0, 100);
 }
 
 // =============================================================================
@@ -855,7 +899,12 @@ export async function GET(request: NextRequest) {
             fromCapturedAt:      lastPair.fromCapturedAt.toISOString(),
             toCapturedAt:        lastPair.toCapturedAt.toISOString(),
             pairVolatilityScore: lastPair.pairVolatilityScore,
-            _severityRank:       t1SeverityRank(fromRegime, toRegime),
+            _severityRank:       computeT1SeverityRank(
+                                   fromRegime,
+                                   toRegime,
+                                   lastPair.pairVolatilityScore,
+                                   prevPair.pairVolatilityScore,
+                                 ),
             _toCapturedAtMs:     lastPair.toCapturedAt.getTime(),
             _toSnapshotId:       lastPair.toSnapshotId,
             _keywordTargetId:    target.id,
@@ -881,7 +930,7 @@ export async function GET(request: NextRequest) {
               pairVolatilityScore: pair.pairVolatilityScore,
               threshold:           spikeThreshold,
               exceedanceMargin,
-              _severityRank:       6,
+              _severityRank:       computeT2SeverityRank(pair.pairVolatilityScore, spikeThreshold),
               _toCapturedAtMs:     pair.toCapturedAt.getTime(),
               _toSnapshotId:       pair.toSnapshotId,
               _keywordTargetId:    target.id,
@@ -916,7 +965,7 @@ export async function GET(request: NextRequest) {
             volatilityRegime: classifyRegime(r.volatilityScore),
           })),
           activeKeywordCount,
-          _severityRank:                7,
+          _severityRank:                computeT3SeverityRank(volatilityConcentrationRatio, concentrationThreshold),
           _toCapturedAtMs:              latestCapturedAtMs,
           _toSnapshotId:                null,
           _keywordTargetId:             null,
