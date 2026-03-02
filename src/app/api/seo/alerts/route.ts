@@ -1,7 +1,8 @@
 /**
  * GET /api/seo/alerts — SIL-9 Option A: Compute-on-Read Alert Surface (MVP T1–T3)
  *
- * SIL-9.1 additions: alert filtering + deterministic keyset pagination.
+ * SIL-9.1: alert filtering + deterministic keyset pagination.
+ * SIL-9.2: deterministic suppression rules (spam control, pre-pagination).
  *
  * Returns deterministic alert records derived from snapshot history.
  * No writes. No EventLog. No schema changes. No background jobs.
@@ -9,15 +10,8 @@
  *
  * Trigger types:
  *   T1 — Volatility Regime Transition
- *         Emitted when the regime of the most recent consecutive pair differs
- *         from the regime of the immediately preceding pair (per keyword).
- *         Requires >= 3 snapshots in window (>= 2 pairs).
  *   T2 — Spike Threshold Exceedance
- *         Emitted for every pair whose pairVolatilityScore > spikeThreshold.
- *         Deduped within response by (keywordTargetId, toSnapshotId, threshold).
  *   T3 — Risk Concentration Exceedance
- *         Emitted at most once per request when volatilityConcentrationRatio
- *         (B2 formula) > concentrationThreshold and is non-null.
  *
  * Query params:
  *   windowDays             required  integer 1–30
@@ -26,14 +20,19 @@
  *   limit                  optional  integer 1–200, default 100
  *   cursor                 optional  opaque base64url string (keyset pagination)
  *
- * SIL-9.1 filter params (all optional, all validated before any DB work):
+ * SIL-9.1 filter params (optional, validated before any DB work):
  *   triggerTypes           comma-separated subset of T1,T2,T3
- *                          If absent → all types returned.
- *                          If keywordTargetId present → T3 automatically excluded.
- *   keywordTargetId        UUID — filters to alerts for a single keyword;
- *                          T3 (project-scope) is excluded when this is present.
- *   minSeverityRank        integer 0–999 — excludes alerts with severityRank below this.
- *   minPairVolatilityScore float 0–100 — only applied to T2 alerts; T1/T3 unaffected.
+ *   keywordTargetId        UUID — filters to single keyword; excludes T3
+ *   minSeverityRank        integer 0–999
+ *   minPairVolatilityScore float 0–100 (T2 only)
+ *
+ * SIL-9.2 suppression params (optional, validated before any DB work):
+ *   suppressionMode        "none" | "default"         default: "default"
+ *   t2Mode                 "all" | "maxPerKeyword"     default: "maxPerKeyword" when suppressionMode=default
+ *   t1Mode                 "all" | "latestPerKeyword" | "upwardOnlyLatest"  default: "latestPerKeyword"
+ *   t3Mode                 "all" | "deltaOnly"         default: "all"
+ *
+ * Suppression runs after filter+sort, before cursor. Pure function; no DB calls inside.
  *
  * Deterministic ordering (unchanged from SIL-9):
  *   1. severityRank DESC
@@ -42,11 +41,7 @@
  *   4. keywordTargetId ASC (nulls last)
  *   5. toSnapshotId DESC  (nulls last)
  *
- * Keyset cursor encodes all five sort key fields as base64url JSON.
- * isAfterCursor() mirrors compareAlerts() exactly.
- *
  * Isolation: resolveProjectId(request) — headers only.
- *   /alerts is a project-scope endpoint; no :id in path; all data scoped to resolved projectId.
  */
 
 import { NextRequest } from "next/server";
@@ -82,6 +77,9 @@ const LIMIT_MAX     = 200;
 const MIN_SEVERITY_RANK_MIN = 0;
 const MIN_SEVERITY_RANK_MAX = 999;
 
+// T3 deltaOnly: minimum ratio increase required to fire
+const T3_DELTA_ONLY_MIN_DELTA = 0.05;
+
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -89,11 +87,23 @@ const VALID_TRIGGER_TYPES = new Set(["T1", "T2", "T3"] as const);
 type TriggerTypeToken = "T1" | "T2" | "T3";
 
 // =============================================================================
-// Severity rank — derived from trigger type + regime transition direction.
-// Higher rank = higher severity. Never stored; always derived at sort time.
-// T3 risk concentration = 7 (project-wide, high operational urgency).
-// T2 spike = 6 (single-pair event, chaotic boundary).
-// T1 regime transitions ranked by severity per SIL-9 spec advisory map.
+// Suppression param types
+// =============================================================================
+
+type SuppressionMode  = "none" | "default";
+type T1Mode           = "all" | "latestPerKeyword" | "upwardOnlyLatest";
+type T2Mode           = "all" | "maxPerKeyword";
+type T3Mode           = "all" | "deltaOnly";
+
+interface SuppressionOpts {
+  suppressionMode: SuppressionMode;
+  t1Mode:          T1Mode;
+  t2Mode:          T2Mode;
+  t3Mode:          T3Mode;
+}
+
+// =============================================================================
+// Severity rank
 // =============================================================================
 
 const REGIME_TO_INT: Record<VolatilityRegime, number> = {
@@ -106,22 +116,10 @@ const REGIME_TO_INT: Record<VolatilityRegime, number> = {
 function t1SeverityRank(fromRegime: VolatilityRegime, toRegime: VolatilityRegime): number {
   const from = REGIME_TO_INT[fromRegime];
   const to   = REGIME_TO_INT[toRegime];
-
-  if (from >= to) {
-    // Recovery / no escalation — info level → rank 1
-    return 1;
-  }
-  // Escalation: rank by destination regime and jump distance
+  if (from >= to) return 1; // recovery
   const jump = to - from;
-  if (to === 3) {
-    // → chaotic: calm→chaotic or shifting→chaotic = 5, unstable→chaotic = 4
-    return jump >= 2 ? 5 : 4;
-  }
-  if (to === 2) {
-    // → unstable: calm→unstable = 4, shifting→unstable = 3
-    return jump === 2 ? 4 : 3;
-  }
-  // → shifting (calm→shifting) = 2
+  if (to === 3) return jump >= 2 ? 5 : 4;
+  if (to === 2) return jump === 2 ? 4 : 3;
   return 2;
 }
 
@@ -137,10 +135,9 @@ interface T1Alert {
   toRegime:            VolatilityRegime;
   fromSnapshotId:      string;
   toSnapshotId:        string;
-  fromCapturedAt:      string; // ISO
-  toCapturedAt:        string; // ISO
+  fromCapturedAt:      string;
+  toCapturedAt:        string;
   pairVolatilityScore: number;
-  // sort-assist fields (stripped before emission)
   _severityRank:       number;
   _toCapturedAtMs:     number;
   _toSnapshotId:       string;
@@ -153,12 +150,11 @@ interface T2Alert {
   query:               string;
   fromSnapshotId:      string;
   toSnapshotId:        string;
-  fromCapturedAt:      string; // ISO
-  toCapturedAt:        string; // ISO
+  fromCapturedAt:      string;
+  toCapturedAt:        string;
   pairVolatilityScore: number;
   threshold:           number;
   exceedanceMargin:    number;
-  // sort-assist
   _severityRank:       number;
   _toCapturedAtMs:     number;
   _toSnapshotId:       string;
@@ -176,17 +172,15 @@ interface T3Alert {
     volatilityScore:  number;
     volatilityRegime: VolatilityRegime;
   }>;
-  activeKeywordCount: number;
-  // sort-assist (latestCapturedAt in window, used as toCapturedAt equivalent)
-  _severityRank:     number;
-  _toCapturedAtMs:   number;
-  _toSnapshotId:     null;
-  _keywordTargetId:  null;
+  activeKeywordCount:  number;
+  _severityRank:       number;
+  _toCapturedAtMs:     number;
+  _toSnapshotId:       null;
+  _keywordTargetId:    null;
 }
 
 type AnyAlert = T1Alert | T2Alert | T3Alert;
 
-// Emitted shapes (sort-assist fields stripped)
 type T1Emitted    = Omit<T1Alert, "_severityRank" | "_toCapturedAtMs" | "_toSnapshotId" | "_keywordTargetId">;
 type T2Emitted    = Omit<T2Alert, "_severityRank" | "_toCapturedAtMs" | "_toSnapshotId" | "_keywordTargetId">;
 type T3Emitted    = Omit<T3Alert, "_severityRank" | "_toCapturedAtMs" | "_toSnapshotId" | "_keywordTargetId">;
@@ -194,16 +188,6 @@ type AlertEmitted = T1Emitted | T2Emitted | T3Emitted;
 
 // =============================================================================
 // Cursor
-//
-// Payload fields (abbreviated keys for compactness):
-//   s  — severityRank (number)
-//   t  — toCapturedAtMs (number, unix ms)
-//   tt — triggerType ("T1" | "T2" | "T3")
-//   k  — keywordTargetId (string | null)
-//   sn — toSnapshotId (string | null)
-//
-// Encoded as base64url(JSON.stringify(payload)).
-// Decoded payload is validated before use; malformed → 400.
 // =============================================================================
 
 interface CursorPayload {
@@ -225,9 +209,7 @@ function encodeCursor(alert: AnyAlert): string {
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
-function decodeCursor(
-  raw: string
-): { payload: CursorPayload } | { error: string } {
+function decodeCursor(raw: string): { payload: CursorPayload } | { error: string } {
   try {
     const json = Buffer.from(raw, "base64url").toString("utf8");
     const p = JSON.parse(json) as Record<string, unknown>;
@@ -256,29 +238,18 @@ function decodeCursor(
 }
 
 // =============================================================================
-// Deterministic sort comparator
-//
-// Order (per SIL-9 spec — unchanged in SIL-9.1):
-//   1. severityRank DESC
-//   2. toCapturedAt DESC
-//   3. triggerType ASC
-//   4. keywordTargetId ASC (nulls last)
-//   5. toSnapshotId DESC (nulls last)
+// Deterministic sort comparator (unchanged from SIL-9)
 // =============================================================================
 
 function compareAlerts(a: AnyAlert, b: AnyAlert): number {
-  // 1. severityRank DESC
   if (b._severityRank !== a._severityRank) return b._severityRank - a._severityRank;
-  // 2. toCapturedAt DESC
   if (b._toCapturedAtMs !== a._toCapturedAtMs) return b._toCapturedAtMs - a._toCapturedAtMs;
-  // 3. triggerType ASC
   if (a.triggerType < b.triggerType) return -1;
   if (a.triggerType > b.triggerType) return 1;
-  // 4. keywordTargetId ASC (nulls last)
   const aKtId = a._keywordTargetId;
   const bKtId = b._keywordTargetId;
   if (aKtId === null && bKtId === null) {
-    // both null — proceed to next key
+    // fall through
   } else if (aKtId === null) {
     return 1;
   } else if (bKtId === null) {
@@ -287,7 +258,6 @@ function compareAlerts(a: AnyAlert, b: AnyAlert): number {
     const cmp = aKtId.localeCompare(bKtId);
     if (cmp !== 0) return cmp;
   }
-  // 5. toSnapshotId DESC (nulls last)
   const aSnId = a._toSnapshotId;
   const bSnId = b._toSnapshotId;
   if (aSnId === null && bSnId === null) return 0;
@@ -299,56 +269,160 @@ function compareAlerts(a: AnyAlert, b: AnyAlert): number {
 }
 
 // =============================================================================
-// isAfterCursor — returns true when alert comes strictly AFTER cursor position
-// in the total ordering defined by compareAlerts.
-//
-// This mirrors compareAlerts key-by-key. "After" in DESC fields means smaller
-// value; "after" in ASC fields means larger value. Nulls-last rules preserved.
-//
-// CRITICAL: must stay in sync with compareAlerts. If the sort order changes,
-// this function must change too.
+// isAfterCursor (unchanged from SIL-9.1)
 // =============================================================================
 
 function isAfterCursor(alert: AnyAlert, cur: CursorPayload): boolean {
-  // 1. severityRank DESC — after means alert.s < cur.s
   if (alert._severityRank !== cur.s) return alert._severityRank < cur.s;
-
-  // 2. toCapturedAt DESC — after means alert.t < cur.t
   if (alert._toCapturedAtMs !== cur.t) return alert._toCapturedAtMs < cur.t;
-
-  // 3. triggerType ASC — after means alert.tt > cur.tt
   if (alert.triggerType !== cur.tt) return alert.triggerType > cur.tt;
-
-  // 4. keywordTargetId ASC (nulls last)
   const ak = alert._keywordTargetId;
   const ck = cur.k;
   if (ak !== ck) {
-    if (ak === null) return true;   // null is last → alert comes after non-null cursor
-    if (ck === null) return false;  // alert is non-null, cursor is null → alert comes before
+    if (ak === null) return true;
+    if (ck === null) return false;
     return ak.localeCompare(ck) > 0;
   }
-
-  // 5. toSnapshotId DESC (nulls last)
   const asn = alert._toSnapshotId;
   const csn = cur.sn;
   if (asn !== csn) {
-    if (asn === null) return true;  // null is last → after
+    if (asn === null) return true;
     if (csn === null) return false;
-    return asn < csn; // DESC — after means smaller string
+    return asn < csn;
   }
-
-  // Exact match on all keys — not strictly after
   return false;
 }
 
 // =============================================================================
-// Strip sort-assist fields before returning to client
+// Strip sort-assist fields
 // =============================================================================
 
 function stripSortFields(alert: AnyAlert): AlertEmitted {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { _severityRank, _toCapturedAtMs, _toSnapshotId, _keywordTargetId, ...emitted } = alert;
   return emitted as AlertEmitted;
+}
+
+// =============================================================================
+// suppressAlerts — pure function, no DB calls.
+//
+// Pipeline:
+//   T2 suppression → T1 suppression → T3 suppression (per-type, order irrelevant)
+//
+// Suppression is a subset operation: survivors retain their relative sort order
+// from the input array (which is already sorted by compareAlerts).
+// No re-sort required — the filtered output is still correctly ordered.
+//
+// T3 deltaOnly suppression uses priorWindowConcentrationRatio passed in from
+// the route's data-loading phase. If null, deltaOnly suppresses T3 (no prior
+// window data → cannot confirm delta ≥ threshold).
+// =============================================================================
+
+interface SuppressionContext {
+  opts:                         SuppressionOpts;
+  // For t3Mode=deltaOnly: ratio from the prior window (null if unavailable)
+  priorWindowConcentrationRatio: number | null;
+}
+
+function suppressAlerts(alerts: AnyAlert[], ctx: SuppressionContext): AnyAlert[] {
+  const { opts, priorWindowConcentrationRatio } = ctx;
+
+  // suppressionMode=none: bypass all suppression
+  if (opts.suppressionMode === "none") return alerts;
+
+  let result = alerts;
+
+  // ── T2 suppression ──────────────────────────────────────────────────────────
+  if (opts.t2Mode === "maxPerKeyword") {
+    // For each keywordTargetId, keep only the T2 alert with the highest
+    // pairVolatilityScore. Tie-break: toCapturedAt DESC, toSnapshotId DESC.
+    // Non-T2 alerts pass through untouched.
+    const t2Best = new Map<string, T2Alert>();
+
+    for (const alert of result) {
+      if (alert.triggerType !== "T2") continue;
+      const a   = alert as T2Alert;
+      const key = a._keywordTargetId;
+      const existing = t2Best.get(key);
+      if (!existing) {
+        t2Best.set(key, a);
+        continue;
+      }
+      // Compare: prefer higher pairVolatilityScore
+      if (a.pairVolatilityScore > existing.pairVolatilityScore) {
+        t2Best.set(key, a);
+      } else if (a.pairVolatilityScore === existing.pairVolatilityScore) {
+        // tie-break: toCapturedAt DESC (higher ms wins)
+        if (a._toCapturedAtMs > existing._toCapturedAtMs) {
+          t2Best.set(key, a);
+        } else if (a._toCapturedAtMs === existing._toCapturedAtMs) {
+          // final tie-break: toSnapshotId DESC (lexicographically larger wins)
+          if (a._toSnapshotId > existing._toSnapshotId) {
+            t2Best.set(key, a);
+          }
+        }
+      }
+    }
+
+    // Rebuild result: keep non-T2 alerts and the best T2 per keyword.
+    // Preserve relative order of the input (stable — iterate in input order).
+    const t2BestSet = new Set(t2Best.values());
+    result = result.filter(
+      (alert) => alert.triggerType !== "T2" || t2BestSet.has(alert as T2Alert)
+    );
+  }
+
+  // ── T1 suppression ──────────────────────────────────────────────────────────
+  if (opts.t1Mode === "latestPerKeyword" || opts.t1Mode === "upwardOnlyLatest") {
+    // Step 1 (upwardOnlyLatest only): filter T1 to upward transitions.
+    // Upward = REGIME_TO_INT[toRegime] > REGIME_TO_INT[fromRegime].
+    let t1Candidates = result.filter((a) => a.triggerType === "T1") as T1Alert[];
+
+    if (opts.t1Mode === "upwardOnlyLatest") {
+      t1Candidates = t1Candidates.filter(
+        (a) => REGIME_TO_INT[a.toRegime] > REGIME_TO_INT[a.fromRegime]
+      );
+    }
+
+    // Step 2: for each keywordTargetId, keep the T1 with latest toCapturedAt.
+    // Tie-break: toSnapshotId DESC.
+    const t1Best = new Map<string, T1Alert>();
+    for (const a of t1Candidates) {
+      const key      = a._keywordTargetId;
+      const existing = t1Best.get(key);
+      if (!existing) {
+        t1Best.set(key, a);
+        continue;
+      }
+      if (a._toCapturedAtMs > existing._toCapturedAtMs) {
+        t1Best.set(key, a);
+      } else if (a._toCapturedAtMs === existing._toCapturedAtMs) {
+        if (a._toSnapshotId > existing._toSnapshotId) {
+          t1Best.set(key, a);
+        }
+      }
+    }
+
+    const t1BestSet = new Set(t1Best.values());
+    result = result.filter(
+      (alert) => alert.triggerType !== "T1" || t1BestSet.has(alert as T1Alert)
+    );
+  }
+
+  // ── T3 suppression ──────────────────────────────────────────────────────────
+  if (opts.t3Mode === "deltaOnly") {
+    // Keep T3 only if currentRatio - priorRatio >= T3_DELTA_ONLY_MIN_DELTA.
+    // If priorWindowConcentrationRatio is null (no prior window data), suppress T3.
+    result = result.filter((alert) => {
+      if (alert.triggerType !== "T3") return true;
+      const t3 = alert as T3Alert;
+      if (priorWindowConcentrationRatio === null) return false;
+      const delta = t3.volatilityConcentrationRatio - priorWindowConcentrationRatio;
+      return delta >= T3_DELTA_ONLY_MIN_DELTA;
+    });
+  }
+
+  return result;
 }
 
 // =============================================================================
@@ -407,7 +481,7 @@ function parseTriggerTypes(
   sp: URLSearchParams
 ): { triggerTypes: Set<TriggerTypeToken> | null } | { error: string } {
   const raw = sp.get("triggerTypes");
-  if (raw === null) return { triggerTypes: null }; // null = no filter, all types
+  if (raw === null) return { triggerTypes: null };
   const tokens = raw.split(",").map((t) => t.trim());
   if (tokens.length === 0 || (tokens.length === 1 && tokens[0] === "")) {
     return { error: "triggerTypes must not be empty" };
@@ -465,6 +539,104 @@ function parseCursor(
   return { cursor: result.payload };
 }
 
+function parseSuppressionMode(
+  sp: URLSearchParams
+): { suppressionMode: SuppressionMode } | { error: string } {
+  const raw = sp.get("suppressionMode");
+  if (raw === null) return { suppressionMode: "default" };
+  if (raw !== "none" && raw !== "default") {
+    return { error: `suppressionMode must be "none" or "default"` };
+  }
+  return { suppressionMode: raw };
+}
+
+function parseT1Mode(
+  sp: URLSearchParams,
+  suppressionMode: SuppressionMode
+): { t1Mode: T1Mode } | { error: string } {
+  const raw = sp.get("t1Mode");
+  if (raw === null) {
+    return { t1Mode: suppressionMode === "default" ? "latestPerKeyword" : "all" };
+  }
+  if (raw !== "all" && raw !== "latestPerKeyword" && raw !== "upwardOnlyLatest") {
+    return { error: `t1Mode must be "all", "latestPerKeyword", or "upwardOnlyLatest"` };
+  }
+  return { t1Mode: raw };
+}
+
+function parseT2Mode(
+  sp: URLSearchParams,
+  suppressionMode: SuppressionMode
+): { t2Mode: T2Mode } | { error: string } {
+  const raw = sp.get("t2Mode");
+  if (raw === null) {
+    return { t2Mode: suppressionMode === "default" ? "maxPerKeyword" : "all" };
+  }
+  if (raw !== "all" && raw !== "maxPerKeyword") {
+    return { error: `t2Mode must be "all" or "maxPerKeyword"` };
+  }
+  return { t2Mode: raw };
+}
+
+function parseT3Mode(
+  sp: URLSearchParams
+): { t3Mode: T3Mode } | { error: string } {
+  const raw = sp.get("t3Mode");
+  if (raw === null) return { t3Mode: "all" };
+  if (raw !== "all" && raw !== "deltaOnly") {
+    return { error: `t3Mode must be "all" or "deltaOnly"` };
+  }
+  return { t3Mode: raw };
+}
+
+// =============================================================================
+// B2 concentration ratio helper — reused for both current and prior windows
+// =============================================================================
+
+function computeConcentrationRatio(
+  snapshots: Array<SnapshotForVolatility & { capturedAt: Date; query: string; locale: string; device: string }>,
+  targets: Array<{ id: string; query: string; locale: string; device: string }>
+): number | null {
+  // Group snapshots by natural key
+  const map = new Map<string, Array<SnapshotForVolatility & { capturedAt: Date }>>();
+  for (const snap of snapshots) {
+    const key = `${snap.query}\0${snap.locale}\0${snap.device}`;
+    let bucket = map.get(key);
+    if (!bucket) { bucket = []; map.set(key, bucket); }
+    bucket.push(snap);
+  }
+
+  let totalVolatilitySum = 0;
+  const activeRecords: Array<{ keywordTargetId: string; query: string; volatilityScore: number }> = [];
+
+  for (const target of targets) {
+    const key   = `${target.query}\0${target.locale}\0${target.device}`;
+    const snaps = map.get(key) ?? [];
+    const profile = computeVolatility(snaps);
+    if (profile.sampleSize >= 1) {
+      totalVolatilitySum += profile.volatilityScore;
+      activeRecords.push({
+        keywordTargetId: target.id,
+        query:           target.query,
+        volatilityScore: profile.volatilityScore,
+      });
+    }
+  }
+
+  if (totalVolatilitySum === 0) return null;
+
+  activeRecords.sort((a, b) => {
+    if (b.volatilityScore !== a.volatilityScore) return b.volatilityScore - a.volatilityScore;
+    const qCmp = a.query.localeCompare(b.query);
+    if (qCmp !== 0) return qCmp;
+    return a.keywordTargetId.localeCompare(b.keywordTargetId);
+  });
+
+  const top3    = activeRecords.slice(0, 3);
+  const top3Sum = top3.reduce((acc, r) => acc + r.volatilityScore, 0);
+  return Math.round((top3Sum / totalVolatilitySum) * 10000) / 10000;
+}
+
 // =============================================================================
 // GET /api/seo/alerts
 // =============================================================================
@@ -495,31 +667,48 @@ export async function GET(request: NextRequest) {
 
     const ttResult = parseTriggerTypes(sp);
     if ("error" in ttResult) return badRequest(ttResult.error);
-    const triggerTypesFilter = ttResult.triggerTypes; // null = no filter
+    const triggerTypesFilter = ttResult.triggerTypes;
 
     const ktIdResult = parseKeywordTargetId(sp);
     if ("error" in ktIdResult) return badRequest(ktIdResult.error);
-    const keywordTargetIdFilter = ktIdResult.keywordTargetId; // null = no filter
+    const keywordTargetIdFilter = ktIdResult.keywordTargetId;
 
     const minSevResult = parseMinSeverityRank(sp);
     if ("error" in minSevResult) return badRequest(minSevResult.error);
-    const minSeverityRank = minSevResult.minSeverityRank; // null = no filter
+    const minSeverityRank = minSevResult.minSeverityRank;
 
     const minPvsResult = parseMinPairVolatilityScore(sp);
     if ("error" in minPvsResult) return badRequest(minPvsResult.error);
-    const minPairVolatilityScore = minPvsResult.minPairVolatilityScore; // null = no filter
+    const minPairVolatilityScore = minPvsResult.minPairVolatilityScore;
 
     const cursorResult = parseCursor(sp);
     if ("error" in cursorResult) return badRequest(cursorResult.error);
-    const cursorPayload = cursorResult.cursor; // null = first page
+    const cursorPayload = cursorResult.cursor;
 
-    // If keywordTargetId filter is present, T3 is excluded (T3 is project-scope,
-    // not keyword-scope; its keywordTargetId is null, which cannot match a UUID).
-    // This is enforced in the filter step below — no special branching needed here.
+    // Suppression params (suppressionMode must be parsed first — others depend on it)
+    const supModeResult = parseSuppressionMode(sp);
+    if ("error" in supModeResult) return badRequest(supModeResult.error);
+    const suppressionMode = supModeResult.suppressionMode;
+
+    const t1Result = parseT1Mode(sp, suppressionMode);
+    if ("error" in t1Result) return badRequest(t1Result.error);
+    const t1Mode = t1Result.t1Mode;
+
+    const t2Result = parseT2Mode(sp, suppressionMode);
+    if ("error" in t2Result) return badRequest(t2Result.error);
+    const t2Mode = t2Result.t2Mode;
+
+    const t3Result = parseT3Mode(sp);
+    if ("error" in t3Result) return badRequest(t3Result.error);
+    const t3Mode = t3Result.t3Mode;
+
+    const suppressionOpts: SuppressionOpts = { suppressionMode, t1Mode, t2Mode, t3Mode };
 
     // Single requestTime anchor — all window boundaries derived here.
-    const requestTime = new Date();
-    const windowStart = new Date(requestTime.getTime() - windowDays * 24 * 60 * 60 * 1000);
+    const requestTime  = new Date();
+    const windowStart  = new Date(requestTime.getTime() - windowDays * 24 * 60 * 60 * 1000);
+    // Prior window for t3Mode=deltaOnly (same length, immediately preceding current window)
+    const priorWindowStart = new Date(windowStart.getTime() - windowDays * 24 * 60 * 60 * 1000);
 
     // ── Query 1: KeywordTargets ───────────────────────────────────────────────
     const targets = await prisma.keywordTarget.findMany({
@@ -528,11 +717,16 @@ export async function GET(request: NextRequest) {
       select:  { id: true, query: true, locale: true, device: true },
     });
 
-    // ── Query 2: SERPSnapshots (window-filtered, project-scoped) ─────────────
-    const allSnapshots = await prisma.sERPSnapshot.findMany({
+    // ── Query 2: SERPSnapshots ────────────────────────────────────────────────
+    // When t3Mode=deltaOnly, we need prior-window snapshots for the delta check.
+    // Expand the query to cover priorWindowStart so we can partition in-memory.
+    // This adds no extra DB queries — one query, one partition.
+    const snapshotQueryStart = t3Mode === "deltaOnly" ? priorWindowStart : windowStart;
+
+    const allSnapshotsRaw = await prisma.sERPSnapshot.findMany({
       where: {
         projectId,
-        capturedAt: { gte: windowStart },
+        capturedAt: { gte: snapshotQueryStart },
       },
       orderBy: [{ capturedAt: "asc" }, { id: "asc" }],
       select: {
@@ -546,12 +740,36 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    // ── Group snapshots by natural key ────────────────────────────────────────
+    // Partition: current window vs prior window (for deltaOnly)
+    type SnapRowFull = SnapshotForVolatility & { capturedAt: Date; query: string; locale: string; device: string };
+
+    const currentWindowSnaps: SnapRowFull[] = [];
+    const priorWindowSnaps:   SnapRowFull[] = [];
+
+    for (const snap of allSnapshotsRaw) {
+      const row: SnapRowFull = {
+        id:               snap.id,
+        capturedAt:       snap.capturedAt,
+        aiOverviewStatus: snap.aiOverviewStatus,
+        rawPayload:       snap.rawPayload,
+        query:            snap.query,
+        locale:           snap.locale,
+        device:           snap.device,
+      };
+      const ms = snap.capturedAt.getTime();
+      if (ms >= windowStart.getTime()) {
+        currentWindowSnaps.push(row);
+      } else if (t3Mode === "deltaOnly" && ms >= priorWindowStart.getTime()) {
+        priorWindowSnaps.push(row);
+      }
+    }
+
+    // Group current-window snapshots by natural key (for alert generation)
     type SnapRow = SnapshotForVolatility & { capturedAt: Date };
     const snapshotMap = new Map<string, SnapRow[]>();
     let latestCapturedAtMs = 0;
 
-    for (const snap of allSnapshots) {
+    for (const snap of currentWindowSnaps) {
       const key = `${snap.query}\0${snap.locale}\0${snap.device}`;
       let bucket = snapshotMap.get(key);
       if (!bucket) { bucket = []; snapshotMap.set(key, bucket); }
@@ -565,13 +783,10 @@ export async function GET(request: NextRequest) {
       if (ms > latestCapturedAtMs) latestCapturedAtMs = ms;
     }
 
-    // ── Collect all candidate alerts (unfiltered) ─────────────────────────────
+    // ── Collect all candidate alerts ──────────────────────────────────────────
     const allAlerts: AnyAlert[] = [];
-
-    // T2 dedup key set: (keywordTargetId, toSnapshotId, threshold)
     const t2DedupSet = new Set<string>();
 
-    // B2 accumulators for T3
     let activeKeywordCount = 0;
     let totalVolatilitySum = 0;
     interface ActiveRecord {
@@ -587,7 +802,6 @@ export async function GET(request: NextRequest) {
 
       if (snaps.length < 2) continue;
 
-      // Compute all consecutive pairs
       interface PairRecord {
         fromSnapshotId:      string;
         toSnapshotId:        string;
@@ -612,7 +826,6 @@ export async function GET(request: NextRequest) {
         });
       }
 
-      // Accumulate full-keyword volatility for T3
       const fullProfile = computeVolatility(snaps);
       if (fullProfile.sampleSize >= 1) {
         activeKeywordCount++;
@@ -624,14 +837,13 @@ export async function GET(request: NextRequest) {
         });
       }
 
-      // ── T1: Regime Transition ─────────────────────────────────────────────
+      // T1
       if (pairs.length >= 2) {
         const lastPair = pairs[pairs.length - 1];
         const prevPair = pairs[pairs.length - 2];
         if (lastPair.regime !== prevPair.regime) {
           const fromRegime = prevPair.regime;
           const toRegime   = lastPair.regime;
-          const sevRank    = t1SeverityRank(fromRegime, toRegime);
           allAlerts.push({
             triggerType:         "T1",
             keywordTargetId:     target.id,
@@ -643,7 +855,7 @@ export async function GET(request: NextRequest) {
             fromCapturedAt:      lastPair.fromCapturedAt.toISOString(),
             toCapturedAt:        lastPair.toCapturedAt.toISOString(),
             pairVolatilityScore: lastPair.pairVolatilityScore,
-            _severityRank:       sevRank,
+            _severityRank:       t1SeverityRank(fromRegime, toRegime),
             _toCapturedAtMs:     lastPair.toCapturedAt.getTime(),
             _toSnapshotId:       lastPair.toSnapshotId,
             _keywordTargetId:    target.id,
@@ -651,7 +863,7 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // ── T2: Spike Threshold Exceedance ────────────────────────────────────
+      // T2
       for (const pair of pairs) {
         if (pair.pairVolatilityScore > spikeThreshold) {
           const dedupKey = `${target.id}\0${pair.toSnapshotId}\0${spikeThreshold}`;
@@ -679,7 +891,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // ── T3: Risk Concentration Exceedance ─────────────────────────────────────
+    // T3
     if (totalVolatilitySum > 0) {
       activeRecords.sort((a, b) => {
         if (b.volatilityScore !== a.volatilityScore) return b.volatilityScore - a.volatilityScore;
@@ -692,18 +904,17 @@ export async function GET(request: NextRequest) {
       const volatilityConcentrationRatio = Math.round((top3Sum / totalVolatilitySum) * 10000) / 10000;
 
       if (volatilityConcentrationRatio > concentrationThreshold) {
-        const top3RiskKeywords = top3.map((r) => ({
-          keywordTargetId:  r.keywordTargetId,
-          query:            r.query,
-          volatilityScore:  r.volatilityScore,
-          volatilityRegime: classifyRegime(r.volatilityScore),
-        }));
         allAlerts.push({
           triggerType:                  "T3",
           projectId,
           volatilityConcentrationRatio,
           threshold:                    concentrationThreshold,
-          top3RiskKeywords,
+          top3RiskKeywords:             top3.map((r) => ({
+            keywordTargetId:  r.keywordTargetId,
+            query:            r.query,
+            volatilityScore:  r.volatilityScore,
+            volatilityRegime: classifyRegime(r.volatilityScore),
+          })),
           activeKeywordCount,
           _severityRank:                7,
           _toCapturedAtMs:              latestCapturedAtMs,
@@ -716,70 +927,68 @@ export async function GET(request: NextRequest) {
     // ── Sort deterministically ────────────────────────────────────────────────
     allAlerts.sort(compareAlerts);
 
-    // ── Apply filters (post-sort; filtering never changes order, only membership) ─
-    // The filtered array preserves relative order of the sorted allAlerts array.
+    // ── Apply filters ─────────────────────────────────────────────────────────
     const filtered = allAlerts.filter((alert) => {
-      // triggerType filter
-      if (triggerTypesFilter !== null && !triggerTypesFilter.has(alert.triggerType)) {
-        return false;
-      }
-      // keywordTargetId filter — T3 has null _keywordTargetId, so it is
-      // excluded whenever keywordTargetIdFilter is a non-null UUID.
-      if (keywordTargetIdFilter !== null && alert._keywordTargetId !== keywordTargetIdFilter) {
-        return false;
-      }
-      // minSeverityRank filter
-      if (minSeverityRank !== null && alert._severityRank < minSeverityRank) {
-        return false;
-      }
-      // minPairVolatilityScore filter — only applied to T2
+      if (triggerTypesFilter !== null && !triggerTypesFilter.has(alert.triggerType)) return false;
+      if (keywordTargetIdFilter !== null && alert._keywordTargetId !== keywordTargetIdFilter) return false;
+      if (minSeverityRank !== null && alert._severityRank < minSeverityRank) return false;
       if (minPairVolatilityScore !== null && alert.triggerType === "T2") {
-        if ((alert as T2Alert).pairVolatilityScore < minPairVolatilityScore) {
-          return false;
-        }
+        if ((alert as T2Alert).pairVolatilityScore < minPairVolatilityScore) return false;
       }
       return true;
     });
 
-    // ── Apply cursor (keyset positional cut — in-memory after filter+sort) ────
-    // filtered is already in deterministic sort order.
-    // Find the first item strictly after the cursor position.
+    // ── Compute prior-window concentration ratio for t3Mode=deltaOnly ─────────
+    // This is computed in the data-loading phase (not inside suppressAlerts).
+    let priorWindowConcentrationRatio: number | null = null;
+    if (t3Mode === "deltaOnly" && priorWindowSnaps.length >= 2) {
+      priorWindowConcentrationRatio = computeConcentrationRatio(priorWindowSnaps, targets);
+    }
+
+    // ── Apply suppression (post-filter, pre-cursor) ───────────────────────────
+    // Suppression is a pure function that preserves relative sort order.
+    const suppressed = suppressAlerts(filtered, {
+      opts: suppressionOpts,
+      priorWindowConcentrationRatio,
+    });
+
+    // ── Apply cursor ──────────────────────────────────────────────────────────
     let startIndex = 0;
     if (cursorPayload !== null) {
-      // Linear scan to find the first item after cursor.
-      // Correct and deterministic; for typical alert volumes (< 1000) this is fast.
       let found = false;
-      for (let i = 0; i < filtered.length; i++) {
-        if (isAfterCursor(filtered[i], cursorPayload)) {
+      for (let i = 0; i < suppressed.length; i++) {
+        if (isAfterCursor(suppressed[i], cursorPayload)) {
           startIndex = i;
           found = true;
           break;
         }
       }
-      if (!found) startIndex = filtered.length; // cursor is past the end → empty page
+      if (!found) startIndex = suppressed.length;
     }
 
     // ── Slice page ────────────────────────────────────────────────────────────
-    const page    = filtered.slice(startIndex, startIndex + limit);
-    const hasMore = startIndex + limit < filtered.length;
+    const page    = suppressed.slice(startIndex, startIndex + limit);
+    const hasMore = startIndex + limit < suppressed.length;
 
-    // nextCursor encodes the last item on this page (using its sort-assist fields)
     const nextCursor: string | null = hasMore && page.length > 0
       ? encodeCursor(page[page.length - 1])
       : null;
 
-    // ── Strip sort-assist fields ──────────────────────────────────────────────
     const emitted = page.map(stripSortFields);
 
     return successResponse({
       alerts:                emitted,
       alertCount:            emitted.length,
-      totalAlerts:           filtered.length,
+      totalAlerts:           suppressed.length,
       nextCursor,
       hasMore,
       windowDays,
       spikeThreshold,
       concentrationThreshold,
+      suppressionMode,
+      t1Mode,
+      t2Mode,
+      t3Mode,
       limit,
       computedAt:            requestTime.toISOString(),
     });
