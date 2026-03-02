@@ -39,7 +39,7 @@ import {
   successResponse,
 } from "@/lib/api-response";
 import { resolveProjectId } from "@/lib/project";
-import { computeVolatility } from "@/lib/seo/volatility-service";
+import { computeVolatility, classifyMaturity } from "@/lib/seo/volatility-service";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -157,6 +157,7 @@ export async function GET(
       featureVolatility: volatility.featureVolatility,
       aiOverviewChurn: volatility.aiOverviewChurn,
       volatilityScore: volatility.volatilityScore,
+      maturity: classifyMaturity(volatility.sampleSize),
       computedAt: requestTime.toISOString(),
     });
   } catch (err) {

@@ -339,4 +339,78 @@ if (-not $s3KtId) {
             else { Write-Host ("  FAIL (score1=" + $d1.volatilityScore + " score2=" + $d2.volatilityScore + ")") -ForegroundColor Red; Hammer-Record FAIL }
         } else { Write-Host ("  FAIL (status1=" + $r1.StatusCode + " status2=" + $r2.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
     } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+    # ── VL-O: maturity field present and is a valid tier string ────────────────
+    try {
+        Write-Host "Testing: GET volatility maturity field present and valid" -NoNewline
+        $resp = Invoke-WebRequest -Uri "$Base/api/seo/keyword-targets/$s3KtId/volatility" `
+            -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 200) {
+            $mat = ($resp.Content | ConvertFrom-Json).data.maturity
+            $validTiers = @("preliminary", "developing", "stable")
+            if ($validTiers -contains $mat) {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } else {
+                Write-Host ("  FAIL (maturity='" + $mat + "' not in valid tiers)") -ForegroundColor Red; Hammer-Record FAIL
+            }
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+    } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+    # ── VL-P: 2 pairs (sampleSize=2 after VL-K) → maturity = preliminary ────────
+    # At this point in the test run: 3 recent snapshots + 1 old snapshot.
+    # windowDays=1 shows only the 3 recent ones → sampleSize=2 → preliminary.
+    try {
+        Write-Host "Testing: GET volatility windowDays=1 sampleSize=2 -> maturity=preliminary" -NoNewline
+        $resp = Invoke-WebRequest -Uri "$Base/api/seo/keyword-targets/$s3KtId/volatility?windowDays=1" `
+            -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 200) {
+            $d = ($resp.Content | ConvertFrom-Json).data
+            if ($d.sampleSize -eq 2 -and $d.maturity -eq "preliminary") {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } else {
+                Write-Host ("  FAIL (sampleSize=" + $d.sampleSize + " maturity=" + $d.maturity + ", expected 2/preliminary)") -ForegroundColor Red; Hammer-Record FAIL
+            }
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+    } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+    # ── VL-Q: bulk-insert snapshots to reach sampleSize >= 20 → maturity = stable ─
+    # We need at least 21 total snapshots for sampleSize=20 (21-1 pairs).
+    # We currently have 4 (3 recent + 1 old). Need 17 more recent ones.
+    $s3BulkOk = $true
+    for ($bi = 1; $bi -le 17; $bi++) {
+        try {
+            $bCapturedAt = (Get-Date).AddSeconds(-$bi * 30).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+            $bBody = @{
+                query=$s3Query; locale=$s3Locale; device=$s3Device
+                capturedAt=$bCapturedAt
+                rawPayload=@{results=@(
+                    @{url="https://example.com/alpha";rank=(1 + ($bi % 5));title="Alpha"}
+                    @{url="https://example.com/beta"; rank=(2 + ($bi % 3));title="Beta"}
+                )}
+                source="dataforseo"; aiOverviewStatus=if ($bi % 2 -eq 0) { "present" } else { "absent" }
+            }
+            $bResp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshots" -Method POST -Headers $Headers `
+                -Body ($bBody | ConvertTo-Json -Depth 10 -Compress) -ContentType "application/json" `
+                -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+            if ($bResp.StatusCode -ne 201 -and $bResp.StatusCode -ne 200) { $s3BulkOk = $false }
+        } catch { $s3BulkOk = $false }
+    }
+
+    try {
+        Write-Host "Testing: GET volatility 21+ snapshots -> sampleSize>=20 -> maturity=stable" -NoNewline
+        if (-not $s3BulkOk) {
+            Write-Host "  SKIP (bulk insert failed)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+        } else {
+            $resp = Invoke-WebRequest -Uri "$Base/api/seo/keyword-targets/$s3KtId/volatility" `
+                -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+            if ($resp.StatusCode -eq 200) {
+                $d = ($resp.Content | ConvertFrom-Json).data
+                if ($d.sampleSize -ge 20 -and $d.maturity -eq "stable") {
+                    Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+                } else {
+                    Write-Host ("  FAIL (sampleSize=" + $d.sampleSize + " maturity=" + $d.maturity + ", expected >=20/stable)") -ForegroundColor Red; Hammer-Record FAIL
+                }
+            } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+        }
+    } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 }

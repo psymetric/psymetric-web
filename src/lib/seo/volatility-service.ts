@@ -365,3 +365,36 @@ export function computeVolatility(
     volatilityScore,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Maturity classification
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Maturity tiers for a volatility score derived from a given sampleSize.
+ *
+ * Maturity answers: "how much should we trust this score?"
+ * It is orthogonal to volatilityScore, which answers: "how chaotic is this keyword?"
+ *
+ * A score of 80 from 2 pairs is an alarm with low confidence.
+ * A score of 80 from 50 pairs is an operational finding that warrants action.
+ * A score of 5 from 2 pairs means nothing.
+ * A score of 5 from 50 pairs means the keyword is genuinely stable.
+ *
+ * Thresholds:
+ *   preliminary  sampleSize 0–4    Too few pairs to draw conclusions.
+ *   developing   sampleSize 5–19   Emerging signal; treat as directional.
+ *   stable       sampleSize ≥ 20   Sufficient history for operational confidence.
+ *
+ * The threshold of 20 is chosen because the volatility formula averages across
+ * all pairs: with fewer than 5 pairs, a single outlier pair dominates the
+ * average; with 5–19, the average is meaningful but a cluster of outliers can
+ * still distort it; at 20+, central-limit effects begin to stabilize the mean.
+ */
+export type VolatilityMaturity = "preliminary" | "developing" | "stable";
+
+export function classifyMaturity(sampleSize: number): VolatilityMaturity {
+  if (sampleSize >= 20) return "stable";
+  if (sampleSize >= 5)  return "developing";
+  return "preliminary";
+}

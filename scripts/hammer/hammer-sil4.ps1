@@ -235,6 +235,73 @@ try {
     } else { Write-Host ("  FAIL (status1=" + $r1.StatusCode + " status2=" + $r2.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
+# ── VS-M1: maturity distribution fields present ─────────────────────────────
+try {
+    Write-Host "Testing: GET volatility-summary maturity distribution fields present" -NoNewline
+    $resp = Invoke-WebRequest -Uri $s4Url -Method GET -Headers $Headers `
+        -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
+    if ($resp.StatusCode -eq 200) {
+        $d = ($resp.Content | ConvertFrom-Json).data
+        $props = $d | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
+        $matFields = @("preliminaryCount","developingCount","stableCountByMaturity")
+        $missing = $matFields | Where-Object { $props -notcontains $_ }
+        if ($missing.Count -eq 0) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (missing: " + ($missing -join ", ") + ")") -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── VS-M2: maturity bucket invariant — sum equals keywordCount ────────────────
+try {
+    Write-Host "Testing: GET volatility-summary maturity counts sum to keywordCount" -NoNewline
+    $resp = Invoke-WebRequest -Uri $s4Url -Method GET -Headers $Headers `
+        -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
+    if ($resp.StatusCode -eq 200) {
+        $d = ($resp.Content | ConvertFrom-Json).data
+        $matSum = [int]$d.preliminaryCount + [int]$d.developingCount + [int]$d.stableCountByMaturity
+        if ($matSum -eq [int]$d.keywordCount) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (matSum=" + $matSum + " != keywordCount=" + $d.keywordCount + ")") -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── VS-M3: at least one preliminary keyword exists ──────────────────────────
+# SIL-4 VS-5 created a no-snapshot KeywordTarget → sampleSize=0 → preliminary.
+# That target must be counted in preliminaryCount >= 1.
+try {
+    Write-Host "Testing: GET volatility-summary preliminaryCount >= 1" -NoNewline
+    $resp = Invoke-WebRequest -Uri $s4Url -Method GET -Headers $Headers `
+        -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
+    if ($resp.StatusCode -eq 200) {
+        $d = ($resp.Content | ConvertFrom-Json).data
+        if ([int]$d.preliminaryCount -ge 1) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (preliminaryCount=" + $d.preliminaryCount + ", expected >= 1)") -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── VS-M4: maturity invariant holds under windowDays too ─────────────────────
+try {
+    Write-Host "Testing: GET volatility-summary windowDays=1 maturity counts sum to keywordCount" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$s4Url?windowDays=1" -Method GET -Headers $Headers `
+        -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
+    if ($resp.StatusCode -eq 200) {
+        $d = ($resp.Content | ConvertFrom-Json).data
+        $matSum = [int]$d.preliminaryCount + [int]$d.developingCount + [int]$d.stableCountByMaturity
+        if ($matSum -eq [int]$d.keywordCount) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (matSum=" + $matSum + " != keywordCount=" + $d.keywordCount + ")") -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
 # ── VS-6: activeKeywordCount and non-zero bucket reflect SIL-3's scored keyword ─
 # SIL-3 created a KeywordTarget with 3 snapshots and aiOverviewChurn=2 (score > 0).
 # That target must appear in activeKeywordCount >= 1 and at least one non-stable bucket.

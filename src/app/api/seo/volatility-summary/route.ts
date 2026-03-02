@@ -21,7 +21,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { badRequest, serverError, successResponse } from "@/lib/api-response";
 import { resolveProjectId } from "@/lib/project";
-import { computeVolatility } from "@/lib/seo/volatility-service";
+import { computeVolatility, classifyMaturity } from "@/lib/seo/volatility-service";
 
 const HIGH_THRESHOLD   = 60;
 const MEDIUM_THRESHOLD = 30;
@@ -83,6 +83,9 @@ export async function GET(request: NextRequest) {
         mediumVolatilityCount: 0,
         lowVolatilityCount: 0,
         stableCount: 0,
+        preliminaryCount: 0,
+        developingCount: 0,
+        stableCountByMaturity: 0,
       });
     }
 
@@ -126,13 +129,17 @@ export async function GET(request: NextRequest) {
     }
 
     // ── Compute and aggregate ───────────────────────────────────────────────
-    let activeKeywordCount  = 0;
-    let highVolatilityCount   = 0;
-    let mediumVolatilityCount = 0;
-    let lowVolatilityCount    = 0;
-    let stableCount           = 0;
-    let maxVolatility         = 0;
-    let volatilitySum         = 0;
+    let activeKeywordCount     = 0;
+    let highVolatilityCount     = 0;
+    let mediumVolatilityCount   = 0;
+    let lowVolatilityCount      = 0;
+    let stableCount             = 0;
+    let maxVolatility           = 0;
+    let volatilitySum           = 0;
+    // Maturity distribution — orthogonal to volatility buckets
+    let preliminaryCount        = 0;
+    let developingCount         = 0;
+    let stableCountByMaturity   = 0;
 
     for (const target of targets) {
       const key = `${target.query}\0${target.locale}\0${target.device}`;
@@ -149,6 +156,11 @@ export async function GET(request: NextRequest) {
       else if (score >= MEDIUM_THRESHOLD) mediumVolatilityCount++;
       else if (score >= 1)                lowVolatilityCount++;
       else                                stableCount++;
+
+      const maturity = classifyMaturity(profile.sampleSize);
+      if (maturity === "stable")      stableCountByMaturity++;
+      else if (maturity === "developing") developingCount++;
+      else                                preliminaryCount++;
     }
 
     const averageVolatility =
@@ -164,6 +176,9 @@ export async function GET(request: NextRequest) {
       mediumVolatilityCount,
       lowVolatilityCount,
       stableCount,
+      preliminaryCount,
+      developingCount,
+      stableCountByMaturity,
     });
   } catch (err) {
     console.error("GET /api/seo/volatility-summary error:", err);
