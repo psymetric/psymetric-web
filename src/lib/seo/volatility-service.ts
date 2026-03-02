@@ -224,6 +224,14 @@ interface PairwiseDelta {
   aiOverviewFlipped: boolean;
 }
 
+function buildRankMap(results: MinimalResult[]): Map<string, number | null> {
+  const map = new Map<string, number | null>();
+  for (const r of results) {
+    if (!map.has(r.url)) map.set(r.url, r.rank); // first-wins: results pre-sorted by rank asc
+  }
+  return map;
+}
+
 function computePairDelta(
   from: SnapshotForVolatility,
   to: SnapshotForVolatility
@@ -231,9 +239,9 @@ function computePairDelta(
   const fromResults = extractResults(from.rawPayload);
   const toResults   = extractResults(to.rawPayload);
 
-  // Build rank maps keyed by URL
-  const fromMap = new Map<string, number | null>(fromResults.map((r) => [r.url, r.rank]));
-  const toMap   = new Map<string, number | null>(toResults.map((r) => [r.url, r.rank]));
+  // Build rank maps keyed by URL (first-wins on duplicates)
+  const fromMap = buildRankMap(fromResults);
+  const toMap   = buildRankMap(toResults);
 
   // Rank shift: only for URLs present in both snapshots with non-null ranks
   const shifts: number[] = [];

@@ -413,4 +413,240 @@ if (-not $s3KtId) {
             } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
         }
     } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+    # ── VL-R: alertThreshold=0 → 200, exceedsThreshold=true iff sampleSize>=1 ─────────
+    # At this point sampleSize >= 20 (VL-Q bulk inserts). Any score >= 0 exceeds threshold=0.
+    try {
+        Write-Host "Testing: GET volatility alertThreshold=0 -> exceedsThreshold=true (active kw)" -NoNewline
+        $resp = Invoke-WebRequest -Uri "$Base/api/seo/keyword-targets/$s3KtId/volatility?alertThreshold=0" `
+            -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 200) {
+            $d = ($resp.Content | ConvertFrom-Json).data
+            # sampleSize >= 1 after all the inserts, so exceedsThreshold must be true
+            $expectExceeds = ($d.sampleSize -ge 1)
+            $fieldOk = ($d.alertThreshold -eq 0) -and ($d.exceedsThreshold -eq $expectExceeds)
+            if ($fieldOk) {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } else {
+                Write-Host ("  FAIL (alertThreshold=" + $d.alertThreshold + " exceedsThreshold=" + $d.exceedsThreshold + " sampleSize=" + $d.sampleSize + ")") -ForegroundColor Red; Hammer-Record FAIL
+            }
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+    } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+    # ── VL-S: alertThreshold=100 → 200, exceedsThreshold is a boolean (not assumed) ───
+    try {
+        Write-Host "Testing: GET volatility alertThreshold=100 -> 200, exceedsThreshold is boolean" -NoNewline
+        $resp = Invoke-WebRequest -Uri "$Base/api/seo/keyword-targets/$s3KtId/volatility?alertThreshold=100" `
+            -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 200) {
+            $d = ($resp.Content | ConvertFrom-Json).data
+            $isBool = ($d.exceedsThreshold -eq $true -or $d.exceedsThreshold -eq $false)
+            $echoOk = ($d.alertThreshold -eq 100)
+            if ($isBool -and $echoOk) {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } else {
+                Write-Host ("  FAIL (alertThreshold=" + $d.alertThreshold + " exceedsThreshold=" + $d.exceedsThreshold + ")") -ForegroundColor Red; Hammer-Record FAIL
+            }
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+    } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+    # ── VL-T: invalid alertThreshold values → 400 ──────────────────────────────
+    $s3VlUrl = "$Base/api/seo/keyword-targets/$s3KtId/volatility"
+    Test-Endpoint "GET" "$($s3VlUrl)?alertThreshold=-1" 400 `
+        "GET volatility alertThreshold=-1 -> 400" $Headers
+    Test-Endpoint "GET" "$($s3VlUrl)?alertThreshold=101" 400 `
+        "GET volatility alertThreshold=101 -> 400" $Headers
+    Test-Endpoint "GET" "$($s3VlUrl)?alertThreshold=abc" 400 `
+        "GET volatility alertThreshold=abc -> 400" $Headers
+
+    # ── VL-U: combined windowDays + alertThreshold → 200, fields present ────────────
+    try {
+        Write-Host "Testing: GET volatility windowDays=1&alertThreshold=60 -> 200 + fields present" -NoNewline
+        $resp = Invoke-WebRequest -Uri "$($s3VlUrl)?windowDays=1&alertThreshold=60" `
+            -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 200) {
+            $d = ($resp.Content | ConvertFrom-Json).data
+            $hasFields = ($null -ne $d.alertThreshold) -and ($null -ne $d.exceedsThreshold)
+            $paramsOk  = ($d.windowDays -eq 1 -and $d.alertThreshold -eq 60)
+            if ($hasFields -and $paramsOk) {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } else {
+                Write-Host ("  FAIL (windowDays=" + $d.windowDays + " alertThreshold=" + $d.alertThreshold + " exceedsThreshold=" + $d.exceedsThreshold + ")") -ForegroundColor Red; Hammer-Record FAIL
+            }
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+    } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 }
+
+# =============================================================================
+Hammer-Section "SIL-3 PAYLOAD HETEROGENEITY TORTURE TESTS"
+# =============================================================================
+
+$s3phRunId = (Get-Date).Ticks
+
+# ---- PH3-A: snapshot with {} payload among real snapshots -------------------
+# Ensures computeVolatility handles a payload with no extractable results:
+# the empty snapshot contributes 0 URLs to its pairs -> averageRankShift=0
+# for those pairs, but sampleSize is still counted (N-1 pairs from N snapshots).
+$ph3AQuery = "ph3-empty-payload $s3phRunId"
+$ph3AKtId  = $null
+
+try {
+    $r = Invoke-WebRequest -Uri "$Base/api/seo/keyword-research" -Method POST -Headers $Headers `
+        -Body (@{keywords=@($ph3AQuery);locale="en-US";device="desktop";confirm=$true} | ConvertTo-Json -Depth 5 -Compress) `
+        -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($r.StatusCode -eq 201) {
+        $ph3AKtId = (($r.Content | ConvertFrom-Json).data.targets |
+            Where-Object { $_.query -eq $ph3AQuery } | Select-Object -First 1).id
+    }
+} catch {}
+
+$ph3AOk = $false
+if ($ph3AKtId) {
+    $tA0 = (Get-Date).AddMinutes(-10).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+    $tA1 = (Get-Date).AddMinutes(-5).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+    $tA2 = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+
+    $snapOk = $true
+    # Snapshot 1: normal results
+    $body1 = @{query=$ph3AQuery;locale="en-US";device="desktop";capturedAt=$tA0;source="dataforseo";aiOverviewStatus="absent"
+        rawPayload=@{results=@(@{url="https://ex.com/a";rank=1;title="A"},@{url="https://ex.com/b";rank=2;title="B"})}}
+    $r1 = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshots" -Method POST -Headers $Headers `
+        -Body ($body1 | ConvertTo-Json -Depth 10 -Compress) -ContentType "application/json" `
+        -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($r1.StatusCode -notin @(200,201)) { $snapOk = $false }
+
+    # Snapshot 2: empty payload object (no results key)
+    $body2 = @{query=$ph3AQuery;locale="en-US";device="desktop";capturedAt=$tA1;source="dataforseo";aiOverviewStatus="present"
+        rawPayload=@{}}
+    $r2 = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshots" -Method POST -Headers $Headers `
+        -Body ($body2 | ConvertTo-Json -Depth 10 -Compress) -ContentType "application/json" `
+        -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($r2.StatusCode -notin @(200,201)) { $snapOk = $false }
+
+    # Snapshot 3: normal results again
+    $body3 = @{query=$ph3AQuery;locale="en-US";device="desktop";capturedAt=$tA2;source="dataforseo";aiOverviewStatus="absent"
+        rawPayload=@{results=@(@{url="https://ex.com/a";rank=2;title="A"},@{url="https://ex.com/b";rank=1;title="B"})}}
+    $r3 = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshots" -Method POST -Headers $Headers `
+        -Body ($body3 | ConvertTo-Json -Depth 10 -Compress) -ContentType "application/json" `
+        -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($r3.StatusCode -notin @(200,201)) { $snapOk = $false }
+
+    $ph3AOk = $snapOk
+}
+
+try {
+    Write-Host "Testing: volatility with {} payload snapshot -> 200, sampleSize=2, score in [0,100]" -NoNewline
+    if (-not $ph3AOk) { Write-Host "  SKIP (setup failed)" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $resp = Invoke-WebRequest -Uri "$Base/api/seo/keyword-targets/$ph3AKtId/volatility" `
+            -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 200) {
+            $d = ($resp.Content | ConvertFrom-Json).data
+            $scoreOk  = ($d.volatilityScore -ge 0 -and $d.volatilityScore -le 100)
+            # 3 snapshots -> sampleSize=2 pairs (even if one snapshot yields no extractable URLs)
+            $sizeOk   = ($d.sampleSize -eq 2)
+            if ($scoreOk -and $sizeOk) {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } else {
+                Write-Host ("  FAIL (sampleSize=" + $d.sampleSize + " score=" + $d.volatilityScore + ", expected 2 and [0,100])") -ForegroundColor Red; Hammer-Record FAIL
+            }
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ---- PH3-B: near-identical timestamps, id tie-breaker ordering stability -----
+# Goal: verify that [capturedAt ASC, id ASC] ordering produces stable output.
+#
+# Why not literal same capturedAt:
+#   SERPSnapshot has @@unique([projectId, query, locale, device, capturedAt]).
+#   Two inserts with identical (query, locale, device, capturedAt) hit a unique
+#   constraint violation. The schema intentionally prevents exact-duplicate
+#   captures. Testing literal same-timestamp is not reachable via the public API.
+#
+# What we test instead:
+#   Three snapshots spaced 1 second apart. Two sequential calls to the volatility
+#   endpoint must return identical stable fields, proving the orderBy is repeatable.
+$ph3BQuery = "ph3-id-tiebreak $s3phRunId"
+$ph3BKtId  = $null
+
+try {
+    $r = Invoke-WebRequest -Uri "$Base/api/seo/keyword-research" -Method POST -Headers $Headers `
+        -Body (@{keywords=@($ph3BQuery);locale="en-US";device="desktop";confirm=$true} | ConvertTo-Json -Depth 5 -Compress) `
+        -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($r.StatusCode -eq 201) {
+        $ph3BKtId = (($r.Content | ConvertFrom-Json).data.targets |
+            Where-Object { $_.query -eq $ph3BQuery } | Select-Object -First 1).id
+    }
+} catch {}
+
+$ph3BOk = $false
+if ($ph3BKtId) {
+    $tB0 = (Get-Date).AddSeconds(-2).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+    $tB1 = (Get-Date).AddSeconds(-1).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+    $tB2 = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+
+    $bB1 = @{query=$ph3BQuery;locale="en-US";device="desktop";capturedAt=$tB0;source="dataforseo";aiOverviewStatus="absent"
+        rawPayload=@{results=@(@{url="https://ex.com/b1";rank=1;title="B1"})}}
+    $bB2 = @{query=$ph3BQuery;locale="en-US";device="desktop";capturedAt=$tB1;source="dataforseo";aiOverviewStatus="present"
+        rawPayload=@{results=@(@{url="https://ex.com/b2";rank=1;title="B2"})}}
+    $bB3 = @{query=$ph3BQuery;locale="en-US";device="desktop";capturedAt=$tB2;source="dataforseo";aiOverviewStatus="absent"
+        rawPayload=@{results=@(@{url="https://ex.com/b1";rank=2;title="B1"})}}
+
+    $rB1 = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshots" -Method POST -Headers $Headers `
+        -Body ($bB1 | ConvertTo-Json -Depth 10 -Compress) -ContentType "application/json" `
+        -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    $rB2 = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshots" -Method POST -Headers $Headers `
+        -Body ($bB2 | ConvertTo-Json -Depth 10 -Compress) -ContentType "application/json" `
+        -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    $rB3 = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshots" -Method POST -Headers $Headers `
+        -Body ($bB3 | ConvertTo-Json -Depth 10 -Compress) -ContentType "application/json" `
+        -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    $ph3BOk = ($rB1.StatusCode -in @(200,201) -and $rB2.StatusCode -in @(200,201) -and $rB3.StatusCode -in @(200,201))
+}
+
+try {
+    Write-Host "Testing: volatility id-tiebreak ordering -> sampleSize=2, deterministic" -NoNewline
+    if (-not $ph3BOk) { Write-Host "  SKIP (setup failed)" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $u = "$Base/api/seo/keyword-targets/$ph3BKtId/volatility"
+        $resp1 = Invoke-WebRequest -Uri $u -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        $resp2 = Invoke-WebRequest -Uri $u -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp1.StatusCode -eq 200 -and $resp2.StatusCode -eq 200) {
+            $d1 = ($resp1.Content | ConvertFrom-Json).data
+            $d2 = ($resp2.Content | ConvertFrom-Json).data
+            # 3 snapshots -> sampleSize=2
+            $sizeOk = ($d1.sampleSize -eq 2)
+            $detOk  = (
+                $d1.sampleSize      -eq $d2.sampleSize      -and
+                $d1.volatilityScore -eq $d2.volatilityScore -and
+                $d1.aiOverviewChurn -eq $d2.aiOverviewChurn
+            )
+            if ($sizeOk -and $detOk) {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } else {
+                Write-Host ("  FAIL (sampleSize=" + $d1.sampleSize + " det=" + $detOk + ", expected 2 + stable)") -ForegroundColor Red; Hammer-Record FAIL
+            }
+        } else { Write-Host ("  FAIL (status=" + $resp1.StatusCode + "/" + $resp2.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ---- PH3-C: volatility determinism on existing s3KtId (main SIL-3 KT) ------
+try {
+    Write-Host "Testing: volatility two calls identical stable fields" -NoNewline
+    if ([string]::IsNullOrWhiteSpace($s3KtId)) { Write-Host "  SKIP (main SIL-3 KT not created)" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $u = "$Base/api/seo/keyword-targets/$s3KtId/volatility"
+        $resp1 = Invoke-WebRequest -Uri $u -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        $resp2 = Invoke-WebRequest -Uri $u -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp1.StatusCode -eq 200 -and $resp2.StatusCode -eq 200) {
+            $d1 = ($resp1.Content | ConvertFrom-Json).data
+            $d2 = ($resp2.Content | ConvertFrom-Json).data
+            $match = (
+                $d1.volatilityScore  -eq $d2.volatilityScore  -and
+                $d1.sampleSize       -eq $d2.sampleSize       -and
+                $d1.averageRankShift -eq $d2.averageRankShift -and
+                $d1.aiOverviewChurn  -eq $d2.aiOverviewChurn  -and
+                $d1.maturity         -eq $d2.maturity
+            )
+            if ($match) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+            else { Write-Host "  FAIL (fields differ between two calls)" -ForegroundColor Red; Hammer-Record FAIL }
+        } else { Write-Host ("  FAIL (status=" + $resp1.StatusCode + "/" + $resp2.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }

@@ -29,6 +29,10 @@ const MEDIUM_THRESHOLD = 30;
 const WINDOW_DAYS_MIN = 1;
 const WINDOW_DAYS_MAX = 365;
 
+const ALERT_THRESHOLD_DEFAULT = 60;
+const ALERT_THRESHOLD_MIN     = 0;
+const ALERT_THRESHOLD_MAX     = 100;
+
 /**
  * Parse and validate the optional windowDays query param.
  * Shared validation logic mirrors the SIL-3 route — kept inline to avoid
@@ -47,6 +51,18 @@ function parseWindowDays(
   return { windowDays: n };
 }
 
+function parseAlertThreshold(
+  searchParams: URLSearchParams
+): { alertThreshold: number; error?: never } | { alertThreshold?: never; error: string } {
+  const raw = searchParams.get("alertThreshold");
+  if (raw === null) return { alertThreshold: ALERT_THRESHOLD_DEFAULT };
+  if (!/^-?\d+$/.test(raw)) return { error: "alertThreshold must be an integer" };
+  const n = parseInt(raw, 10);
+  if (n < ALERT_THRESHOLD_MIN) return { error: `alertThreshold must be >= ${ALERT_THRESHOLD_MIN}` };
+  if (n > ALERT_THRESHOLD_MAX) return { error: `alertThreshold must be <= ${ALERT_THRESHOLD_MAX}` };
+  return { alertThreshold: n };
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { projectId, error } = await resolveProjectId(request);
@@ -56,6 +72,10 @@ export async function GET(request: NextRequest) {
     const windowResult = parseWindowDays(searchParams);
     if (windowResult.error) return badRequest(windowResult.error);
     const windowDays = windowResult.windowDays ?? null;
+
+    const alertResult = parseAlertThreshold(searchParams);
+    if (alertResult.error) return badRequest(alertResult.error);
+    const alertThreshold = alertResult.alertThreshold!;
 
     // Fix requestTime once so the window boundary is stable for this request.
     const requestTime = new Date();
@@ -75,6 +95,9 @@ export async function GET(request: NextRequest) {
     if (keywordCount === 0) {
       return successResponse({
         windowDays,
+        alertThreshold,
+        alertKeywordCount: 0,
+        alertRatio: 0,
         keywordCount: 0,
         activeKeywordCount: 0,
         averageVolatility: 0,
@@ -140,6 +163,8 @@ export async function GET(request: NextRequest) {
     let preliminaryCount        = 0;
     let developingCount         = 0;
     let stableCountByMaturity   = 0;
+    // Alert signal — sampleSize>=1 AND score>=alertThreshold
+    let alertKeywordCount       = 0;
 
     for (const target of targets) {
       const key = `${target.query}\0${target.locale}\0${target.device}`;
@@ -161,13 +186,22 @@ export async function GET(request: NextRequest) {
       if (maturity === "stable")      stableCountByMaturity++;
       else if (maturity === "developing") developingCount++;
       else                                preliminaryCount++;
+
+      if (profile.sampleSize >= 1 && score >= alertThreshold) alertKeywordCount++;
     }
 
     const averageVolatility =
       Math.round((volatilitySum / keywordCount) * 100) / 100;
 
+    const alertRatio = keywordCount > 0
+      ? Math.round((alertKeywordCount / keywordCount) * 10000) / 10000
+      : 0;
+
     return successResponse({
       windowDays,
+      alertThreshold,
+      alertKeywordCount,
+      alertRatio,
       keywordCount,
       activeKeywordCount,
       averageVolatility,

@@ -162,7 +162,7 @@ try {
 # ── VS-W1: windowDays=1 → 200, required fields + windowDays echoed ───────────
 try {
     Write-Host "Testing: GET volatility-summary windowDays=1 -> 200 + required fields + echo" -NoNewline
-    $resp = Invoke-WebRequest -Uri "$s4Url?windowDays=1" -Method GET -Headers $Headers `
+    $resp = Invoke-WebRequest -Uri "$($s4Url)?windowDays=1" -Method GET -Headers $Headers `
         -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
     if ($resp.StatusCode -eq 200) {
         $d = ($resp.Content | ConvertFrom-Json).data
@@ -181,17 +181,17 @@ try {
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
 # ── VS-W2: invalid windowDays → 400 ─────────────────────────────────────────
-Test-Endpoint "GET" "$s4Url?windowDays=0" 400 `
+Test-Endpoint "GET" "$($s4Url)?windowDays=0" 400 `
     "GET volatility-summary windowDays=0 -> 400" $Headers
-Test-Endpoint "GET" "$s4Url?windowDays=abc" 400 `
+Test-Endpoint "GET" "$($s4Url)?windowDays=abc" 400 `
     "GET volatility-summary windowDays=abc -> 400" $Headers
-Test-Endpoint "GET" "$s4Url?windowDays=366" 400 `
+Test-Endpoint "GET" "$($s4Url)?windowDays=366" 400 `
     "GET volatility-summary windowDays=366 -> 400" $Headers
 
 # ── VS-W3: bucket invariant holds under windowDays=1 ─────────────────────────
 try {
     Write-Host "Testing: GET volatility-summary windowDays=1 bucket counts sum to keywordCount" -NoNewline
-    $resp = Invoke-WebRequest -Uri "$s4Url?windowDays=1" -Method GET -Headers $Headers `
+    $resp = Invoke-WebRequest -Uri "$($s4Url)?windowDays=1" -Method GET -Headers $Headers `
         -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
     if ($resp.StatusCode -eq 200) {
         $d = ($resp.Content | ConvertFrom-Json).data
@@ -208,9 +208,9 @@ try {
 # ── VS-W4: windowed determinism — two calls with windowDays=30 match ─────────
 try {
     Write-Host "Testing: GET volatility-summary windowDays=30 deterministic (two calls match)" -NoNewline
-    $r1 = Invoke-WebRequest -Uri "$s4Url?windowDays=30" -Method GET -Headers $Headers `
+    $r1 = Invoke-WebRequest -Uri "$($s4Url)?windowDays=30" -Method GET -Headers $Headers `
         -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
-    $r2 = Invoke-WebRequest -Uri "$s4Url?windowDays=30" -Method GET -Headers $Headers `
+    $r2 = Invoke-WebRequest -Uri "$($s4Url)?windowDays=30" -Method GET -Headers $Headers `
         -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
     if ($r1.StatusCode -eq 200 -and $r2.StatusCode -eq 200) {
         $d1 = ($r1.Content | ConvertFrom-Json).data
@@ -289,7 +289,7 @@ try {
 # ── VS-M4: maturity invariant holds under windowDays too ─────────────────────
 try {
     Write-Host "Testing: GET volatility-summary windowDays=1 maturity counts sum to keywordCount" -NoNewline
-    $resp = Invoke-WebRequest -Uri "$s4Url?windowDays=1" -Method GET -Headers $Headers `
+    $resp = Invoke-WebRequest -Uri "$($s4Url)?windowDays=1" -Method GET -Headers $Headers `
         -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
     if ($resp.StatusCode -eq 200) {
         $d = ($resp.Content | ConvertFrom-Json).data
@@ -317,6 +317,66 @@ try {
             Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
         } else {
             Write-Host ("  FAIL (active=" + $d.activeKeywordCount + " nonStable=" + ([int]$d.highVolatilityCount + [int]$d.mediumVolatilityCount + [int]$d.lowVolatilityCount) + ")") -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── VS-A1: alertThreshold=60 → 200, alertKeywordCount + alertRatio present ───────
+try {
+    Write-Host "Testing: GET volatility-summary alertThreshold=60 -> alertKeywordCount + alertRatio present" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$($s4Url)?alertThreshold=60" -Method GET -Headers $Headers `
+        -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
+    if ($resp.StatusCode -eq 200) {
+        $d = ($resp.Content | ConvertFrom-Json).data
+        $props = $d | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
+        $required = @("alertThreshold","alertKeywordCount","alertRatio")
+        $missing = $required | Where-Object { $props -notcontains $_ }
+        $echoOk  = ($d.alertThreshold -eq 60)
+        if ($missing.Count -eq 0 -and $echoOk) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (missing=" + ($missing -join ",") + " echo=" + $d.alertThreshold + ")") -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── VS-A2: alertThreshold=0 → alertKeywordCount == activeKeywordCount ──────────
+try {
+    Write-Host "Testing: GET volatility-summary alertThreshold=0 -> alertKeywordCount equals activeKeywordCount" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$($s4Url)?alertThreshold=0" -Method GET -Headers $Headers `
+        -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
+    if ($resp.StatusCode -eq 200) {
+        $d = ($resp.Content | ConvertFrom-Json).data
+        # All active keywords have score >= 0, so all exceed threshold=0
+        if ([int]$d.alertKeywordCount -eq [int]$d.activeKeywordCount) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (alertKeywordCount=" + $d.alertKeywordCount + " != activeKeywordCount=" + $d.activeKeywordCount + ")") -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── VS-A3: invalid alertThreshold → 400 ───────────────────────────────────────
+Test-Endpoint "GET" "$($s4Url)?alertThreshold=-1" 400 `
+    "GET volatility-summary alertThreshold=-1 -> 400" $Headers
+Test-Endpoint "GET" "$($s4Url)?alertThreshold=101" 400 `
+    "GET volatility-summary alertThreshold=101 -> 400" $Headers
+Test-Endpoint "GET" "$($s4Url)?alertThreshold=abc" 400 `
+    "GET volatility-summary alertThreshold=abc -> 400" $Headers
+
+# ── VS-A4: combined windowDays=1 + alertThreshold=60 → 200 ───────────────────
+try {
+    Write-Host "Testing: GET volatility-summary windowDays=1&alertThreshold=60 -> 200" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$($s4Url)?windowDays=1&alertThreshold=60" -Method GET -Headers $Headers `
+        -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
+    if ($resp.StatusCode -eq 200) {
+        $d = ($resp.Content | ConvertFrom-Json).data
+        $paramsOk = ($d.windowDays -eq 1 -and $d.alertThreshold -eq 60)
+        $hasFields = ($null -ne $d.alertKeywordCount) -and ($null -ne $d.alertRatio)
+        if ($paramsOk -and $hasFields) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (windowDays=" + $d.windowDays + " alertThreshold=" + $d.alertThreshold + ")") -ForegroundColor Red; Hammer-Record FAIL
         }
     } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }

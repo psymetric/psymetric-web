@@ -28,136 +28,11 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { badRequest, notFound, serverError, successResponse } from "@/lib/api-response";
 import { resolveProjectId } from "@/lib/project";
+import { extractOrganicResults, type ExtractedResult } from "@/lib/seo/serp-extraction";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-// =============================================================================
-// Payload extraction
-// =============================================================================
-
-/**
- * A single organic result extracted from a rawPayload.
- * url is the canonical key for set comparisons.
- * rank is null if the payload structure didn't yield a numeric position.
- */
-interface ExtractedResult {
-  url: string;
-  domain: string | null;
-  rank: number | null;
-  title: string | null;
-}
-
-interface ExtractionResult {
-  results: ExtractedResult[];
-  parseWarning: boolean;
-}
-
-/**
- * Extract organic results from a DataForSEO rawPayload.
- *
- * DataForSEO Advanced SERP response structure:
- *   rawPayload.items[] where item.type === "organic"
- *   Each item has: rank_absolute (number), url (string), domain (string), title (string)
- *
- * Falls back gracefully:
- *   - rawPayload.results[] for simpler/mock payloads (used in tests)
- *   - Any array-shaped top-level key that contains objects with url fields
- *
- * Returns parseWarning: true if the payload structure was not recognized.
- */
-function extractOrganicResults(rawPayload: unknown): ExtractionResult {
-  if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) {
-    return { results: [], parseWarning: true };
-  }
-
-  const payload = rawPayload as Record<string, unknown>;
-
-  // Strategy 1: DataForSEO items array (primary)
-  if (Array.isArray(payload.items)) {
-    const organic = payload.items
-      .filter(
-        (item): item is Record<string, unknown> =>
-          item !== null &&
-          typeof item === "object" &&
-          !Array.isArray(item) &&
-          (item as Record<string, unknown>).type === "organic" &&
-          typeof (item as Record<string, unknown>).url === "string"
-      )
-      .map((item) => ({
-        url: item.url as string,
-        domain:
-          typeof item.domain === "string"
-            ? item.domain
-            : typeof item.url === "string"
-            ? extractDomain(item.url as string)
-            : null,
-        rank:
-          typeof item.rank_absolute === "number"
-            ? item.rank_absolute
-            : typeof item.position === "number"
-            ? item.position
-            : null,
-        title: typeof item.title === "string" ? item.title : null,
-      }));
-
-    // Deterministic: sort by rank asc (nulls last), then url asc as tiebreak
-    organic.sort((a, b) => {
-      if (a.rank === null && b.rank === null) return a.url.localeCompare(b.url);
-      if (a.rank === null) return 1;
-      if (b.rank === null) return -1;
-      if (a.rank !== b.rank) return a.rank - b.rank;
-      return a.url.localeCompare(b.url);
-    });
-
-    return { results: organic, parseWarning: organic.length === 0 && payload.items.length > 0 };
-  }
-
-  // Strategy 2: Simple results array (mock / test payloads)
-  if (Array.isArray(payload.results)) {
-    const results = payload.results
-      .filter(
-        (item): item is Record<string, unknown> =>
-          item !== null &&
-          typeof item === "object" &&
-          !Array.isArray(item) &&
-          typeof (item as Record<string, unknown>).url === "string"
-      )
-      .map((item) => ({
-        url: item.url as string,
-        domain:
-          typeof item.domain === "string"
-            ? item.domain
-            : extractDomain(item.url as string),
-        rank:
-          typeof item.rank === "number"
-            ? item.rank
-            : typeof item.position === "number"
-            ? item.position
-            : null,
-        title: typeof item.title === "string" ? item.title : null,
-      }));
-
-    results.sort((a, b) => {
-      if (a.rank === null && b.rank === null) return a.url.localeCompare(b.url);
-      if (a.rank === null) return 1;
-      if (b.rank === null) return -1;
-      if (a.rank !== b.rank) return a.rank - b.rank;
-      return a.url.localeCompare(b.url);
-    });
-
-    return { results, parseWarning: false };
-  }
-
-  return { results: [], parseWarning: true };
-}
-
-function extractDomain(url: string): string | null {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return null;
-  }
-}
+// ExtractedResult, ExtractionResult, extractOrganicResults imported from @/lib/seo/serp-extraction
 
 // =============================================================================
 // Delta computation
@@ -186,12 +61,25 @@ interface DeltaResult {
   exited: RankEntry[];
 }
 
+/**
+ * Build a URL-keyed map from an array of extracted results.
+ * Duplicate URLs: first occurrence wins (deterministic; results are pre-sorted
+ * by rank asc so the lowest-rank entry is already first).
+ */
+function buildResultMap(results: ExtractedResult[]): Map<string, ExtractedResult> {
+  const map = new Map<string, ExtractedResult>();
+  for (const r of results) {
+    if (!map.has(r.url)) map.set(r.url, r);
+  }
+  return map;
+}
+
 function computeRankDelta(
   fromResults: ExtractedResult[],
   toResults: ExtractedResult[]
 ): DeltaResult {
-  const fromMap = new Map<string, ExtractedResult>(fromResults.map((r) => [r.url, r]));
-  const toMap = new Map<string, ExtractedResult>(toResults.map((r) => [r.url, r]));
+  const fromMap = buildResultMap(fromResults);
+  const toMap   = buildResultMap(toResults);
 
   const fromUrls = new Set(fromMap.keys());
   const toUrls = new Set(toMap.keys());

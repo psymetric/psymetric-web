@@ -47,10 +47,31 @@ const UUID_RE =
 const WINDOW_DAYS_MIN = 1;
 const WINDOW_DAYS_MAX = 365;
 
+const ALERT_THRESHOLD_DEFAULT = 60;
+const ALERT_THRESHOLD_MIN     = 0;
+const ALERT_THRESHOLD_MAX     = 100;
+
 type RouteParams = { id: string };
 
 function isPromise<T>(v: unknown): v is Promise<T> {
   return !!v && typeof (v as Record<string, unknown>).then === "function";
+}
+
+/**
+ * Parse and validate the optional alertThreshold query param.
+ * Returns { alertThreshold: number } always on success (defaulting to 60 when absent).
+ * Returns { error: string } on invalid input.
+ */
+function parseAlertThreshold(
+  searchParams: URLSearchParams
+): { alertThreshold: number; error?: never } | { alertThreshold?: never; error: string } {
+  const raw = searchParams.get("alertThreshold");
+  if (raw === null) return { alertThreshold: ALERT_THRESHOLD_DEFAULT };
+  if (!/^-?\d+$/.test(raw)) return { error: "alertThreshold must be an integer" };
+  const n = parseInt(raw, 10);
+  if (n < ALERT_THRESHOLD_MIN) return { error: `alertThreshold must be >= ${ALERT_THRESHOLD_MIN}` };
+  if (n > ALERT_THRESHOLD_MAX) return { error: `alertThreshold must be <= ${ALERT_THRESHOLD_MAX}` };
+  return { alertThreshold: n };
 }
 
 /**
@@ -93,11 +114,15 @@ export async function GET(
       return badRequest("id must be a valid UUID");
     }
 
-    // --- Parse windowDays before any DB work ---
+    // --- Parse query params before any DB work ---
     const searchParams = new URL(request.url).searchParams;
     const windowResult = parseWindowDays(searchParams);
     if (windowResult.error) return badRequest(windowResult.error);
     const windowDays = windowResult.windowDays ?? null;
+
+    const alertResult = parseAlertThreshold(searchParams);
+    if (alertResult.error) return badRequest(alertResult.error);
+    const alertThreshold = alertResult.alertThreshold!;
 
     // Fix requestTime once so windowStart is stable for this request.
     const requestTime = new Date();
@@ -143,6 +168,10 @@ export async function GET(
 
     const volatility = computeVolatility(snapshots);
 
+    // sampleSize=0 means no evidence at all — force false regardless of threshold
+    const exceedsThreshold = volatility.sampleSize > 0
+      && volatility.volatilityScore >= alertThreshold;
+
     return successResponse({
       keywordTargetId: id,
       query,
@@ -150,6 +179,8 @@ export async function GET(
       device,
       windowDays,
       windowStartAt: windowStart !== null ? windowStart.toISOString() : null,
+      alertThreshold,
+      exceedsThreshold,
       sampleSize: volatility.sampleSize,
       snapshotCount: snapshots.length,
       averageRankShift: volatility.averageRankShift,
