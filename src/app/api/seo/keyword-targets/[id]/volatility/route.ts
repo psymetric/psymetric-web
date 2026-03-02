@@ -5,18 +5,29 @@
  * SERPSnapshot deltas. This is a compute-on-read, read-only surface.
  *
  * Algorithm:
- *   1. Load all SERPSnapshots for (projectId, query, locale, device), ordered
+ *   1. Load SERPSnapshots for (projectId, query, locale, device), ordered
  *      capturedAt ASC, id ASC (deterministic).
- *   2. Compute pairwise deltas between each consecutive snapshot pair (N-1 pairs).
- *   3. Aggregate into volatility metrics (see volatility-service.ts for formula).
+ *   2. If windowDays is provided, filter to capturedAt >= windowStart before
+ *      passing to computeVolatility. The DB WHERE clause does the filtering,
+ *      not in-memory, so the index is used.
+ *   3. Compute pairwise deltas between each consecutive snapshot pair (N-1 pairs).
+ *   4. Aggregate into volatility metrics.
+ *
+ * windowDays:
+ *   Optional integer query param (1–365). When supplied:
+ *   - windowStart is computed as: new Date(requestTime - windowDays * 86400000)
+ *   - requestTime is fixed once at the start of the request (not re-sampled).
+ *   - Only snapshots with capturedAt >= windowStart are included.
+ *   - windowDays and windowStartAt are echoed in the response.
+ *   - computedAt and windowStartAt are excluded from hammer determinism checks
+ *     because they carry wall-clock timestamps.
  *
  * Constraints:
  *   - No DB writes. No EventLog. Read-only surface.
  *   - Project-scoped (404 non-disclosure on cross-project access).
- *   - sampleSize = number of consecutive snapshot pairs evaluated (= snapshotCount - 1).
- *   - sampleSize=0 if fewer than 2 snapshots exist.
- *   - Deterministic: same snapshot set always produces identical output.
- *   - 400 for invalid UUID.
+ *   - Deterministic: same snapshot set + same windowDays always produces
+ *     identical score fields (wall-clock fields excluded from determinism).
+ *   - 400 for invalid UUID, invalid windowDays.
  *   - 404 for missing or cross-project keywordTarget.
  */
 import { NextRequest } from "next/server";
@@ -33,10 +44,38 @@ import { computeVolatility } from "@/lib/seo/volatility-service";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+const WINDOW_DAYS_MIN = 1;
+const WINDOW_DAYS_MAX = 365;
+
 type RouteParams = { id: string };
 
 function isPromise<T>(v: unknown): v is Promise<T> {
-  return !!v && typeof (v as any).then === "function";
+  return !!v && typeof (v as Record<string, unknown>).then === "function";
+}
+
+/**
+ * Parse and validate the optional windowDays query param.
+ * Returns { windowDays: number } on success, { error: string } on failure,
+ * or { windowDays: null } when the param is absent.
+ */
+function parseWindowDays(
+  searchParams: URLSearchParams
+): { windowDays: number | null; error?: never } | { windowDays?: never; error: string } {
+  const raw = searchParams.get("windowDays");
+  if (raw === null) return { windowDays: null };
+
+  // Must be a string that looks like a non-negative integer (no decimals, no signs other than nothing)
+  if (!/^\d+$/.test(raw)) {
+    return { error: "windowDays must be an integer" };
+  }
+  const n = parseInt(raw, 10);
+  if (n < WINDOW_DAYS_MIN) {
+    return { error: `windowDays must be >= ${WINDOW_DAYS_MIN}` };
+  }
+  if (n > WINDOW_DAYS_MAX) {
+    return { error: `windowDays must be <= ${WINDOW_DAYS_MAX}` };
+  }
+  return { windowDays: n };
 }
 
 export async function GET(
@@ -47,15 +86,24 @@ export async function GET(
     const { projectId, error } = await resolveProjectId(request);
     if (error) return badRequest(error);
 
-    // Next.js App Router params may be a Promise depending on Next version.
-    // Support both to avoid returning 400 for valid UUIDs.
     const resolvedParams = isPromise<RouteParams>(params) ? await params : params;
     const id = resolvedParams?.id;
 
-    // --- Validate UUID format ---
     if (!id || !UUID_RE.test(id)) {
       return badRequest("id must be a valid UUID");
     }
+
+    // --- Parse windowDays before any DB work ---
+    const searchParams = new URL(request.url).searchParams;
+    const windowResult = parseWindowDays(searchParams);
+    if (windowResult.error) return badRequest(windowResult.error);
+    const windowDays = windowResult.windowDays ?? null;
+
+    // Fix requestTime once so windowStart is stable for this request.
+    const requestTime = new Date();
+    const windowStart: Date | null = windowDays !== null
+      ? new Date(requestTime.getTime() - windowDays * 24 * 60 * 60 * 1000)
+      : null;
 
     // --- Resolve KeywordTarget (project-scoped, 404 non-disclosure) ---
     const keywordTarget = await prisma.keywordTarget.findUnique({
@@ -75,10 +123,15 @@ export async function GET(
 
     const { query, locale, device } = keywordTarget;
 
-    // --- Load all snapshots for this target: ASC for pairwise delta computation ---
-    // rawPayload is required for rank extraction in the volatility service.
+    // --- Load snapshots, applying window filter at the DB level ---
     const snapshots = await prisma.sERPSnapshot.findMany({
-      where: { projectId, query, locale, device },
+      where: {
+        projectId,
+        query,
+        locale,
+        device,
+        ...(windowStart !== null ? { capturedAt: { gte: windowStart } } : {}),
+      },
       orderBy: [{ capturedAt: "asc" }, { id: "asc" }],
       select: {
         id: true,
@@ -88,7 +141,6 @@ export async function GET(
       },
     });
 
-    // --- Compute volatility (pure function, no DB writes) ---
     const volatility = computeVolatility(snapshots);
 
     return successResponse({
@@ -96,6 +148,8 @@ export async function GET(
       query,
       locale,
       device,
+      windowDays,
+      windowStartAt: windowStart !== null ? windowStart.toISOString() : null,
       sampleSize: volatility.sampleSize,
       snapshotCount: snapshots.length,
       averageRankShift: volatility.averageRankShift,
@@ -103,7 +157,7 @@ export async function GET(
       featureVolatility: volatility.featureVolatility,
       aiOverviewChurn: volatility.aiOverviewChurn,
       volatilityScore: volatility.volatilityScore,
-      computedAt: new Date().toISOString(),
+      computedAt: requestTime.toISOString(),
     });
   } catch (err) {
     console.error("GET /api/seo/keyword-targets/:id/volatility error:", err);

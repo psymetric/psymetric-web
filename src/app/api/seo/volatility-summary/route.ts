@@ -4,68 +4,17 @@
  * Aggregates volatility scores across all KeywordTargets in the current project.
  * Read-only. No writes. No EventLog. No schema changes.
  *
- * ─────────────────────────────────────────────────────────────────────────────
- * ISOLATION MODEL
- * ─────────────────────────────────────────────────────────────────────────────
+ * windowDays:
+ *   Optional integer query param (1–365). When supplied, only snapshots with
+ *   capturedAt >= (requestTime - windowDays * 86400s) are included in the
+ *   single batch snapshot query. The WHERE clause is applied in the DB, not
+ *   in memory, so the capturedAt index is used.
+ *   windowDays is echoed in the response. requestTime is fixed once at the
+ *   top of the request handler.
  *
- * Project scope is resolved exclusively via resolveProjectId(request), which
- * reads x-project-id or x-project-slug headers (or falls back to the default
- * project). All DB queries are scoped WHERE projectId = resolvedProjectId.
- * A request carrying headers for project B cannot see project A's data.
- * No projectId in the URL path.
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * ALGORITHM
- * ─────────────────────────────────────────────────────────────────────────────
- *
- * 1. resolveProjectId(request) → projectId (400 on bad header, falls back to default).
- * 2. Load all KeywordTargets WHERE projectId (deterministic: createdAt asc, id asc).
- * 3. Load all SERPSnapshots WHERE projectId in ONE query (capturedAt asc, id asc).
- *    This is O(1) DB round-trips regardless of keyword count K.
- * 4. Group snapshots in memory by composite key "query\0locale\0device".
- *    \0 is safe: normalizeQuery() produces no null bytes.
- * 5. For each KeywordTarget call computeVolatility(snapshots) — pure function,
- *    zero I/O, identical to SIL-3 per-keyword surface.
- * 6. Aggregate into bucket counts and derived metrics.
- * 7. Return { data: { ... } }.
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * BUCKET DEFINITIONS
- * ─────────────────────────────────────────────────────────────────────────────
- *
- * stableCount        volatilityScore === 0   covers both sampleSize=0 (no
- *                                            snapshots yet) and genuinely
- *                                            unmoved keywords. Both are
- *                                            operationally "not alarming".
- *                                            Combining them keeps the bucket
- *                                            invariant (sum = keywordCount)
- *                                            without introducing a fifth bucket
- *                                            that would require schema or
- *                                            contract changes.
- * lowVolatilityCount    1 ≤ score < 30
- * mediumVolatilityCount 30 ≤ score < 60
- * highVolatilityCount   score ≥ 60
- *
- * Thresholds calibrated to RANK_SHIFT_CAP=20 used in the formula:
- *   score=30 ≈ average 6-position sustained drift  (noteworthy, monitor)
- *   score=60 ≈ average 12-position sustained drift (actionable, investigate)
- *
- * averageVolatility: mean over ALL keywords (including score=0).
- * Rationale: excluding zero-score keywords inflates the average and
- * misrepresents project-wide stability. A project with 100 dormant keywords
- * and 2 chaotic ones should not report an average of 75.
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * COMPLEXITY
- * ─────────────────────────────────────────────────────────────────────────────
- *
- * DB:       O(K) KeywordTarget rows + O(K×S) SERPSnapshot rows, 2 queries total.
- * Memory:   O(K×S) for the snapshot map.
- * Compute:  O(K×S) pairwise delta work inside computeVolatility().
- *
- * At K=200 keywords, S=50 snapshots: 10,000 rows, ~9,800 pair comparisons.
- * This is acceptable for compute-on-read at Phase 1 scale.
- * Materialization becomes appropriate when K×S > ~50,000 or call rate > 10/min.
+ * Isolation: resolveProjectId(request) — headers only, no URL path param.
+ * Complexity: O(1) DB queries, O(K×S) memory + compute where S is the
+ *   snapshot count within the window.
  */
 
 import { NextRequest } from "next/server";
@@ -76,12 +25,43 @@ import { computeVolatility } from "@/lib/seo/volatility-service";
 
 const HIGH_THRESHOLD   = 60;
 const MEDIUM_THRESHOLD = 30;
-// low: 1 ≤ score < 30   stable: score === 0
+
+const WINDOW_DAYS_MIN = 1;
+const WINDOW_DAYS_MAX = 365;
+
+/**
+ * Parse and validate the optional windowDays query param.
+ * Shared validation logic mirrors the SIL-3 route — kept inline to avoid
+ * a shared util file for two call sites. If a third endpoint needs this,
+ * extract to lib/seo/window-param.ts.
+ */
+function parseWindowDays(
+  searchParams: URLSearchParams
+): { windowDays: number | null; error?: never } | { windowDays?: never; error: string } {
+  const raw = searchParams.get("windowDays");
+  if (raw === null) return { windowDays: null };
+  if (!/^\d+$/.test(raw)) return { error: "windowDays must be an integer" };
+  const n = parseInt(raw, 10);
+  if (n < WINDOW_DAYS_MIN) return { error: `windowDays must be >= ${WINDOW_DAYS_MIN}` };
+  if (n > WINDOW_DAYS_MAX) return { error: `windowDays must be <= ${WINDOW_DAYS_MAX}` };
+  return { windowDays: n };
+}
 
 export async function GET(request: NextRequest) {
   try {
     const { projectId, error } = await resolveProjectId(request);
     if (error) return badRequest(error);
+
+    const searchParams = new URL(request.url).searchParams;
+    const windowResult = parseWindowDays(searchParams);
+    if (windowResult.error) return badRequest(windowResult.error);
+    const windowDays = windowResult.windowDays ?? null;
+
+    // Fix requestTime once so the window boundary is stable for this request.
+    const requestTime = new Date();
+    const windowStart: Date | null = windowDays !== null
+      ? new Date(requestTime.getTime() - windowDays * 24 * 60 * 60 * 1000)
+      : null;
 
     // ── Load KeywordTargets ─────────────────────────────────────────────────
     const targets = await prisma.keywordTarget.findMany({
@@ -94,6 +74,7 @@ export async function GET(request: NextRequest) {
 
     if (keywordCount === 0) {
       return successResponse({
+        windowDays,
         keywordCount: 0,
         activeKeywordCount: 0,
         averageVolatility: 0,
@@ -105,9 +86,12 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // ── Load all snapshots for the project in one query ─────────────────────
+    // ── Load all snapshots for the project in one query (window-filtered) ───
     const allSnapshots = await prisma.sERPSnapshot.findMany({
-      where: { projectId },
+      where: {
+        projectId,
+        ...(windowStart !== null ? { capturedAt: { gte: windowStart } } : {}),
+      },
       orderBy: [{ capturedAt: "asc" }, { id: "asc" }],
       select: {
         id: true,
@@ -171,6 +155,7 @@ export async function GET(request: NextRequest) {
       Math.round((volatilitySum / keywordCount) * 100) / 100;
 
     return successResponse({
+      windowDays,
       keywordCount,
       activeKeywordCount,
       averageVolatility,

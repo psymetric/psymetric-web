@@ -159,6 +159,82 @@ try {
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
+# ── VS-W1: windowDays=1 → 200, required fields + windowDays echoed ───────────
+try {
+    Write-Host "Testing: GET volatility-summary windowDays=1 -> 200 + required fields + echo" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$s4Url?windowDays=1" -Method GET -Headers $Headers `
+        -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
+    if ($resp.StatusCode -eq 200) {
+        $d = ($resp.Content | ConvertFrom-Json).data
+        $props = $d | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
+        $required = @("windowDays","keywordCount","activeKeywordCount","averageVolatility",
+                      "maxVolatility","highVolatilityCount","mediumVolatilityCount",
+                      "lowVolatilityCount","stableCount")
+        $missing = $required | Where-Object { $props -notcontains $_ }
+        $echoOk  = ($d.windowDays -eq 1)
+        if ($missing.Count -eq 0 -and $echoOk) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (missing=" + ($missing -join ",") + " echoOk=" + $echoOk + ")") -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── VS-W2: invalid windowDays → 400 ─────────────────────────────────────────
+Test-Endpoint "GET" "$s4Url?windowDays=0" 400 `
+    "GET volatility-summary windowDays=0 -> 400" $Headers
+Test-Endpoint "GET" "$s4Url?windowDays=abc" 400 `
+    "GET volatility-summary windowDays=abc -> 400" $Headers
+Test-Endpoint "GET" "$s4Url?windowDays=366" 400 `
+    "GET volatility-summary windowDays=366 -> 400" $Headers
+
+# ── VS-W3: bucket invariant holds under windowDays=1 ─────────────────────────
+try {
+    Write-Host "Testing: GET volatility-summary windowDays=1 bucket counts sum to keywordCount" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$s4Url?windowDays=1" -Method GET -Headers $Headers `
+        -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
+    if ($resp.StatusCode -eq 200) {
+        $d = ($resp.Content | ConvertFrom-Json).data
+        $bucketSum = [int]$d.highVolatilityCount + [int]$d.mediumVolatilityCount +
+                     [int]$d.lowVolatilityCount  + [int]$d.stableCount
+        if ($bucketSum -eq [int]$d.keywordCount) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (bucketSum=" + $bucketSum + " != keywordCount=" + $d.keywordCount + ")") -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── VS-W4: windowed determinism — two calls with windowDays=30 match ─────────
+try {
+    Write-Host "Testing: GET volatility-summary windowDays=30 deterministic (two calls match)" -NoNewline
+    $r1 = Invoke-WebRequest -Uri "$s4Url?windowDays=30" -Method GET -Headers $Headers `
+        -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
+    $r2 = Invoke-WebRequest -Uri "$s4Url?windowDays=30" -Method GET -Headers $Headers `
+        -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
+    if ($r1.StatusCode -eq 200 -and $r2.StatusCode -eq 200) {
+        $d1 = ($r1.Content | ConvertFrom-Json).data
+        $d2 = ($r2.Content | ConvertFrom-Json).data
+        # windowStartAt is not in the SIL-4 response — only windowDays (stable) is.
+        $match = (
+            [int]$d1.windowDays            -eq [int]$d2.windowDays            -and
+            [int]$d1.keywordCount          -eq [int]$d2.keywordCount          -and
+            [int]$d1.activeKeywordCount    -eq [int]$d2.activeKeywordCount    -and
+            [double]$d1.averageVolatility  -eq [double]$d2.averageVolatility  -and
+            [double]$d1.maxVolatility      -eq [double]$d2.maxVolatility      -and
+            [int]$d1.highVolatilityCount   -eq [int]$d2.highVolatilityCount   -and
+            [int]$d1.mediumVolatilityCount -eq [int]$d2.mediumVolatilityCount -and
+            [int]$d1.lowVolatilityCount    -eq [int]$d2.lowVolatilityCount    -and
+            [int]$d1.stableCount           -eq [int]$d2.stableCount
+        )
+        if ($match) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (avg1=" + $d1.averageVolatility + " avg2=" + $d2.averageVolatility + ")") -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (status1=" + $r1.StatusCode + " status2=" + $r2.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
 # ── VS-6: activeKeywordCount and non-zero bucket reflect SIL-3's scored keyword ─
 # SIL-3 created a KeywordTarget with 3 snapshots and aiOverviewChurn=2 (score > 0).
 # That target must appear in activeKeywordCount >= 1 and at least one non-stable bucket.

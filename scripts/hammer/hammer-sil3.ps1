@@ -217,4 +217,126 @@ if (-not $s3KtId) {
             else { Write-Host ("  FAIL (score=" + $score + " out of range [0,100])") -ForegroundColor Red; Hammer-Record FAIL }
         } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
     } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+    # ── VL-J: windowDays=1 → 200, windowDays echoed in response ──────────────
+    try {
+        Write-Host "Testing: GET volatility windowDays=1 -> 200 + windowDays echoed" -NoNewline
+        $resp = Invoke-WebRequest -Uri "$Base/api/seo/keyword-targets/$s3KtId/volatility?windowDays=1" `
+            -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 200) {
+            $d = ($resp.Content | ConvertFrom-Json).data
+            if ($d.windowDays -eq 1 -and $null -ne $d.windowStartAt) {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } else {
+                Write-Host ("  FAIL (windowDays=" + $d.windowDays + " windowStartAt=" + $d.windowStartAt + ")") -ForegroundColor Red; Hammer-Record FAIL
+            }
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+    } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+    # ── VL-K: windowDays=1 with recent snapshots → sampleSize reflects window ─
+    # The 3 snapshots created above all have capturedAt within the last hour.
+    # windowDays=1 includes them; sampleSize must still be 2 (3 snaps - 1 pair).
+    try {
+        Write-Host "Testing: GET volatility windowDays=1 includes recent snapshots (sampleSize=2)" -NoNewline
+        $resp = Invoke-WebRequest -Uri "$Base/api/seo/keyword-targets/$s3KtId/volatility?windowDays=1" `
+            -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 200) {
+            $d = ($resp.Content | ConvertFrom-Json).data
+            if ($d.sampleSize -eq 2) {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } else {
+                Write-Host ("  FAIL (sampleSize=" + $d.sampleSize + ", expected 2)") -ForegroundColor Red; Hammer-Record FAIL
+            }
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+    } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+    # ── VL-L: old-snapshot outside window → sampleSize drops ─────────────────
+    # Create a snapshot with capturedAt 400 days ago (outside windowDays=365).
+    # Without window: sampleSize increases. With windowDays=365: old snap excluded.
+    $s3OldSnapCreated = $false
+    try {
+        Write-Host "Testing: SIL-3 setup: create snapshot with capturedAt 400 days ago" -NoNewline
+        $oldCapturedAt = (Get-Date).AddDays(-400).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+        $body = @{
+            query=$s3Query; locale=$s3Locale; device=$s3Device
+            capturedAt=$oldCapturedAt
+            rawPayload=@{results=@(
+                @{url="https://example.com/alpha";rank=5;title="Alpha"}
+                @{url="https://example.com/beta"; rank=6;title="Beta"}
+            )}
+            source="dataforseo"; aiOverviewStatus="absent"
+        }
+        $resp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshots" -Method POST -Headers $Headers `
+            -Body ($body | ConvertTo-Json -Depth 10 -Compress) -ContentType "application/json" `
+            -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 201 -or $resp.StatusCode -eq 200) {
+            $s3OldSnapCreated = $true
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+    } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+    # Without window: sampleSize must now be 3 (4 snaps, 3 pairs)
+    # With windowDays=365: old snap excluded, sampleSize still 2
+    if ($s3OldSnapCreated) {
+        try {
+            Write-Host "Testing: GET volatility no-window includes old snap (sampleSize=3)" -NoNewline
+            $resp = Invoke-WebRequest -Uri "$Base/api/seo/keyword-targets/$s3KtId/volatility" `
+                -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+            if ($resp.StatusCode -eq 200) {
+                $d = ($resp.Content | ConvertFrom-Json).data
+                if ($d.sampleSize -eq 3) {
+                    Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+                } else {
+                    Write-Host ("  FAIL (sampleSize=" + $d.sampleSize + ", expected 3)") -ForegroundColor Red; Hammer-Record FAIL
+                }
+            } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+        } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+        try {
+            Write-Host "Testing: GET volatility windowDays=365 excludes 400-day-old snap (sampleSize=2)" -NoNewline
+            $resp = Invoke-WebRequest -Uri "$Base/api/seo/keyword-targets/$s3KtId/volatility?windowDays=365" `
+                -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+            if ($resp.StatusCode -eq 200) {
+                $d = ($resp.Content | ConvertFrom-Json).data
+                if ($d.sampleSize -eq 2 -and $d.windowDays -eq 365) {
+                    Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+                } else {
+                    Write-Host ("  FAIL (sampleSize=" + $d.sampleSize + " windowDays=" + $d.windowDays + ", expected 2/365)") -ForegroundColor Red; Hammer-Record FAIL
+                }
+            } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+        } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+    } else {
+        Write-Host "Testing: GET volatility no-window sampleSize=3  SKIP (old snap not created)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+        Write-Host "Testing: GET volatility windowDays=365 sampleSize=2  SKIP (old snap not created)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+    }
+
+    # ── VL-M: invalid windowDays values → 400 ────────────────────────────────
+    Test-Endpoint "GET" "$Base/api/seo/keyword-targets/$s3KtId/volatility?windowDays=0" 400 `
+        "GET volatility windowDays=0 -> 400" $Headers
+    Test-Endpoint "GET" "$Base/api/seo/keyword-targets/$s3KtId/volatility?windowDays=abc" 400 `
+        "GET volatility windowDays=abc -> 400" $Headers
+    Test-Endpoint "GET" "$Base/api/seo/keyword-targets/$s3KtId/volatility?windowDays=366" 400 `
+        "GET volatility windowDays=366 -> 400" $Headers
+
+    # ── VL-N: windowed determinism — two calls with same windowDays match ─────
+    try {
+        Write-Host "Testing: GET volatility windowDays=30 deterministic (two calls match)" -NoNewline
+        $wUrl = "$Base/api/seo/keyword-targets/$s3KtId/volatility?windowDays=30"
+        $r1 = Invoke-WebRequest -Uri $wUrl -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        $r2 = Invoke-WebRequest -Uri $wUrl -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($r1.StatusCode -eq 200 -and $r2.StatusCode -eq 200) {
+            $d1 = ($r1.Content | ConvertFrom-Json).data
+            $d2 = ($r2.Content | ConvertFrom-Json).data
+            # Exclude computedAt and windowStartAt — wall-clock fields.
+            $match = (
+                $d1.windowDays       -eq $d2.windowDays       -and
+                $d1.volatilityScore  -eq $d2.volatilityScore  -and
+                $d1.sampleSize       -eq $d2.sampleSize       -and
+                $d1.averageRankShift -eq $d2.averageRankShift -and
+                $d1.aiOverviewChurn  -eq $d2.aiOverviewChurn
+            )
+            if ($match) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+            else { Write-Host ("  FAIL (score1=" + $d1.volatilityScore + " score2=" + $d2.volatilityScore + ")") -ForegroundColor Red; Hammer-Record FAIL }
+        } else { Write-Host ("  FAIL (status1=" + $r1.StatusCode + " status2=" + $r2.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+    } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 }
