@@ -21,6 +21,9 @@ $_parseTargets = @(
     "$PSScriptRoot\hammer\hammer-sil4.ps1"
     "$PSScriptRoot\hammer\hammer-sil5.ps1"
     "$PSScriptRoot\hammer\hammer-sil6.ps1"
+    "$PSScriptRoot\hammer\hammer-sil7.ps1"
+    "$PSScriptRoot\hammer\hammer-sil8.ps1"
+    "$PSScriptRoot\hammer\hammer-sil8-a1.ps1"
 )
 foreach ($_pt in $_parseTargets) {
     $_tokens = $null
@@ -60,6 +63,8 @@ if ($_seed -and $_seed.data -and $_seed.data.Count -gt 0) { $entityId = $_seed.d
 . "$PSScriptRoot\hammer\hammer-sil5.ps1"
 . "$PSScriptRoot\hammer\hammer-sil6.ps1"
 . "$PSScriptRoot\hammer\hammer-sil7.ps1"
+. "$PSScriptRoot\hammer\hammer-sil8.ps1"
+. "$PSScriptRoot\hammer\hammer-sil8-a1.ps1"
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 Write-Host ""

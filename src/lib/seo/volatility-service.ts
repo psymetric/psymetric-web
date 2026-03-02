@@ -426,6 +426,32 @@ export function computeVolatility(
  */
 export type VolatilityMaturity = "preliminary" | "developing" | "stable";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Regime classification (SIL-8 B1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Volatility regime — operator-facing label derived from the rounded
+ * volatilityScore (2 decimal places, as produced by computeVolatility).
+ *
+ * Boundary mapping (exact — from SIL-8 spec):
+ *   calm:     0.00 <= score <= 20.00
+ *   shifting: 20.00 < score <= 50.00
+ *   unstable: 50.00 < score <= 75.00
+ *   chaotic:  score > 75.00
+ *
+ * Input MUST already be rounded to 2 decimal places.
+ * No additional rounding is performed here.
+ */
+export type VolatilityRegime = "calm" | "shifting" | "unstable" | "chaotic";
+
+export function classifyRegime(volatilityScore: number): VolatilityRegime {
+  if (volatilityScore <= 20.00) return "calm";
+  if (volatilityScore <= 50.00) return "shifting";
+  if (volatilityScore <= 75.00) return "unstable";
+  return "chaotic";
+}
+
 export function classifyMaturity(sampleSize: number): VolatilityMaturity {
   if (sampleSize >= 20) return "stable";
   if (sampleSize >= 5)  return "developing";
