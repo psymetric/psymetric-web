@@ -526,3 +526,216 @@ try {
         Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
     } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 400)") -ForegroundColor Red; Hammer-Record FAIL }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# =============================================================================
+# SIL-9.2: SUPPRESSION TESTS
+# =============================================================================
+
+Hammer-Section "SIL-9.2 TESTS (DETERMINISTIC ALERT SUPPRESSION)"
+
+# ── SIL9-S1: suppressionMode=none returns >= alerts as default ────────────────
+# none bypasses all suppression; default applies maxPerKeyword + latestPerKeyword.
+# So none should produce >= as many alerts as default for the same query.
+try {
+    Write-Host "Testing: SIL9-S1 /alerts suppressionMode=none returns >= alerts than default" -NoNewline
+    $urlNone    = "$Base$sil9Base`?windowDays=30&spikeThreshold=0&suppressionMode=none"
+    $urlDefault = "$Base$sil9Base`?windowDays=30&spikeThreshold=0"
+    $rNone    = Invoke-WebRequest -Uri $urlNone    -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    $rDefault = Invoke-WebRequest -Uri $urlDefault -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($rNone.StatusCode -eq 200 -and $rDefault.StatusCode -eq 200) {
+        $noneTotal    = [int]($rNone.Content    | ConvertFrom-Json).data.totalAlerts
+        $defaultTotal = [int]($rDefault.Content | ConvertFrom-Json).data.totalAlerts
+        if ($noneTotal -ge $defaultTotal) {
+            Write-Host "  PASS (none=$noneTotal default=$defaultTotal)" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (none=" + $noneTotal + " < default=" + $defaultTotal + ")") -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (none=" + $rNone.StatusCode + " default=" + $rDefault.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── SIL9-S2: default suppression reduces T2 count vs none when pairs exist ────
+# With spikeThreshold=0, every pair emits a T2 candidate. maxPerKeyword should
+# reduce that to at most 1 T2 per keyword. This test is data-dependent; SKIP if
+# no pairs exist in window (totalAlerts=0 for both modes).
+try {
+    Write-Host "Testing: SIL9-S2 /alerts default suppression reduces T2 vs none" -NoNewline
+    $urlNone    = "$Base$sil9Base`?windowDays=30&spikeThreshold=0&suppressionMode=none"
+    $urlDefault = "$Base$sil9Base`?windowDays=30&spikeThreshold=0"
+    $rNone    = Invoke-WebRequest -Uri $urlNone    -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    $rDefault = Invoke-WebRequest -Uri $urlDefault -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($rNone.StatusCode -eq 200 -and $rDefault.StatusCode -eq 200) {
+        $noneT2    = @(($rNone.Content    | ConvertFrom-Json).data.alerts | Where-Object { $_.triggerType -eq "T2" }).Count
+        $defaultT2 = @(($rDefault.Content | ConvertFrom-Json).data.alerts | Where-Object { $_.triggerType -eq "T2" }).Count
+        if ($noneT2 -eq 0) {
+            Write-Host "  SKIP (no T2 alerts in none mode; cannot verify reduction)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+        } elseif ($defaultT2 -le $noneT2) {
+            Write-Host "  PASS (none.T2=$noneT2 default.T2=$defaultT2)" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (default T2=" + $defaultT2 + " > none T2=" + $noneT2 + ")") -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (status none=" + $rNone.StatusCode + " default=" + $rDefault.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── SIL9-S3: t2Mode=maxPerKeyword returns at most 1 T2 per keywordTargetId ────
+try {
+    Write-Host "Testing: SIL9-S3 /alerts t2Mode=maxPerKeyword returns at most 1 T2 per keywordTargetId" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$Base$sil9Base`?windowDays=30&spikeThreshold=0&t2Mode=maxPerKeyword&suppressionMode=none" `
+        -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    # Note: suppressionMode=none disables OTHER suppressions but t2Mode= is explicit,
+    # so we test t2Mode directly with suppressionMode=none for t1/t3 neutrality.
+    # Actually t2Mode overrides the default — use suppressionMode=default to ensure t2Mode=maxPerKeyword path fires.
+    $resp = Invoke-WebRequest -Uri "$Base$sil9Base`?windowDays=30&spikeThreshold=0&t2Mode=maxPerKeyword" `
+        -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 200) {
+        $t2s = @(($resp.Content | ConvertFrom-Json).data.alerts | Where-Object { $_.triggerType -eq "T2" })
+        if ($t2s.Count -eq 0) {
+            Write-Host "  SKIP (no T2 alerts; cannot verify per-keyword constraint)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+        } else {
+            # Group by keywordTargetId, assert each group has exactly 1
+            $byKtId = $t2s | Group-Object -Property keywordTargetId
+            $overOne = $byKtId | Where-Object { $_.Count -gt 1 }
+            if ($overOne.Count -eq 0) {
+                Write-Host "  PASS (all keywordTargetIds have <= 1 T2)" -ForegroundColor Green; Hammer-Record PASS
+            } else {
+                Write-Host ("  FAIL (" + $overOne.Count + " keywords have >1 T2)") -ForegroundColor Red; Hammer-Record FAIL
+            }
+        }
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── SIL9-S4: determinism under suppression (two calls identical) ──────────────
+try {
+    Write-Host "Testing: SIL9-S4 /alerts determinism under default suppression" -NoNewline
+    $url = "$Base$sil9Base`?windowDays=30&spikeThreshold=0"
+    $r1  = Invoke-WebRequest -Uri $url -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    $r2  = Invoke-WebRequest -Uri $url -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($r1.StatusCode -eq 200 -and $r2.StatusCode -eq 200) {
+        $d1 = ($r1.Content | ConvertFrom-Json).data
+        $d2 = ($r2.Content | ConvertFrom-Json).data
+        $arr1 = ($d1.alerts | ConvertTo-Json -Depth 10 -Compress)
+        $arr2 = ($d2.alerts | ConvertTo-Json -Depth 10 -Compress)
+        $nc1  = $d1.nextCursor
+        $nc2  = $d2.nextCursor
+        if ($arr1 -eq $arr2 -and $nc1 -eq $nc2 -and $d1.totalAlerts -eq $d2.totalAlerts) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host "  FAIL (results differ between two calls under default suppression)" -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (status=" + $r1.StatusCode + "/" + $r2.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── SIL9-S5: pagination still works under suppression (no duplicates across pages) ─
+try {
+    Write-Host "Testing: SIL9-S5 /alerts pagination under suppression produces no duplicate alerts" -NoNewline
+    # Page 1
+    $url1 = "$Base$sil9Base`?windowDays=30&spikeThreshold=0&limit=1"
+    $r1   = Invoke-WebRequest -Uri $url1 -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($r1.StatusCode -ne 200) {
+        Write-Host ("  FAIL (page1 status=" + $r1.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
+    } else {
+        $d1  = ($r1.Content | ConvertFrom-Json).data
+        $nc1 = $d1.nextCursor
+        $tot = [int]$d1.totalAlerts
+        if ($tot -lt 2 -or $null -eq $nc1) {
+            Write-Host "  SKIP (fewer than 2 suppressed alerts or no nextCursor)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+        } else {
+            # Page 2 via cursor
+            $url2 = "$Base$sil9Base`?windowDays=30&spikeThreshold=0&limit=1&cursor=$([System.Uri]::EscapeDataString($nc1))"
+            $r2   = Invoke-WebRequest -Uri $url2 -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+            if ($r2.StatusCode -ne 200) {
+                Write-Host ("  FAIL (page2 status=" + $r2.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
+            } else {
+                $items1 = @($d1.alerts)
+                $items2 = @(($r2.Content | ConvertFrom-Json).data.alerts)
+                if ($items2.Count -eq 0) {
+                    Write-Host "  FAIL (page2 empty despite totalAlerts >= 2)" -ForegroundColor Red; Hammer-Record FAIL
+                } else {
+                    $p1json = ($items1[0] | ConvertTo-Json -Depth 10 -Compress)
+                    $p2json = ($items2[0] | ConvertTo-Json -Depth 10 -Compress)
+                    if ($p1json -ne $p2json) {
+                        Write-Host "  PASS (page2 item differs from page1 — no duplicate)" -ForegroundColor Green; Hammer-Record PASS
+                    } else {
+                        Write-Host "  FAIL (page2 item[0] duplicates page1 item[0] under suppression)" -ForegroundColor Red; Hammer-Record FAIL
+                    }
+                }
+            }
+        }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── SIL9-S6: t3Mode=deltaOnly — deterministic, no throw, respects delta rule ──
+# This test is data-dependent. It verifies:
+#   (a) the param is accepted (no 400)
+#   (b) the response is deterministic
+#   (c) if T3 fires with deltaOnly, its volatilityConcentrationRatio is non-null
+#   (d) suppressionMode param validation: bad value -> 400
+try {
+    Write-Host "Testing: SIL9-S6 /alerts t3Mode=deltaOnly accepted + deterministic" -NoNewline
+    $url = "$Base$sil9Base`?windowDays=30&concentrationThreshold=0.0&t3Mode=deltaOnly"
+    $r1  = Invoke-WebRequest -Uri $url -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    $r2  = Invoke-WebRequest -Uri $url -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($r1.StatusCode -eq 200 -and $r2.StatusCode -eq 200) {
+        $arr1 = ($r1.Content | ConvertFrom-Json).data.alerts | ConvertTo-Json -Depth 10 -Compress
+        $arr2 = ($r2.Content | ConvertFrom-Json).data.alerts | ConvertTo-Json -Depth 10 -Compress
+        if ($arr1 -ne $arr2) {
+            Write-Host "  FAIL (deltaOnly non-deterministic between two calls)" -ForegroundColor Red; Hammer-Record FAIL
+        } else {
+            # If T3 fired, ratio must be non-null
+            $t3s = @(($r1.Content | ConvertFrom-Json).data.alerts | Where-Object { $_.triggerType -eq "T3" })
+            if ($t3s.Count -gt 0 -and $null -eq $t3s[0].volatilityConcentrationRatio) {
+                Write-Host "  FAIL (T3 fired via deltaOnly with null ratio)" -ForegroundColor Red; Hammer-Record FAIL
+            } else {
+                $note = if ($t3s.Count -gt 0) { " (T3 fired)" } else { " (T3 suppressed; may lack prior-window data)" }
+                Write-Host ("  PASS" + $note) -ForegroundColor Green; Hammer-Record PASS
+            }
+        }
+    } else { Write-Host ("  FAIL (status=" + $r1.StatusCode + "/" + $r2.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── SIL9-S7: suppressionMode invalid value -> 400 ────────────────────────────
+try {
+    Write-Host "Testing: SIL9-S7 /alerts suppressionMode=invalid -> 400" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$Base$sil9Base`?windowDays=30&suppressionMode=aggressive" `
+        -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 400) {
+        Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 400)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── SIL9-S8: t2Mode invalid value -> 400 ─────────────────────────────────────
+try {
+    Write-Host "Testing: SIL9-S8 /alerts t2Mode=invalid -> 400" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$Base$sil9Base`?windowDays=30&t2Mode=topOne" `
+        -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 400) {
+        Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 400)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── SIL9-S9: t1Mode=upwardOnlyLatest returns no downward T1 transitions ───────
+# A downward T1 transition has toRegime < fromRegime (i.e. recovery).
+# upwardOnlyLatest must suppress all such transitions.
+# We map regime names to integers in PowerShell for comparison.
+try {
+    Write-Host "Testing: SIL9-S9 /alerts t1Mode=upwardOnlyLatest returns no downward T1 transitions" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$Base$sil9Base`?windowDays=30&t1Mode=upwardOnlyLatest" `
+        -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 200) {
+        $t1s = @(($resp.Content | ConvertFrom-Json).data.alerts | Where-Object { $_.triggerType -eq "T1" })
+        if ($t1s.Count -eq 0) {
+            Write-Host "  SKIP (no T1 alerts; cannot verify upward-only constraint)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+        } else {
+            $regimeRank = @{ "calm" = 0; "shifting" = 1; "unstable" = 2; "chaotic" = 3 }
+            $downward = $t1s | Where-Object {
+                $fromRank = $regimeRank[$_.fromRegime]
+                $toRank   = $regimeRank[$_.toRegime]
+                $toRank -le $fromRank  # downward or lateral (should be suppressed)
+            }
+            if ($downward.Count -eq 0) {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } else {
+                Write-Host ("  FAIL (" + $downward.Count + " downward T1 transitions returned with upwardOnlyLatest)") -ForegroundColor Red; Hammer-Record FAIL
+            }
+        }
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
