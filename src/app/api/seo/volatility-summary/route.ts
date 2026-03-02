@@ -4,6 +4,17 @@
  * Aggregates volatility scores across all KeywordTargets in the current project.
  * Read-only. No writes. No EventLog. No schema changes.
  *
+ * SIL-8 B2 additions (patch — no existing semantics modified):
+ *   weightedProjectVolatilityScore — SUM(score_i * sampleSize_i) / SUM(sampleSize_i)
+ *     Only active keywords (sampleSize > 0) included. Returns 0.00 if no active keywords.
+ *   volatilityConcentrationRatio — top3VolatilitySum / totalVolatilitySum (active only).
+ *     Returns null if totalVolatilitySum = 0. Rounded to 4 decimals.
+ *   top3RiskKeywords — up to 3 active keywords sorted: volatilityScore DESC, query ASC,
+ *     keywordTargetId ASC. Per-item: keywordTargetId, query, volatilityScore,
+ *     volatilityRegime, volatilityMaturity, exceedsThreshold.
+ *
+ * All three metrics computed in the existing O(K*S) loop — no new DB queries.
+ *
  * windowDays:
  *   Optional integer query param (1–365). When supplied, only snapshots with
  *   capturedAt >= (requestTime - windowDays * 86400s) are included in the
@@ -21,7 +32,11 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { badRequest, serverError, successResponse } from "@/lib/api-response";
 import { resolveProjectId } from "@/lib/project";
-import { computeVolatility, classifyMaturity } from "@/lib/seo/volatility-service";
+import {
+  computeVolatility,
+  classifyMaturity,
+  classifyRegime,
+} from "@/lib/seo/volatility-service";
 
 const HIGH_THRESHOLD   = 60;
 const MEDIUM_THRESHOLD = 30;
@@ -35,9 +50,6 @@ const ALERT_THRESHOLD_MAX     = 100;
 
 /**
  * Parse and validate the optional windowDays query param.
- * Shared validation logic mirrors the SIL-3 route — kept inline to avoid
- * a shared util file for two call sites. If a third endpoint needs this,
- * extract to lib/seo/window-param.ts.
  */
 function parseWindowDays(
   searchParams: URLSearchParams
@@ -92,23 +104,28 @@ export async function GET(request: NextRequest) {
 
     const keywordCount = targets.length;
 
+    // B2 zero-keyword short-circuit — all new fields initialised to their empty-state values.
     if (keywordCount === 0) {
       return successResponse({
         windowDays,
         alertThreshold,
-        alertKeywordCount: 0,
-        alertRatio: 0,
-        keywordCount: 0,
-        activeKeywordCount: 0,
-        averageVolatility: 0,
-        maxVolatility: 0,
-        highVolatilityCount: 0,
-        mediumVolatilityCount: 0,
-        lowVolatilityCount: 0,
-        stableCount: 0,
-        preliminaryCount: 0,
-        developingCount: 0,
-        stableCountByMaturity: 0,
+        alertKeywordCount:              0,
+        alertRatio:                     0,
+        keywordCount:                   0,
+        activeKeywordCount:             0,
+        averageVolatility:              0,
+        maxVolatility:                  0,
+        highVolatilityCount:            0,
+        mediumVolatilityCount:          0,
+        lowVolatilityCount:             0,
+        stableCount:                    0,
+        preliminaryCount:               0,
+        developingCount:                0,
+        stableCountByMaturity:          0,
+        // B2 additions
+        weightedProjectVolatilityScore: 0,
+        volatilityConcentrationRatio:   null,
+        top3RiskKeywords:               [],
       });
     }
 
@@ -159,21 +176,43 @@ export async function GET(request: NextRequest) {
     let stableCount             = 0;
     let maxVolatility           = 0;
     let volatilitySum           = 0;
-    // Maturity distribution — orthogonal to volatility buckets
     let preliminaryCount        = 0;
     let developingCount         = 0;
     let stableCountByMaturity   = 0;
-    // Alert signal — sampleSize>=1 AND score>=alertThreshold
     let alertKeywordCount       = 0;
+
+    // B2 accumulators
+    let weightedScoreSum  = 0; // SUM(volatilityScore_i * sampleSize_i) — active only
+    let weightedSizeSum   = 0; // SUM(sampleSize_i) — active only
+    let totalVolatilitySum = 0; // SUM(volatilityScore_i) — active only (for concentration)
+
+    // Collect active keyword records for top3 sort (allocated once, max keywordCount entries)
+    interface ActiveRecord {
+      keywordTargetId: string;
+      query:           string;
+      volatilityScore: number;
+      sampleSize:      number;
+    }
+    const activeRecords: ActiveRecord[] = [];
 
     for (const target of targets) {
       const key = `${target.query}\0${target.locale}\0${target.device}`;
       const snapshots = snapshotMap.get(key) ?? [];
       const profile = computeVolatility(snapshots);
 
-      if (profile.sampleSize >= 1) activeKeywordCount++;
+      const score    = profile.volatilityScore;
+      const ss       = profile.sampleSize;
+      const isActive = ss >= 1;
 
-      const score = profile.volatilityScore;
+      if (isActive) {
+        activeKeywordCount++;
+        // B2: accumulate weighted score and total for active keywords only
+        weightedScoreSum   += score * ss;
+        weightedSizeSum    += ss;
+        totalVolatilitySum += score;
+        activeRecords.push({ keywordTargetId: target.id, query: target.query, volatilityScore: score, sampleSize: ss });
+      }
+
       volatilitySum += score;
       if (score > maxVolatility) maxVolatility = score;
 
@@ -182,12 +221,12 @@ export async function GET(request: NextRequest) {
       else if (score >= 1)                lowVolatilityCount++;
       else                                stableCount++;
 
-      const maturity = classifyMaturity(profile.sampleSize);
-      if (maturity === "stable")      stableCountByMaturity++;
+      const maturity = classifyMaturity(ss);
+      if (maturity === "stable")          stableCountByMaturity++;
       else if (maturity === "developing") developingCount++;
       else                                preliminaryCount++;
 
-      if (profile.sampleSize >= 1 && score >= alertThreshold) alertKeywordCount++;
+      if (isActive && score >= alertThreshold) alertKeywordCount++;
     }
 
     const averageVolatility =
@@ -196,6 +235,43 @@ export async function GET(request: NextRequest) {
     const alertRatio = keywordCount > 0
       ? Math.round((alertKeywordCount / keywordCount) * 10000) / 10000
       : 0;
+
+    // ── B2: weightedProjectVolatilityScore ───────────────────────────────────
+    // 0.00 when no active keywords (SUM(sampleSize) = 0).
+    const weightedProjectVolatilityScore =
+      weightedSizeSum > 0
+        ? Math.round((weightedScoreSum / weightedSizeSum) * 100) / 100
+        : 0;
+
+    // ── B2: top3RiskKeywords (deterministic sort, then slice) ────────────────
+    // Sort: volatilityScore DESC, query ASC, keywordTargetId ASC
+    activeRecords.sort((a, b) => {
+      if (b.volatilityScore !== a.volatilityScore) return b.volatilityScore - a.volatilityScore;
+      if (a.query !== b.query) return a.query.localeCompare(b.query);
+      if (a.keywordTargetId < b.keywordTargetId) return -1;
+      if (a.keywordTargetId > b.keywordTargetId) return 1;
+      return 0;
+    });
+
+    const top3Records = activeRecords.slice(0, 3);
+
+    const top3RiskKeywords = top3Records.map((r) => ({
+      keywordTargetId:   r.keywordTargetId,
+      query:             r.query,
+      volatilityScore:   r.volatilityScore,
+      volatilityRegime:  classifyRegime(r.volatilityScore),
+      volatilityMaturity: classifyMaturity(r.sampleSize),
+      exceedsThreshold:  r.volatilityScore >= alertThreshold,
+    }));
+
+    // ── B2: volatilityConcentrationRatio ─────────────────────────────────────
+    // null when totalVolatilitySum = 0 (no signal to concentrate).
+    let volatilityConcentrationRatio: number | null = null;
+    if (totalVolatilitySum > 0) {
+      const top3Sum = top3Records.reduce((acc, r) => acc + r.volatilityScore, 0);
+      volatilityConcentrationRatio =
+        Math.round((top3Sum / totalVolatilitySum) * 10000) / 10000;
+    }
 
     return successResponse({
       windowDays,
@@ -213,6 +289,10 @@ export async function GET(request: NextRequest) {
       preliminaryCount,
       developingCount,
       stableCountByMaturity,
+      // B2 additions
+      weightedProjectVolatilityScore,
+      volatilityConcentrationRatio,
+      top3RiskKeywords,
     });
   } catch (err) {
     console.error("GET /api/seo/volatility-summary error:", err);
