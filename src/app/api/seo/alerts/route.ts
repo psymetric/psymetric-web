@@ -1,6 +1,8 @@
 /**
  * GET /api/seo/alerts — SIL-9 Option A: Compute-on-Read Alert Surface (MVP T1–T3)
  *
+ * SIL-9.1 additions: alert filtering + deterministic keyset pagination.
+ *
  * Returns deterministic alert records derived from snapshot history.
  * No writes. No EventLog. No schema changes. No background jobs.
  * All trigger conditions are functions of included snapshot rows only.
@@ -18,17 +20,30 @@
  *         (B2 formula) > concentrationThreshold and is non-null.
  *
  * Query params:
- *   windowDays            required   integer 1–30
- *   spikeThreshold        optional   float 0–100, default 75.00
- *   concentrationThreshold optional  float 0–1,   default 0.80
- *   limit                 optional   integer 1–200, default 100
+ *   windowDays             required  integer 1–30
+ *   spikeThreshold         optional  float 0–100,  default 75.00
+ *   concentrationThreshold optional  float 0–1,    default 0.80
+ *   limit                  optional  integer 1–200, default 100
+ *   cursor                 optional  opaque base64url string (keyset pagination)
  *
- * Deterministic ordering (per SIL-9 spec):
- *   1. severityRank DESC  (derived from trigger type + regime transition map)
- *   2. toCapturedAt DESC  (for keyword alerts; for T3 = latestCapturedAt in window)
+ * SIL-9.1 filter params (all optional, all validated before any DB work):
+ *   triggerTypes           comma-separated subset of T1,T2,T3
+ *                          If absent → all types returned.
+ *                          If keywordTargetId present → T3 automatically excluded.
+ *   keywordTargetId        UUID — filters to alerts for a single keyword;
+ *                          T3 (project-scope) is excluded when this is present.
+ *   minSeverityRank        integer 0–999 — excludes alerts with severityRank below this.
+ *   minPairVolatilityScore float 0–100 — only applied to T2 alerts; T1/T3 unaffected.
+ *
+ * Deterministic ordering (unchanged from SIL-9):
+ *   1. severityRank DESC
+ *   2. toCapturedAt DESC
  *   3. triggerType ASC
  *   4. keywordTargetId ASC (nulls last)
  *   5. toSnapshotId DESC  (nulls last)
+ *
+ * Keyset cursor encodes all five sort key fields as base64url JSON.
+ * isAfterCursor() mirrors compareAlerts() exactly.
  *
  * Isolation: resolveProjectId(request) — headers only.
  *   /alerts is a project-scope endpoint; no :id in path; all data scoped to resolved projectId.
@@ -64,6 +79,15 @@ const LIMIT_DEFAULT = 100;
 const LIMIT_MIN     = 1;
 const LIMIT_MAX     = 200;
 
+const MIN_SEVERITY_RANK_MIN = 0;
+const MIN_SEVERITY_RANK_MAX = 999;
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const VALID_TRIGGER_TYPES = new Set(["T1", "T2", "T3"] as const);
+type TriggerTypeToken = "T1" | "T2" | "T3";
+
 // =============================================================================
 // Severity rank — derived from trigger type + regime transition direction.
 // Higher rank = higher severity. Never stored; always derived at sort time.
@@ -90,12 +114,12 @@ function t1SeverityRank(fromRegime: VolatilityRegime, toRegime: VolatilityRegime
   // Escalation: rank by destination regime and jump distance
   const jump = to - from;
   if (to === 3) {
-    // → chaotic
-    return jump >= 3 ? 5 : jump === 2 ? 5 : 4; // calm→chaotic or shifting→chaotic = 5, unstable→chaotic = 4
+    // → chaotic: calm→chaotic or shifting→chaotic = 5, unstable→chaotic = 4
+    return jump >= 2 ? 5 : 4;
   }
   if (to === 2) {
-    // → unstable
-    return jump === 2 ? 4 : 3; // calm→unstable = 4, shifting→unstable = 3
+    // → unstable: calm→unstable = 4, shifting→unstable = 3
+    return jump === 2 ? 4 : 3;
   }
   // → shifting (calm→shifting) = 2
   return 2;
@@ -142,31 +166,190 @@ interface T2Alert {
 }
 
 interface T3Alert {
-  triggerType:                 "T3";
-  projectId:                   string;
+  triggerType:                  "T3";
+  projectId:                    string;
   volatilityConcentrationRatio: number;
-  threshold:                   number;
-  top3RiskKeywords:            Array<{
-    keywordTargetId: string;
-    query:           string;
-    volatilityScore: number;
+  threshold:                    number;
+  top3RiskKeywords:             Array<{
+    keywordTargetId:  string;
+    query:            string;
+    volatilityScore:  number;
     volatilityRegime: VolatilityRegime;
   }>;
   activeKeywordCount: number;
   // sort-assist (latestCapturedAt in window, used as toCapturedAt equivalent)
-  _severityRank:      number;
-  _toCapturedAtMs:    number;
-  _toSnapshotId:      null;
-  _keywordTargetId:   null;
+  _severityRank:     number;
+  _toCapturedAtMs:   number;
+  _toSnapshotId:     null;
+  _keywordTargetId:  null;
 }
 
 type AnyAlert = T1Alert | T2Alert | T3Alert;
 
 // Emitted shapes (sort-assist fields stripped)
-type T1Emitted  = Omit<T1Alert, "_severityRank" | "_toCapturedAtMs" | "_toSnapshotId" | "_keywordTargetId">;
-type T2Emitted  = Omit<T2Alert, "_severityRank" | "_toCapturedAtMs" | "_toSnapshotId" | "_keywordTargetId">;
-type T3Emitted  = Omit<T3Alert, "_severityRank" | "_toCapturedAtMs" | "_toSnapshotId" | "_keywordTargetId">;
+type T1Emitted    = Omit<T1Alert, "_severityRank" | "_toCapturedAtMs" | "_toSnapshotId" | "_keywordTargetId">;
+type T2Emitted    = Omit<T2Alert, "_severityRank" | "_toCapturedAtMs" | "_toSnapshotId" | "_keywordTargetId">;
+type T3Emitted    = Omit<T3Alert, "_severityRank" | "_toCapturedAtMs" | "_toSnapshotId" | "_keywordTargetId">;
 type AlertEmitted = T1Emitted | T2Emitted | T3Emitted;
+
+// =============================================================================
+// Cursor
+//
+// Payload fields (abbreviated keys for compactness):
+//   s  — severityRank (number)
+//   t  — toCapturedAtMs (number, unix ms)
+//   tt — triggerType ("T1" | "T2" | "T3")
+//   k  — keywordTargetId (string | null)
+//   sn — toSnapshotId (string | null)
+//
+// Encoded as base64url(JSON.stringify(payload)).
+// Decoded payload is validated before use; malformed → 400.
+// =============================================================================
+
+interface CursorPayload {
+  s:  number;
+  t:  number;
+  tt: TriggerTypeToken;
+  k:  string | null;
+  sn: string | null;
+}
+
+function encodeCursor(alert: AnyAlert): string {
+  const payload: CursorPayload = {
+    s:  alert._severityRank,
+    t:  alert._toCapturedAtMs,
+    tt: alert.triggerType,
+    k:  alert._keywordTargetId,
+    sn: alert._toSnapshotId,
+  };
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function decodeCursor(
+  raw: string
+): { payload: CursorPayload } | { error: string } {
+  try {
+    const json = Buffer.from(raw, "base64url").toString("utf8");
+    const p = JSON.parse(json) as Record<string, unknown>;
+    if (
+      typeof p.s  !== "number" ||
+      typeof p.t  !== "number" ||
+      typeof p.tt !== "string" ||
+      !VALID_TRIGGER_TYPES.has(p.tt as TriggerTypeToken) ||
+      (p.k  !== null && typeof p.k  !== "string") ||
+      (p.sn !== null && typeof p.sn !== "string")
+    ) {
+      return { error: "cursor is invalid: missing or malformed fields" };
+    }
+    return {
+      payload: {
+        s:  p.s  as number,
+        t:  p.t  as number,
+        tt: p.tt as TriggerTypeToken,
+        k:  p.k  as string | null,
+        sn: p.sn as string | null,
+      },
+    };
+  } catch {
+    return { error: "cursor is invalid: not valid base64url JSON" };
+  }
+}
+
+// =============================================================================
+// Deterministic sort comparator
+//
+// Order (per SIL-9 spec — unchanged in SIL-9.1):
+//   1. severityRank DESC
+//   2. toCapturedAt DESC
+//   3. triggerType ASC
+//   4. keywordTargetId ASC (nulls last)
+//   5. toSnapshotId DESC (nulls last)
+// =============================================================================
+
+function compareAlerts(a: AnyAlert, b: AnyAlert): number {
+  // 1. severityRank DESC
+  if (b._severityRank !== a._severityRank) return b._severityRank - a._severityRank;
+  // 2. toCapturedAt DESC
+  if (b._toCapturedAtMs !== a._toCapturedAtMs) return b._toCapturedAtMs - a._toCapturedAtMs;
+  // 3. triggerType ASC
+  if (a.triggerType < b.triggerType) return -1;
+  if (a.triggerType > b.triggerType) return 1;
+  // 4. keywordTargetId ASC (nulls last)
+  const aKtId = a._keywordTargetId;
+  const bKtId = b._keywordTargetId;
+  if (aKtId === null && bKtId === null) {
+    // both null — proceed to next key
+  } else if (aKtId === null) {
+    return 1;
+  } else if (bKtId === null) {
+    return -1;
+  } else {
+    const cmp = aKtId.localeCompare(bKtId);
+    if (cmp !== 0) return cmp;
+  }
+  // 5. toSnapshotId DESC (nulls last)
+  const aSnId = a._toSnapshotId;
+  const bSnId = b._toSnapshotId;
+  if (aSnId === null && bSnId === null) return 0;
+  if (aSnId === null) return 1;
+  if (bSnId === null) return -1;
+  if (bSnId > aSnId) return 1;
+  if (bSnId < aSnId) return -1;
+  return 0;
+}
+
+// =============================================================================
+// isAfterCursor — returns true when alert comes strictly AFTER cursor position
+// in the total ordering defined by compareAlerts.
+//
+// This mirrors compareAlerts key-by-key. "After" in DESC fields means smaller
+// value; "after" in ASC fields means larger value. Nulls-last rules preserved.
+//
+// CRITICAL: must stay in sync with compareAlerts. If the sort order changes,
+// this function must change too.
+// =============================================================================
+
+function isAfterCursor(alert: AnyAlert, cur: CursorPayload): boolean {
+  // 1. severityRank DESC — after means alert.s < cur.s
+  if (alert._severityRank !== cur.s) return alert._severityRank < cur.s;
+
+  // 2. toCapturedAt DESC — after means alert.t < cur.t
+  if (alert._toCapturedAtMs !== cur.t) return alert._toCapturedAtMs < cur.t;
+
+  // 3. triggerType ASC — after means alert.tt > cur.tt
+  if (alert.triggerType !== cur.tt) return alert.triggerType > cur.tt;
+
+  // 4. keywordTargetId ASC (nulls last)
+  const ak = alert._keywordTargetId;
+  const ck = cur.k;
+  if (ak !== ck) {
+    if (ak === null) return true;   // null is last → alert comes after non-null cursor
+    if (ck === null) return false;  // alert is non-null, cursor is null → alert comes before
+    return ak.localeCompare(ck) > 0;
+  }
+
+  // 5. toSnapshotId DESC (nulls last)
+  const asn = alert._toSnapshotId;
+  const csn = cur.sn;
+  if (asn !== csn) {
+    if (asn === null) return true;  // null is last → after
+    if (csn === null) return false;
+    return asn < csn; // DESC — after means smaller string
+  }
+
+  // Exact match on all keys — not strictly after
+  return false;
+}
+
+// =============================================================================
+// Strip sort-assist fields before returning to client
+// =============================================================================
+
+function stripSortFields(alert: AnyAlert): AlertEmitted {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { _severityRank, _toCapturedAtMs, _toSnapshotId, _keywordTargetId, ...emitted } = alert;
+  return emitted as AlertEmitted;
+}
 
 // =============================================================================
 // Param parsers
@@ -220,57 +403,66 @@ function parseLimit(
   return { limit: n };
 }
 
-// =============================================================================
-// Deterministic sort comparator
-//
-// Order (per SIL-9 spec):
-//   1. severityRank DESC
-//   2. toCapturedAt DESC
-//   3. triggerType ASC
-//   4. keywordTargetId ASC (nulls last)
-//   5. toSnapshotId DESC (nulls last)
-// =============================================================================
-
-function compareAlerts(a: AnyAlert, b: AnyAlert): number {
-  // 1. severityRank DESC
-  if (b._severityRank !== a._severityRank) return b._severityRank - a._severityRank;
-  // 2. toCapturedAt DESC
-  if (b._toCapturedAtMs !== a._toCapturedAtMs) return b._toCapturedAtMs - a._toCapturedAtMs;
-  // 3. triggerType ASC
-  if (a.triggerType < b.triggerType) return -1;
-  if (a.triggerType > b.triggerType) return 1;
-  // 4. keywordTargetId ASC (nulls last)
-  const aKtId = a._keywordTargetId;
-  const bKtId = b._keywordTargetId;
-  if (aKtId === null && bKtId === null) {
-    // both null — proceed to next key
-  } else if (aKtId === null) {
-    return 1; // a goes after b
-  } else if (bKtId === null) {
-    return -1;
-  } else {
-    const cmp = aKtId.localeCompare(bKtId);
-    if (cmp !== 0) return cmp;
+function parseTriggerTypes(
+  sp: URLSearchParams
+): { triggerTypes: Set<TriggerTypeToken> | null } | { error: string } {
+  const raw = sp.get("triggerTypes");
+  if (raw === null) return { triggerTypes: null }; // null = no filter, all types
+  const tokens = raw.split(",").map((t) => t.trim());
+  if (tokens.length === 0 || (tokens.length === 1 && tokens[0] === "")) {
+    return { error: "triggerTypes must not be empty" };
   }
-  // 5. toSnapshotId DESC (nulls last)
-  const aSnId = a._toSnapshotId;
-  const bSnId = b._toSnapshotId;
-  if (aSnId === null && bSnId === null) return 0;
-  if (aSnId === null) return 1;
-  if (bSnId === null) return -1;
-  if (bSnId > aSnId) return 1;
-  if (bSnId < aSnId) return -1;
-  return 0;
+  const set = new Set<TriggerTypeToken>();
+  for (const token of tokens) {
+    if (!VALID_TRIGGER_TYPES.has(token as TriggerTypeToken)) {
+      return { error: `triggerTypes contains invalid token: "${token}". Valid values: T1, T2, T3` };
+    }
+    set.add(token as TriggerTypeToken);
+  }
+  return { triggerTypes: set };
 }
 
-// =============================================================================
-// Strip sort-assist fields before returning to client
-// =============================================================================
+function parseKeywordTargetId(
+  sp: URLSearchParams
+): { keywordTargetId: string | null } | { error: string } {
+  const raw = sp.get("keywordTargetId");
+  if (raw === null) return { keywordTargetId: null };
+  if (!UUID_RE.test(raw)) return { error: "keywordTargetId must be a valid UUID" };
+  return { keywordTargetId: raw };
+}
 
-function stripSortFields(alert: AnyAlert): AlertEmitted {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { _severityRank, _toCapturedAtMs, _toSnapshotId, _keywordTargetId, ...emitted } = alert;
-  return emitted as AlertEmitted;
+function parseMinSeverityRank(
+  sp: URLSearchParams
+): { minSeverityRank: number | null } | { error: string } {
+  const raw = sp.get("minSeverityRank");
+  if (raw === null) return { minSeverityRank: null };
+  if (!/^\d+$/.test(raw)) return { error: "minSeverityRank must be an integer" };
+  const n = parseInt(raw, 10);
+  if (n < MIN_SEVERITY_RANK_MIN) return { error: `minSeverityRank must be >= ${MIN_SEVERITY_RANK_MIN}` };
+  if (n > MIN_SEVERITY_RANK_MAX) return { error: `minSeverityRank must be <= ${MIN_SEVERITY_RANK_MAX}` };
+  return { minSeverityRank: n };
+}
+
+function parseMinPairVolatilityScore(
+  sp: URLSearchParams
+): { minPairVolatilityScore: number | null } | { error: string } {
+  const raw = sp.get("minPairVolatilityScore");
+  if (raw === null) return { minPairVolatilityScore: null };
+  const n = parseFloat(raw);
+  if (isNaN(n)) return { error: "minPairVolatilityScore must be a number" };
+  if (n < 0)   return { error: "minPairVolatilityScore must be >= 0" };
+  if (n > 100) return { error: "minPairVolatilityScore must be <= 100" };
+  return { minPairVolatilityScore: n };
+}
+
+function parseCursor(
+  sp: URLSearchParams
+): { cursor: CursorPayload | null } | { error: string } {
+  const raw = sp.get("cursor");
+  if (raw === null) return { cursor: null };
+  const result = decodeCursor(raw);
+  if ("error" in result) return { error: result.error };
+  return { cursor: result.payload };
 }
 
 // =============================================================================
@@ -284,6 +476,7 @@ export async function GET(request: NextRequest) {
 
     const sp = new URL(request.url).searchParams;
 
+    // -- Parse all params before any DB work ----------------------------------
     const windowResult = parseWindowDays(sp);
     if ("error" in windowResult) return badRequest(windowResult.error);
     const windowDays = windowResult.windowDays;
@@ -300,8 +493,31 @@ export async function GET(request: NextRequest) {
     if ("error" in limitResult) return badRequest(limitResult.error);
     const limit = limitResult.limit;
 
+    const ttResult = parseTriggerTypes(sp);
+    if ("error" in ttResult) return badRequest(ttResult.error);
+    const triggerTypesFilter = ttResult.triggerTypes; // null = no filter
+
+    const ktIdResult = parseKeywordTargetId(sp);
+    if ("error" in ktIdResult) return badRequest(ktIdResult.error);
+    const keywordTargetIdFilter = ktIdResult.keywordTargetId; // null = no filter
+
+    const minSevResult = parseMinSeverityRank(sp);
+    if ("error" in minSevResult) return badRequest(minSevResult.error);
+    const minSeverityRank = minSevResult.minSeverityRank; // null = no filter
+
+    const minPvsResult = parseMinPairVolatilityScore(sp);
+    if ("error" in minPvsResult) return badRequest(minPvsResult.error);
+    const minPairVolatilityScore = minPvsResult.minPairVolatilityScore; // null = no filter
+
+    const cursorResult = parseCursor(sp);
+    if ("error" in cursorResult) return badRequest(cursorResult.error);
+    const cursorPayload = cursorResult.cursor; // null = first page
+
+    // If keywordTargetId filter is present, T3 is excluded (T3 is project-scope,
+    // not keyword-scope; its keywordTargetId is null, which cannot match a UUID).
+    // This is enforced in the filter step below — no special branching needed here.
+
     // Single requestTime anchor — all window boundaries derived here.
-    // Alert trigger conditions are functions of snapshot rows only.
     const requestTime = new Date();
     const windowStart = new Date(requestTime.getTime() - windowDays * 24 * 60 * 60 * 1000);
 
@@ -349,15 +565,15 @@ export async function GET(request: NextRequest) {
       if (ms > latestCapturedAtMs) latestCapturedAtMs = ms;
     }
 
-    // ── Collect alerts ────────────────────────────────────────────────────────
-    const alerts: AnyAlert[] = [];
+    // ── Collect all candidate alerts (unfiltered) ─────────────────────────────
+    const allAlerts: AnyAlert[] = [];
 
     // T2 dedup key set: (keywordTargetId, toSnapshotId, threshold)
     const t2DedupSet = new Set<string>();
 
     // B2 accumulators for T3
-    let activeKeywordCount   = 0;
-    let totalVolatilitySum   = 0;
+    let activeKeywordCount = 0;
+    let totalVolatilitySum = 0;
     interface ActiveRecord {
       keywordTargetId: string;
       query:           string;
@@ -366,14 +582,10 @@ export async function GET(request: NextRequest) {
     const activeRecords: ActiveRecord[] = [];
 
     for (const target of targets) {
-      const key  = `${target.query}\0${target.locale}\0${target.device}`;
+      const key   = `${target.query}\0${target.locale}\0${target.device}`;
       const snaps = snapshotMap.get(key) ?? [];
 
-      // Need at least 2 snapshots for any pair-based trigger
-      if (snaps.length < 2) {
-        // Still accumulate for T3 (sampleSize=0, score=0 — but that means not active)
-        continue;
-      }
+      if (snaps.length < 2) continue;
 
       // Compute all consecutive pairs
       interface PairRecord {
@@ -400,8 +612,7 @@ export async function GET(request: NextRequest) {
         });
       }
 
-      // Keyword-level volatility for T3 B2 accumulation
-      // Use computeVolatility across all pairs (pass all snaps)
+      // Accumulate full-keyword volatility for T3
       const fullProfile = computeVolatility(snaps);
       if (fullProfile.sampleSize >= 1) {
         activeKeywordCount++;
@@ -414,8 +625,6 @@ export async function GET(request: NextRequest) {
       }
 
       // ── T1: Regime Transition ─────────────────────────────────────────────
-      // Compare last pair regime vs second-to-last pair regime.
-      // Requires >= 2 pairs (>= 3 snapshots).
       if (pairs.length >= 2) {
         const lastPair = pairs[pairs.length - 1];
         const prevPair = pairs[pairs.length - 2];
@@ -423,7 +632,7 @@ export async function GET(request: NextRequest) {
           const fromRegime = prevPair.regime;
           const toRegime   = lastPair.regime;
           const sevRank    = t1SeverityRank(fromRegime, toRegime);
-          alerts.push({
+          allAlerts.push({
             triggerType:         "T1",
             keywordTargetId:     target.id,
             query:               target.query,
@@ -443,15 +652,13 @@ export async function GET(request: NextRequest) {
       }
 
       // ── T2: Spike Threshold Exceedance ────────────────────────────────────
-      // Emit for each pair where pairVolatilityScore > spikeThreshold.
-      // Dedup within response by (keywordTargetId, toSnapshotId, threshold).
       for (const pair of pairs) {
         if (pair.pairVolatilityScore > spikeThreshold) {
           const dedupKey = `${target.id}\0${pair.toSnapshotId}\0${spikeThreshold}`;
           if (!t2DedupSet.has(dedupKey)) {
             t2DedupSet.add(dedupKey);
             const exceedanceMargin = Math.round((pair.pairVolatilityScore - spikeThreshold) * 100) / 100;
-            alerts.push({
+            allAlerts.push({
               triggerType:         "T2",
               keywordTargetId:     target.id,
               query:               target.query,
@@ -473,29 +680,25 @@ export async function GET(request: NextRequest) {
     }
 
     // ── T3: Risk Concentration Exceedance ─────────────────────────────────────
-    // Compute concentration ratio using B2 formula.
-    // Emitted at most once per request.
-    let volatilityConcentrationRatio: number | null = null;
     if (totalVolatilitySum > 0) {
-      // Sort for top3: volatilityScore DESC, query ASC, keywordTargetId ASC
       activeRecords.sort((a, b) => {
         if (b.volatilityScore !== a.volatilityScore) return b.volatilityScore - a.volatilityScore;
         const qCmp = a.query.localeCompare(b.query);
         if (qCmp !== 0) return qCmp;
         return a.keywordTargetId.localeCompare(b.keywordTargetId);
       });
-      const top3 = activeRecords.slice(0, 3);
+      const top3    = activeRecords.slice(0, 3);
       const top3Sum = top3.reduce((acc, r) => acc + r.volatilityScore, 0);
-      volatilityConcentrationRatio = Math.round((top3Sum / totalVolatilitySum) * 10000) / 10000;
+      const volatilityConcentrationRatio = Math.round((top3Sum / totalVolatilitySum) * 10000) / 10000;
 
       if (volatilityConcentrationRatio > concentrationThreshold) {
         const top3RiskKeywords = top3.map((r) => ({
-          keywordTargetId: r.keywordTargetId,
-          query:           r.query,
-          volatilityScore: r.volatilityScore,
+          keywordTargetId:  r.keywordTargetId,
+          query:            r.query,
+          volatilityScore:  r.volatilityScore,
           volatilityRegime: classifyRegime(r.volatilityScore),
         }));
-        alerts.push({
+        allAlerts.push({
           triggerType:                  "T3",
           projectId,
           volatilityConcentrationRatio,
@@ -509,26 +712,76 @@ export async function GET(request: NextRequest) {
         });
       }
     }
-    // If totalVolatilitySum = 0 → ratio is null → no T3 alert (null guard per spec)
 
     // ── Sort deterministically ────────────────────────────────────────────────
-    alerts.sort(compareAlerts);
+    allAlerts.sort(compareAlerts);
 
-    // ── Apply limit ───────────────────────────────────────────────────────────
-    const page = alerts.slice(0, limit);
+    // ── Apply filters (post-sort; filtering never changes order, only membership) ─
+    // The filtered array preserves relative order of the sorted allAlerts array.
+    const filtered = allAlerts.filter((alert) => {
+      // triggerType filter
+      if (triggerTypesFilter !== null && !triggerTypesFilter.has(alert.triggerType)) {
+        return false;
+      }
+      // keywordTargetId filter — T3 has null _keywordTargetId, so it is
+      // excluded whenever keywordTargetIdFilter is a non-null UUID.
+      if (keywordTargetIdFilter !== null && alert._keywordTargetId !== keywordTargetIdFilter) {
+        return false;
+      }
+      // minSeverityRank filter
+      if (minSeverityRank !== null && alert._severityRank < minSeverityRank) {
+        return false;
+      }
+      // minPairVolatilityScore filter — only applied to T2
+      if (minPairVolatilityScore !== null && alert.triggerType === "T2") {
+        if ((alert as T2Alert).pairVolatilityScore < minPairVolatilityScore) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    // ── Apply cursor (keyset positional cut — in-memory after filter+sort) ────
+    // filtered is already in deterministic sort order.
+    // Find the first item strictly after the cursor position.
+    let startIndex = 0;
+    if (cursorPayload !== null) {
+      // Linear scan to find the first item after cursor.
+      // Correct and deterministic; for typical alert volumes (< 1000) this is fast.
+      let found = false;
+      for (let i = 0; i < filtered.length; i++) {
+        if (isAfterCursor(filtered[i], cursorPayload)) {
+          startIndex = i;
+          found = true;
+          break;
+        }
+      }
+      if (!found) startIndex = filtered.length; // cursor is past the end → empty page
+    }
+
+    // ── Slice page ────────────────────────────────────────────────────────────
+    const page    = filtered.slice(startIndex, startIndex + limit);
+    const hasMore = startIndex + limit < filtered.length;
+
+    // nextCursor encodes the last item on this page (using its sort-assist fields)
+    const nextCursor: string | null = hasMore && page.length > 0
+      ? encodeCursor(page[page.length - 1])
+      : null;
 
     // ── Strip sort-assist fields ──────────────────────────────────────────────
     const emitted = page.map(stripSortFields);
 
     return successResponse({
-      alerts:                   emitted,
-      alertCount:               emitted.length,
-      totalAlerts:              alerts.length,
+      alerts:                emitted,
+      alertCount:            emitted.length,
+      totalAlerts:           filtered.length,
+      nextCursor,
+      hasMore,
       windowDays,
       spikeThreshold,
       concentrationThreshold,
       limit,
-      computedAt:               requestTime.toISOString(),
+      computedAt:            requestTime.toISOString(),
     });
   } catch (err) {
     console.error("GET /api/seo/alerts error:", err);
