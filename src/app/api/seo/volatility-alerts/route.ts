@@ -37,7 +37,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { badRequest, serverError, successResponse } from "@/lib/api-response";
 import { resolveProjectId } from "@/lib/project";
-import { computeVolatility, classifyMaturity, VolatilityMaturity } from "@/lib/seo/volatility-service";
+import { computeVolatility, classifyMaturity, classifyRegime, VolatilityMaturity, VolatilityRegime } from "@/lib/seo/volatility-service";
 
 // =============================================================================
 // Constants
@@ -169,6 +169,7 @@ interface AlertItem {
   aiOverviewComponent:       number;
   featureVolatilityComponent: number;
   maturity:                  VolatilityMaturity;
+  volatilityRegime:          VolatilityRegime;
   sampleSize:                number;
   alertThreshold:            number;
   exceedsThreshold:          true; // always true — items that don't exceed are excluded
@@ -288,6 +289,7 @@ export async function GET(request: NextRequest) {
         aiOverviewComponent:       profile.aiOverviewComponent,
         featureVolatilityComponent: profile.featureVolatilityComponent,
         maturity,
+        volatilityRegime:          classifyRegime(profile.volatilityScore),
         sampleSize:                profile.sampleSize,
         alertThreshold,
         exceedsThreshold:          true,
