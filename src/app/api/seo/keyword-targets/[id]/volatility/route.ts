@@ -8,7 +8,7 @@
  *   1. Load all SERPSnapshots for (projectId, query, locale, device), ordered
  *      capturedAt ASC, id ASC (deterministic).
  *   2. Compute pairwise deltas between each consecutive snapshot pair (N-1 pairs).
- *   3. Aggregate into volatility metrics (see volatilityService.ts for formula).
+ *   3. Aggregate into volatility metrics (see volatility-service.ts for formula).
  *
  * Constraints:
  *   - No DB writes. No EventLog. Read-only surface.
@@ -21,31 +21,52 @@
  */
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { badRequest, notFound, serverError, successResponse } from "@/lib/api-response";
+import {
+  badRequest,
+  notFound,
+  serverError,
+  successResponse,
+} from "@/lib/api-response";
 import { resolveProjectId } from "@/lib/project";
 import { computeVolatility } from "@/lib/seo/volatility-service";
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type RouteParams = { id: string };
+
+function isPromise<T>(v: unknown): v is Promise<T> {
+  return !!v && typeof (v as any).then === "function";
+}
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: RouteParams | Promise<RouteParams> }
 ) {
   try {
     const { projectId, error } = await resolveProjectId(request);
     if (error) return badRequest(error);
 
-    const { id } = params;
+    // Next.js App Router params may be a Promise depending on Next version.
+    // Support both to avoid returning 400 for valid UUIDs.
+    const resolvedParams = isPromise<RouteParams>(params) ? await params : params;
+    const id = resolvedParams?.id;
 
     // --- Validate UUID format ---
-    if (!UUID_RE.test(id)) {
+    if (!id || !UUID_RE.test(id)) {
       return badRequest("id must be a valid UUID");
     }
 
     // --- Resolve KeywordTarget (project-scoped, 404 non-disclosure) ---
     const keywordTarget = await prisma.keywordTarget.findUnique({
       where: { id },
-      select: { id: true, projectId: true, query: true, locale: true, device: true },
+      select: {
+        id: true,
+        projectId: true,
+        query: true,
+        locale: true,
+        device: true,
+      },
     });
 
     if (!keywordTarget || keywordTarget.projectId !== projectId) {
