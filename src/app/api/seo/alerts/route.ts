@@ -83,8 +83,17 @@ const T3_DELTA_ONLY_MIN_DELTA = 0.05;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const VALID_TRIGGER_TYPES = new Set(["T1", "T2", "T3"] as const);
-type TriggerTypeToken = "T1" | "T2" | "T3";
+const VALID_TRIGGER_TYPES = new Set(["T1", "T2", "T3", "T4"] as const);
+type TriggerTypeToken = "T1" | "T2" | "T3" | "T4";
+
+// T4 — AI Churn Cluster constants
+const AI_CHURN_MIN_FLIPS_MIN     = 2;
+const AI_CHURN_MIN_FLIPS_MAX     = 20;
+const AI_CHURN_MAX_GAP_DAYS_DEFAULT = 7;
+const AI_CHURN_MAX_GAP_DAYS_MIN  = 1;
+const AI_CHURN_MAX_GAP_DAYS_MAX  = 30;
+// aiChurnWindowDays defaults to windowDays; same min/max as windowDays
+const MS_PER_DAY = 86_400_000;
 
 // =============================================================================
 // Suppression param types
@@ -167,6 +176,24 @@ function computeT3SeverityRank(
   return clamp(Math.round(70 + exceed * 200), 0, 100);
 }
 
+/**
+ * T4 severity — AI churn cluster density.
+ *
+ * excessFlips = flipCount - aiChurnMinFlips  (>= 0)
+ * tightness   = 1 - (clusterDurationMs / (aiChurnMaxGapDays * MS_PER_DAY)), clamped [0, 1]
+ * result      = clamp(round(65 + excessFlips * 5 + tightness * 20), 0, 100)
+ */
+function computeT4SeverityRank(
+  flipCount:          number,
+  aiChurnMinFlips:    number,
+  clusterDurationMs:  number,
+  aiChurnMaxGapDays:  number,
+): number {
+  const excessFlips = flipCount - aiChurnMinFlips;
+  const tightness   = clamp(1 - clusterDurationMs / (aiChurnMaxGapDays * MS_PER_DAY), 0, 1);
+  return clamp(Math.round(65 + excessFlips * 5 + tightness * 20), 0, 100);
+}
+
 // =============================================================================
 // Alert union types
 // =============================================================================
@@ -223,12 +250,31 @@ interface T3Alert {
   _keywordTargetId:    null;
 }
 
-type AnyAlert = T1Alert | T2Alert | T3Alert;
+interface T4Alert {
+  triggerType:           "T4";
+  keywordTargetId:       string;
+  query:                 string;
+  flipCount:             number;
+  clusterFirstFlipAt:    string; // ISO
+  clusterLastFlipAt:     string; // ISO
+  clusterDurationDays:   number; // rounded 2 decimals
+  aiChurnMinFlips:       number;
+  aiChurnMaxGapDays:     number;
+  aiChurnWindowDays:     number;
+  // sort-assist
+  _severityRank:         number;
+  _toCapturedAtMs:       number;
+  _toSnapshotId:         string;
+  _keywordTargetId:      string;
+}
+
+type AnyAlert = T1Alert | T2Alert | T3Alert | T4Alert;
 
 type T1Emitted    = Omit<T1Alert, "_severityRank" | "_toCapturedAtMs" | "_toSnapshotId" | "_keywordTargetId">;
 type T2Emitted    = Omit<T2Alert, "_severityRank" | "_toCapturedAtMs" | "_toSnapshotId" | "_keywordTargetId">;
 type T3Emitted    = Omit<T3Alert, "_severityRank" | "_toCapturedAtMs" | "_toSnapshotId" | "_keywordTargetId">;
-type AlertEmitted = T1Emitted | T2Emitted | T3Emitted;
+type T4Emitted    = Omit<T4Alert, "_severityRank" | "_toCapturedAtMs" | "_toSnapshotId" | "_keywordTargetId">;
+type AlertEmitted = T1Emitted | T2Emitted | T3Emitted | T4Emitted;
 
 // =============================================================================
 // Cursor
@@ -533,7 +579,7 @@ function parseTriggerTypes(
   const set = new Set<TriggerTypeToken>();
   for (const token of tokens) {
     if (!VALID_TRIGGER_TYPES.has(token as TriggerTypeToken)) {
-      return { error: `triggerTypes contains invalid token: "${token}". Valid values: T1, T2, T3` };
+      return { error: `triggerTypes contains invalid token: "${token}". Valid values: T1, T2, T3, T4` };
     }
     set.add(token as TriggerTypeToken);
   }
@@ -631,6 +677,173 @@ function parseT3Mode(
     return { error: `t3Mode must be "all" or "deltaOnly"` };
   }
   return { t3Mode: raw };
+}
+
+// =============================================================================
+// T4 param parsers
+// =============================================================================
+
+interface T4Params {
+  active:            boolean; // false when T4 not in triggerTypes
+  aiChurnMinFlips:   number;
+  aiChurnMaxGapDays: number;
+  aiChurnWindowDays: number; // resolved (defaults to windowDays)
+}
+
+function parseT4Params(
+  sp: URLSearchParams,
+  triggerTypesFilter: Set<TriggerTypeToken> | null,
+  windowDays: number,
+): { t4: T4Params } | { error: string } {
+  const t4Active = triggerTypesFilter === null
+    ? false // T4 is opt-in; only active when explicitly requested
+    : triggerTypesFilter.has("T4");
+
+  if (!t4Active) {
+    // T4 not requested — parse nothing, return inactive sentinel
+    return {
+      t4: {
+        active:            false,
+        aiChurnMinFlips:   0,
+        aiChurnMaxGapDays: AI_CHURN_MAX_GAP_DAYS_DEFAULT,
+        aiChurnWindowDays: windowDays,
+      },
+    };
+  }
+
+  // T4 is active — aiChurnMinFlips is required
+  const rawMinFlips = sp.get("aiChurnMinFlips");
+  if (rawMinFlips === null) {
+    return { error: "aiChurnMinFlips is required when triggerTypes includes T4" };
+  }
+  if (!/^\d+$/.test(rawMinFlips)) {
+    return { error: "aiChurnMinFlips must be an integer" };
+  }
+  const minFlips = parseInt(rawMinFlips, 10);
+  if (minFlips < AI_CHURN_MIN_FLIPS_MIN) {
+    return { error: `aiChurnMinFlips must be >= ${AI_CHURN_MIN_FLIPS_MIN}` };
+  }
+  if (minFlips > AI_CHURN_MIN_FLIPS_MAX) {
+    return { error: `aiChurnMinFlips must be <= ${AI_CHURN_MIN_FLIPS_MAX}` };
+  }
+
+  const rawMaxGap = sp.get("aiChurnMaxGapDays");
+  let maxGapDays = AI_CHURN_MAX_GAP_DAYS_DEFAULT;
+  if (rawMaxGap !== null) {
+    if (!/^\d+$/.test(rawMaxGap)) return { error: "aiChurnMaxGapDays must be an integer" };
+    maxGapDays = parseInt(rawMaxGap, 10);
+    if (maxGapDays < AI_CHURN_MAX_GAP_DAYS_MIN) return { error: `aiChurnMaxGapDays must be >= ${AI_CHURN_MAX_GAP_DAYS_MIN}` };
+    if (maxGapDays > AI_CHURN_MAX_GAP_DAYS_MAX) return { error: `aiChurnMaxGapDays must be <= ${AI_CHURN_MAX_GAP_DAYS_MAX}` };
+  }
+
+  const rawChurnWin = sp.get("aiChurnWindowDays");
+  let churnWindowDays = windowDays; // default = outer windowDays
+  if (rawChurnWin !== null) {
+    if (!/^\d+$/.test(rawChurnWin)) return { error: "aiChurnWindowDays must be an integer" };
+    churnWindowDays = parseInt(rawChurnWin, 10);
+    if (churnWindowDays < WINDOW_DAYS_MIN) return { error: `aiChurnWindowDays must be >= ${WINDOW_DAYS_MIN}` };
+    if (churnWindowDays > WINDOW_DAYS_MAX) return { error: `aiChurnWindowDays must be <= ${WINDOW_DAYS_MAX}` };
+  }
+
+  return {
+    t4: {
+      active:            true,
+      aiChurnMinFlips:   minFlips,
+      aiChurnMaxGapDays: maxGapDays,
+      aiChurnWindowDays: churnWindowDays,
+    },
+  };
+}
+
+// =============================================================================
+// T4 cluster detection — pure function, no DB calls.
+//
+// Iterates snaps (already sorted capturedAt ASC, id ASC) within aiChurnStart.
+// Collects flip events, then finds the tightest qualifying cluster using a
+// sliding window of aiChurnMinFlips flips.
+//
+// Cluster selection: among all qualifying windows (length >= minFlips, span <=
+// maxGapMs), prefer the sequence ending latest; tie-break: shortest duration.
+// Returns null when no qualifying cluster exists.
+// =============================================================================
+
+interface T4ClusterResult {
+  flipCount:          number;
+  clusterFirstFlipMs: number;
+  clusterLastFlipMs:  number;
+  clusterDurationMs:  number;
+  lastFlipToSnapshotId: string;
+}
+
+function detectT4Cluster(
+  snaps:          Array<{ id: string; capturedAt: Date; aiOverviewStatus: string | null }>,
+  aiChurnStartMs: number,
+  minFlips:       number,
+  maxGapMs:       number,
+): T4ClusterResult | null {
+  // Collect flip events within churn window (pairs where toCapturedAt >= aiChurnStartMs)
+  interface FlipEvent {
+    toCapturedAtMs: number;
+    toSnapshotId:   string;
+  }
+  const flips: FlipEvent[] = [];
+
+  for (let i = 0; i < snaps.length - 1; i++) {
+    const A = snaps[i];
+    const B = snaps[i + 1];
+    const toMs = B.capturedAt.getTime();
+    if (toMs < aiChurnStartMs) continue; // pair outside churn window
+    if (A.aiOverviewStatus !== B.aiOverviewStatus) {
+      flips.push({ toCapturedAtMs: toMs, toSnapshotId: B.id });
+    }
+  }
+
+  if (flips.length < minFlips) return null;
+
+  // Sliding window: find all qualifying sub-sequences of length >= minFlips
+  // within maxGapMs. For determinism, choose:
+  //   1. Latest clusterLastFlipMs
+  //   2. Tie: shortest duration
+  // We check every window of exactly minFlips consecutive flips, then
+  // expand rightward to include additional flips still within maxGapMs.
+
+  let bestResult: T4ClusterResult | null = null;
+
+  for (let i = 0; i <= flips.length - minFlips; i++) {
+    const windowStart = flips[i].toCapturedAtMs;
+    // Find rightmost flip within maxGapMs from windowStart
+    let j = i + minFlips - 1; // minimum right index
+    // Expand right while next flip is still within maxGapMs
+    while (j + 1 < flips.length && flips[j + 1].toCapturedAtMs - windowStart <= maxGapMs) {
+      j++;
+    }
+    const span = flips[j].toCapturedAtMs - windowStart;
+    if (span > maxGapMs) continue; // minimum window itself exceeds gap (shouldn't happen but guard)
+
+    const candidate: T4ClusterResult = {
+      flipCount:            j - i + 1,
+      clusterFirstFlipMs:   windowStart,
+      clusterLastFlipMs:    flips[j].toCapturedAtMs,
+      clusterDurationMs:    span,
+      lastFlipToSnapshotId: flips[j].toSnapshotId,
+    };
+
+    if (bestResult === null) {
+      bestResult = candidate;
+    } else {
+      // Prefer later last flip
+      if (candidate.clusterLastFlipMs > bestResult.clusterLastFlipMs) {
+        bestResult = candidate;
+      } else if (candidate.clusterLastFlipMs === bestResult.clusterLastFlipMs) {
+        // Tie: prefer shorter duration
+        if (candidate.clusterDurationMs < bestResult.clusterDurationMs) {
+          bestResult = candidate;
+        }
+      }
+    }
+  }
+
+  return bestResult;
 }
 
 // =============================================================================
@@ -747,6 +960,11 @@ export async function GET(request: NextRequest) {
     const t3Mode = t3Result.t3Mode;
 
     const suppressionOpts: SuppressionOpts = { suppressionMode, t1Mode, t2Mode, t3Mode };
+
+    // T4 params — parsed after triggerTypes + windowDays are resolved
+    const t4Result = parseT4Params(sp, triggerTypesFilter, windowDays);
+    if ("error" in t4Result) return badRequest(t4Result.error);
+    const t4Params = t4Result.t4;
 
     // Single requestTime anchor — all window boundaries derived here.
     const requestTime  = new Date();
@@ -973,6 +1191,51 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // T4 — AI Churn Cluster (opt-in, per-keyword)
+    if (t4Params.active) {
+      const aiChurnStartMs = requestTime.getTime() - t4Params.aiChurnWindowDays * MS_PER_DAY;
+      const maxGapMs       = t4Params.aiChurnMaxGapDays * MS_PER_DAY;
+
+      for (const target of targets) {
+        const key   = `${target.query}\0${target.locale}\0${target.device}`;
+        const snaps = snapshotMap.get(key) ?? [];
+        if (snaps.length < 2) continue;
+
+        const cluster = detectT4Cluster(
+          snaps,
+          aiChurnStartMs,
+          t4Params.aiChurnMinFlips,
+          maxGapMs,
+        );
+        if (cluster === null) continue;
+
+        const clusterDurationDays =
+          Math.round((cluster.clusterDurationMs / MS_PER_DAY) * 100) / 100;
+
+        allAlerts.push({
+          triggerType:         "T4",
+          keywordTargetId:     target.id,
+          query:               target.query,
+          flipCount:           cluster.flipCount,
+          clusterFirstFlipAt:  new Date(cluster.clusterFirstFlipMs).toISOString(),
+          clusterLastFlipAt:   new Date(cluster.clusterLastFlipMs).toISOString(),
+          clusterDurationDays,
+          aiChurnMinFlips:     t4Params.aiChurnMinFlips,
+          aiChurnMaxGapDays:   t4Params.aiChurnMaxGapDays,
+          aiChurnWindowDays:   t4Params.aiChurnWindowDays,
+          _severityRank:       computeT4SeverityRank(
+                                 cluster.flipCount,
+                                 t4Params.aiChurnMinFlips,
+                                 cluster.clusterDurationMs,
+                                 t4Params.aiChurnMaxGapDays,
+                               ),
+          _toCapturedAtMs:     cluster.clusterLastFlipMs,
+          _toSnapshotId:       cluster.lastFlipToSnapshotId,
+          _keywordTargetId:    target.id,
+        });
+      }
+    }
+
     // ── Sort deterministically ────────────────────────────────────────────────
     allAlerts.sort(compareAlerts);
 
@@ -1038,6 +1301,11 @@ export async function GET(request: NextRequest) {
       t1Mode,
       t2Mode,
       t3Mode,
+      ...(t4Params.active ? {
+        aiChurnMinFlips:   t4Params.aiChurnMinFlips,
+        aiChurnMaxGapDays: t4Params.aiChurnMaxGapDays,
+        aiChurnWindowDays: t4Params.aiChurnWindowDays,
+      } : {}),
       limit,
       computedAt:            requestTime.toISOString(),
     });

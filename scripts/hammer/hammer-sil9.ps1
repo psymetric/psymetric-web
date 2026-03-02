@@ -177,7 +177,7 @@ try {
         if ($items.Count -eq 0) {
             Write-Host "  SKIP (no alerts returned)" -ForegroundColor DarkYellow; Hammer-Record SKIP
         } else {
-            $invalid = $items | Where-Object { @("T1","T2","T3") -notcontains $_.triggerType }
+            $invalid = $items | Where-Object { @("T1","T2","T3","T4") -notcontains $_.triggerType }
             if ($invalid.Count -eq 0) {
                 Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
             } else {
@@ -362,6 +362,142 @@ try {
                 }
             }
         }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# =============================================================================
+# SIL-9 T4: AI CHURN CLUSTER TESTS
+# =============================================================================
+
+Hammer-Section "SIL-9 T4 TESTS (AI CHURN CLUSTER — OPT-IN)"
+
+# ── SIL9-T4-A: triggerTypes=T4 without aiChurnMinFlips → 400 ───────────────
+try {
+    Write-Host "Testing: SIL9-T4-A /alerts triggerTypes=T4 without aiChurnMinFlips -> 400" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$Base$sil9Base`?windowDays=30&triggerTypes=T4" `
+        -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 400) {
+        Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 400)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── SIL9-T4-B: with aiChurnMinFlips=2 returns 200 + valid response shape ─────
+try {
+    Write-Host "Testing: SIL9-T4-B /alerts triggerTypes=T4&aiChurnMinFlips=2 returns 200 with valid shape" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$Base$sil9Base`?windowDays=30&triggerTypes=T4&aiChurnMinFlips=2" `
+        -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 200) {
+        $d    = ($resp.Content | ConvertFrom-Json).data
+        $props = $d | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
+        $required = @("alerts","alertCount","totalAlerts","nextCursor","hasMore",
+                      "windowDays","limit","computedAt","aiChurnMinFlips","aiChurnMaxGapDays","aiChurnWindowDays")
+        $missing = $required | Where-Object { $props -notcontains $_ }
+        if ($missing.Count -eq 0) {
+            $t4cnt = @($d.alerts | Where-Object { $_.triggerType -eq "T4" }).Count
+            Write-Host ("  PASS (200; required fields present; T4 alerts=" + $t4cnt + ")") -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (missing fields: " + ($missing -join ", ") + ")") -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── SIL9-T4-C: determinism (two identical T4-only calls yield identical results) ──
+try {
+    Write-Host "Testing: SIL9-T4-C /alerts T4-only determinism" -NoNewline
+    $url = "$Base$sil9Base`?windowDays=30&triggerTypes=T4&aiChurnMinFlips=2"
+    $r1  = Invoke-WebRequest -Uri $url -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    $r2  = Invoke-WebRequest -Uri $url -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($r1.StatusCode -eq 200 -and $r2.StatusCode -eq 200) {
+        $d1   = ($r1.Content | ConvertFrom-Json).data
+        $d2   = ($r2.Content | ConvertFrom-Json).data
+        $arr1 = ($d1.alerts | ConvertTo-Json -Depth 10 -Compress)
+        $arr2 = ($d2.alerts | ConvertTo-Json -Depth 10 -Compress)
+        if ($arr1 -eq $arr2 -and $d1.totalAlerts -eq $d2.totalAlerts -and $d1.nextCursor -eq $d2.nextCursor) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host "  FAIL (results differ between two calls)" -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (status=" + $r1.StatusCode + "/" + $r2.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── SIL9-T4-D: triggerTypes=T4 returns only T4 alerts (or empty) ────────────
+try {
+    Write-Host "Testing: SIL9-T4-D /alerts triggerTypes=T4 returns only triggerType=T4" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$Base$sil9Base`?windowDays=30&triggerTypes=T4&aiChurnMinFlips=2" `
+        -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 200) {
+        $items  = @(($resp.Content | ConvertFrom-Json).data.alerts)
+        $nonT4  = $items | Where-Object { $_.triggerType -ne "T4" }
+        if ($nonT4.Count -eq 0) {
+            Write-Host ("  PASS (" + $items.Count + " alerts, all T4)") -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (" + $nonT4.Count + " non-T4 alerts returned)") -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── SIL9-T4-E: cursor pagination works with T4 results (no duplicates) ────────
+try {
+    Write-Host "Testing: SIL9-T4-E /alerts T4 cursor pagination produces no duplicates" -NoNewline
+    $url1 = "$Base$sil9Base`?windowDays=30&triggerTypes=T4&aiChurnMinFlips=2&limit=1"
+    $r1   = Invoke-WebRequest -Uri $url1 -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($r1.StatusCode -ne 200) {
+        Write-Host ("  FAIL (page1 status=" + $r1.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
+    } else {
+        $d1  = ($r1.Content | ConvertFrom-Json).data
+        $nc1 = $d1.nextCursor
+        $tot = [int]$d1.totalAlerts
+        if ($tot -lt 2 -or $null -eq $nc1) {
+            Write-Host "  SKIP (fewer than 2 T4 alerts in fixture; cannot verify pagination)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+        } else {
+            $url2 = "$Base$sil9Base`?windowDays=30&triggerTypes=T4&aiChurnMinFlips=2&limit=1&cursor=$([System.Uri]::EscapeDataString($nc1))"
+            $r2   = Invoke-WebRequest -Uri $url2 -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+            if ($r2.StatusCode -ne 200) {
+                Write-Host ("  FAIL (page2 status=" + $r2.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
+            } else {
+                $items2 = @(($r2.Content | ConvertFrom-Json).data.alerts)
+                if ($items2.Count -eq 0) {
+                    Write-Host "  FAIL (page2 empty despite totalAlerts >= 2)" -ForegroundColor Red; Hammer-Record FAIL
+                } else {
+                    $p1json = ($d1.alerts[0] | ConvertTo-Json -Depth 10 -Compress)
+                    $p2json = ($items2[0]    | ConvertTo-Json -Depth 10 -Compress)
+                    if ($p1json -ne $p2json) {
+                        Write-Host "  PASS (no duplicate across pages)" -ForegroundColor Green; Hammer-Record PASS
+                    } else {
+                        Write-Host "  FAIL (page2 item[0] duplicates page1 item[0])" -ForegroundColor Red; Hammer-Record FAIL
+                    }
+                }
+            }
+        }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── SIL9-T4-V: out-of-range param values → 400 ───────────────────────────
+try {
+    Write-Host "Testing: SIL9-T4-V /alerts out-of-range T4 params -> 400" -NoNewline
+    $cases = @(
+        # aiChurnMinFlips out of range
+        "windowDays=30&triggerTypes=T4&aiChurnMinFlips=1",       # below min (2)
+        "windowDays=30&triggerTypes=T4&aiChurnMinFlips=21",      # above max (20)
+        # aiChurnMaxGapDays out of range
+        "windowDays=30&triggerTypes=T4&aiChurnMinFlips=2&aiChurnMaxGapDays=0",   # below min (1)
+        "windowDays=30&triggerTypes=T4&aiChurnMinFlips=2&aiChurnMaxGapDays=31",  # above max (30)
+        # aiChurnWindowDays out of range
+        "windowDays=30&triggerTypes=T4&aiChurnMinFlips=2&aiChurnWindowDays=0",   # below min (1)
+        "windowDays=30&triggerTypes=T4&aiChurnMinFlips=2&aiChurnWindowDays=31"   # above max (30)
+    )
+    $failures = @()
+    foreach ($qs in $cases) {
+        $resp = Invoke-WebRequest -Uri "$Base$sil9Base`?$qs" `
+            -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -ne 400) {
+            $failures += "$qs -> " + $resp.StatusCode
+        }
+    }
+    if ($failures.Count -eq 0) {
+        Write-Host ("  PASS (all " + $cases.Count + " out-of-range cases returned 400)") -ForegroundColor Green; Hammer-Record PASS
+    } else {
+        Write-Host ("  FAIL (" + $failures.Count + " cases did not return 400: " + ($failures -join "; ") + ")") -ForegroundColor Red; Hammer-Record FAIL
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
@@ -768,7 +904,7 @@ try {
             # If the formula errors it would throw and give 500. The 200 response is the first guard.
             #
             # Additional structural check: all items have triggerType in {T1,T2,T3}.
-            $invalid = $items | Where-Object { @("T1","T2","T3") -notcontains $_.triggerType }
+            $invalid = $items | Where-Object { @("T1","T2","T3","T4") -notcontains $_.triggerType }
             if ($invalid.Count -eq 0) {
                 Write-Host ("  PASS (" + $items.Count + " alerts returned with valid structure; severity computed without error)") -ForegroundColor Green; Hammer-Record PASS
             } else {
