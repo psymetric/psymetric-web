@@ -609,3 +609,18 @@ All surfaces: compute-on-read, no writes, no EventLog, no schema migration, no b
 - Dashboard UI rendering
 
 These remain deferred per `docs/ROADMAP.md`.
+
+---
+
+## Implementation Status — Completed Surfaces
+
+SIL-8 A1 — COMPLETE
+SIL-8 A2 — COMPLETE
+SIL-8 A3 — COMPLETE
+SIL-8 B1 — COMPLETE
+SIL-8 B2 — COMPLETE
+
+All deterministic constraints enforced.
+All hammer tests passing.
+No schema changes.
+Compute-on-read architecture retained.
