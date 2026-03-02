@@ -160,15 +160,18 @@ function decodeCursor(cursor: string): CursorPosition | null {
 // =============================================================================
 
 interface AlertItem {
-  keywordTargetId:  string;
-  query:            string;
-  locale:           string;
-  device:           string;
-  volatilityScore:  number;
-  maturity:         VolatilityMaturity;
-  sampleSize:       number;
-  alertThreshold:   number;
-  exceedsThreshold: true; // always true — items that don't exceed are excluded
+  keywordTargetId:           string;
+  query:                     string;
+  locale:                    string;
+  device:                    string;
+  volatilityScore:           number;
+  rankVolatilityComponent:   number;
+  aiOverviewComponent:       number;
+  featureVolatilityComponent: number;
+  maturity:                  VolatilityMaturity;
+  sampleSize:                number;
+  alertThreshold:            number;
+  exceedsThreshold:          true; // always true — items that don't exceed are excluded
 }
 
 // =============================================================================
@@ -276,15 +279,18 @@ export async function GET(request: NextRequest) {
       if (profile.volatilityScore < alertThreshold) continue;
 
       allItems.push({
-        keywordTargetId:  target.id,
-        query:            target.query,
-        locale:           target.locale,
-        device:           target.device,
-        volatilityScore:  profile.volatilityScore,
+        keywordTargetId:           target.id,
+        query:                     target.query,
+        locale:                    target.locale,
+        device:                    target.device,
+        volatilityScore:           profile.volatilityScore,
+        rankVolatilityComponent:   profile.rankVolatilityComponent,
+        aiOverviewComponent:       profile.aiOverviewComponent,
+        featureVolatilityComponent: profile.featureVolatilityComponent,
         maturity,
-        sampleSize:       profile.sampleSize,
+        sampleSize:                profile.sampleSize,
         alertThreshold,
-        exceedsThreshold: true,
+        exceedsThreshold:          true,
       });
     }
 

@@ -188,6 +188,9 @@ export async function GET(
       featureVolatility: volatility.featureVolatility,
       aiOverviewChurn: volatility.aiOverviewChurn,
       volatilityScore: volatility.volatilityScore,
+      rankVolatilityComponent: volatility.rankVolatilityComponent,
+      aiOverviewComponent: volatility.aiOverviewComponent,
+      featureVolatilityComponent: volatility.featureVolatilityComponent,
       maturity: classifyMaturity(volatility.sampleSize),
       computedAt: requestTime.toISOString(),
     });

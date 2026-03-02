@@ -46,6 +46,20 @@
  * Final score rounded to 2 decimal places. Deterministic for any given input.
  *
  * ─────────────────────────────────────────────────────────────────────────────
+ * SIL-7 ATTRIBUTION COMPONENTS
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Three additive components are derived from the same normalized signals:
+ *
+ *   rankVolatilityComponent  = (0.40 * rankShiftScore + 0.25 * maxShiftScore) * 100
+ *   aiOverviewComponent      = (0.20 * aiChurnScore) * 100
+ *   featureVolatilityComponent = (0.15 * featureVolScore) * 100
+ *
+ * Each rounded to 2 decimal places.
+ * Sum: rankVolatilityComponent + aiOverviewComponent + featureVolatilityComponent
+ *   ≈ volatilityScore (within ±0.02 due to independent rounding).
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
  * STORAGE STRATEGY — ON-DEMAND COMPUTATION (Option A)
  * ─────────────────────────────────────────────────────────────────────────────
  *
@@ -82,12 +96,16 @@ export interface SnapshotForVolatility {
 }
 
 export interface VolatilityProfile {
-  sampleSize: number;           // Number of consecutive pairs evaluated
-  averageRankShift: number;     // Mean absolute rank movement across all pairs
-  maxRankShift: number;         // Maximum single rank movement observed
-  featureVolatility: number;    // Total distinct SERP feature changes across pairs
-  aiOverviewChurn: number;      // Count of AI Overview status flips across pairs
-  volatilityScore: number;      // 0–100 normalized composite
+  sampleSize: number;                  // Number of consecutive pairs evaluated
+  averageRankShift: number;            // Mean absolute rank movement across all pairs
+  maxRankShift: number;                // Maximum single rank movement observed
+  featureVolatility: number;           // Total distinct SERP feature changes across pairs
+  aiOverviewChurn: number;             // Count of AI Overview status flips across pairs
+  volatilityScore: number;             // 0–100 normalized composite
+  // SIL-7 attribution components (0–100 each, sum ≈ volatilityScore within ±0.02)
+  rankVolatilityComponent: number;     // Rank-driven portion: (W1+W2) * 100
+  aiOverviewComponent: number;         // AI Overview portion: W3 * 100
+  featureVolatilityComponent: number;  // Feature volatility portion: W4 * 100
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -310,6 +328,9 @@ export function computeVolatility(
     featureVolatility: 0,
     aiOverviewChurn: 0,
     volatilityScore: 0,
+    rankVolatilityComponent: 0,
+    aiOverviewComponent: 0,
+    featureVolatilityComponent: 0,
   };
 
   if (snapshots.length < 2) return ZERO;
@@ -338,11 +359,6 @@ export function computeVolatility(
 
   // ── Composite score (0–100) ─────────────────────────────────────────────────
   // Cap constants — calibrated to realistic SERP data ranges.
-  // Rank caps: top-20 is a reasonable operational horizon for average shift.
-  //            Max shift of 50 covers most algorithm update scenarios.
-  // Feature cap: 5 distinct feature-type changes per comparison is extreme.
-  // AI churn cap: compare against sampleSize for ratio.
-
   const RANK_SHIFT_CAP    = 20;   // avg positions
   const MAX_SHIFT_CAP     = 50;   // max positions
   const FEATURE_COUNT_CAP = 5;    // avg feature changes per comparison
@@ -364,6 +380,12 @@ export function computeVolatility(
 
   const volatilityScore = round(rawScore * 100, 2);
 
+  // ── SIL-7 Attribution Components ───────────────────────────────────────────
+  // Derived from the same normalized scores — no new math.
+  const rankVolatilityComponent    = round((0.40 * rankShiftScore + 0.25 * maxShiftScore) * 100, 2);
+  const aiOverviewComponent        = round((0.20 * aiChurnScore) * 100, 2);
+  const featureVolatilityComponent = round((0.15 * featureVolScore) * 100, 2);
+
   return {
     sampleSize,
     averageRankShift,
@@ -371,6 +393,9 @@ export function computeVolatility(
     featureVolatility,
     aiOverviewChurn,
     volatilityScore,
+    rankVolatilityComponent,
+    aiOverviewComponent,
+    featureVolatilityComponent,
   };
 }
 

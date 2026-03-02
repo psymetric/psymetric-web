@@ -32,8 +32,6 @@ import { extractOrganicResults, type ExtractedResult } from "@/lib/seo/serp-extr
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-// ExtractedResult, ExtractionResult, extractOrganicResults imported from @/lib/seo/serp-extraction
-
 // =============================================================================
 // Delta computation
 // =============================================================================
@@ -150,6 +148,19 @@ function computeRankDelta(
 // GET /api/seo/serp-deltas
 // =============================================================================
 
+type SnapshotRow = {
+  id: string;
+  projectId: string;
+  query: string;
+  locale: string;
+  device: string;
+  capturedAt: Date;
+  aiOverviewStatus: string;
+  aiOverviewText: string | null;
+  rawPayload: unknown;
+  source: string;
+};
+
 export async function GET(request: NextRequest) {
   try {
     const { projectId, error } = await resolveProjectId(request);
@@ -195,20 +206,8 @@ export async function GET(request: NextRequest) {
       return badRequest("fromSnapshotId and toSnapshotId must both be provided, or both omitted");
     }
 
-    let fromSnapshot: {
-      id: string;
-      projectId: string;
-      query: string;
-      locale: string;
-      device: string;
-      capturedAt: Date;
-      aiOverviewStatus: string;
-      aiOverviewText: string | null;
-      rawPayload: unknown;
-      source: string;
-    } | null = null;
-
-    let toSnapshot: typeof fromSnapshot = null;
+    let fromSnapshot: SnapshotRow | null = null;
+    let toSnapshot: SnapshotRow | null = null;
 
     if (fromSnapshotId && toSnapshotId) {
       // Explicit pair — validate project scoping and target match
@@ -309,6 +308,11 @@ export async function GET(request: NextRequest) {
       // snapshots[0] is most recent (to), snapshots[1] is older (from)
       toSnapshot = snapshots[0];
       fromSnapshot = snapshots[1];
+    }
+
+    if (!fromSnapshot || !toSnapshot) {
+      // Defensive: should be unreachable given the branches above.
+      return serverError();
     }
 
     // ==========================================================================
