@@ -36,13 +36,16 @@ const SearchPerformanceRowSchema = z
       .regex(UUID_RE, "entityId must be a valid UUID")
       .nullish(),
   })
+  .strict()
   .refine(
     (row) => row.clicks <= row.impressions,
     "clicks cannot exceed impressions"
   );
 
-export const IngestSearchPerformanceSchema = z.object({
-  rows: z.array(SearchPerformanceRowSchema).min(1),
-});
+export const IngestSearchPerformanceSchema = z
+  .object({
+    rows: z.array(SearchPerformanceRowSchema).min(1),
+  })
+  .strict();
 
 export type SearchPerformanceRow = z.infer<typeof SearchPerformanceRowSchema>;

@@ -22,11 +22,13 @@ const isoDateString = z.string().refine(
   "Must be a valid ISO date string"
 );
 
-export const CreateQuotableBlockSchema = z.object({
-  entityId: z.string().regex(UUID_RE, "entityId must be a valid UUID"),
-  text: z.string().min(1),
-  claimType: z.nativeEnum(ClaimType),
-  sourceCitation: z.string().optional(),
-  topicTag: z.string().optional(),
-  verifiedUntil: isoDateString.optional(),
-});
+export const CreateQuotableBlockSchema = z
+  .object({
+    entityId: z.string().regex(UUID_RE, "entityId must be a valid UUID"),
+    text: z.string().min(1),
+    claimType: z.nativeEnum(ClaimType),
+    sourceCitation: z.string().optional(),
+    topicTag: z.string().optional(),
+    verifiedUntil: isoDateString.optional(),
+  })
+  .strict();
