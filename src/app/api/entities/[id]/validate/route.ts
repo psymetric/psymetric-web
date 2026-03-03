@@ -4,12 +4,11 @@
  * Phase 1 Publish Lifecycle - Chunk 1: Entity validation spine
  * - Deterministic validation only (no LLM, no network calls)
  * - Returns validation status without changing publish state
- * - Logs ENTITY_VALIDATION_FAILED event on failure
+ * - No EventLog writes (read-only operation per INV-3.2)
  *
  * Multi-project hardened:
  * - Resolves projectId from request
  * - Verifies entity belongs to project
- * - Uses resolved projectId for events
  * - No unsafe Prisma JSON casting
  */
 import { NextRequest } from "next/server";
@@ -21,7 +20,6 @@ import {
   serverError,
 } from "@/lib/api-response";
 import { validateEntityForPublish } from "@/lib/entity-validation";
-import type { Prisma } from "@prisma/client";
 import { resolveProjectId } from "@/lib/project";
 
 const UUID_RE =
@@ -64,33 +62,7 @@ export async function POST(
     // Run deterministic validation (projectId-scoped per §1.2)
     const validation = await validateEntityForPublish({ entity, projectId });
 
-    // Log validation failure event if needed (no state change)
-    if (validation.status === "fail") {
-      const errorsJson: Prisma.InputJsonArray = validation.errors.map((e) => ({
-        code: e.code,
-        category: e.category,
-        level: e.level,
-        message: e.message,
-      }));
-
-      const details: Prisma.InputJsonObject = {
-        status: validation.status,
-        categories: validation.categories,
-        errors: errorsJson,
-      };
-
-      await prisma.eventLog.create({
-        data: {
-          eventType: "ENTITY_VALIDATION_FAILED",
-          entityType: entity.entityType,
-          entityId: entity.id,
-          actor: "human",
-          projectId,
-          details,
-        },
-      });
-    }
-
+    // Return validation results (no EventLog - read-only operation per INV-3.2)
     return successResponse({
       status: validation.status,
       categories: validation.categories,
