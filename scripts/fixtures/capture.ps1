@@ -7,8 +7,9 @@
 #     [-WindowDays 60]
 #
 # Steps:
-#   1. Runs export-serp-fixture.ts  → writes scripts/fixtures/serp/<Name>.json
+#   1. Runs export-serp-fixture.ts  → writes scripts/fixtures/serp/<n>.json
 #   2. Runs compute-fixture-expectations.ts → prints expected assertion values
+#                                           → writes scripts/fixtures/serp/<n>.expected.json
 #
 # Notes:
 #   - Prefers local node_modules/.bin/tsx when available.
@@ -19,6 +20,7 @@
 #   - node not available
 #   - export script exits non-zero
 #   - fixture file not created after export
+#   - expected.json not created after compute step
 
 param(
     [Parameter(Mandatory = $true)]
@@ -45,8 +47,8 @@ if (-not (Get-Command "node" -ErrorAction SilentlyContinue)) {
 }
 
 # ── Locate repo root + tsx ────────────────────────────────────────────────────
-$repoRoot  = Resolve-Path (Join-Path $PSScriptRoot "..\..")
-$localTsx  = Join-Path $repoRoot "node_modules\.bin\tsx"
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+$localTsx = Join-Path $repoRoot "node_modules\.bin\tsx"
 
 function Invoke-Tsx {
     param(
@@ -59,7 +61,6 @@ function Invoke-Tsx {
         return
     }
 
-    # Fallback: npx tsx (downloads/uses tsx without requiring local install)
     if (Get-Command "npx" -ErrorAction SilentlyContinue) {
         & npx tsx @Args
         return
@@ -99,8 +100,9 @@ if (-not (Test-Path $fixtureFile)) {
     exit 1
 }
 
-# ── Step 2: Compute expected values ──────────────────────────────────────────
-$expectScript = Join-Path $PSScriptRoot "compute-fixture-expectations.ts"
+# ── Step 2: Compute expected values + write expected.json ─────────────────────
+$expectScript  = Join-Path $PSScriptRoot "compute-fixture-expectations.ts"
+$expectedFile  = Join-Path $PSScriptRoot "serp\$Name.expected.json"
 
 Write-Host ""
 Write-Host "Step 2: Computing expected volatility values..." -ForegroundColor Cyan
@@ -116,6 +118,13 @@ if ($expectExit -ne 0) {
     exit 1
 }
 
+if (-not (Test-Path $expectedFile)) {
+    Write-Host "ERROR: Expected.json not created at $expectedFile" -ForegroundColor Red
+    exit 1
+}
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "Done. Fixture ready at: scripts/fixtures/serp/$Name.json" -ForegroundColor Green
+Write-Host "Done." -ForegroundColor Green
+Write-Host "  Fixture:   scripts/fixtures/serp/$Name.json" -ForegroundColor Gray
+Write-Host "  Expected:  scripts/fixtures/serp/$Name.expected.json" -ForegroundColor Gray

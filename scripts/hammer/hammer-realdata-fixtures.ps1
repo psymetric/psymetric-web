@@ -4,62 +4,99 @@
 # Hammer-Section, Hammer-Record.
 #
 # Strategy:
-#   1. Seed the basic-volatility-fixture via seed-serp-fixture.ts.
-#   2. Parse the seeded projectId + keywordTargetId from stdout.
-#   3. Hit GET /api/seo/keyword-targets/{id}/volatility with the fixture project headers.
-#   4. Assert value-level invariants (not just shape):
-#      - volatilityScore in [0, 100]
-#      - component sum within ±0.02 of volatilityScore
-#      - maturity == "developing" (fixture has 7 pairs, sampleSize=7)
-#      - volatilityRegime one of the expected values (calm or shifting for this fixture)
-#      - aiOverviewChurn > 0 (fixture has known flips)
-#      - determinism across two calls (score fields identical, computedAt excluded)
-#   5. Assert GET /api/seo/risk-attribution-summary:
+#   1. Load expected values from scripts/fixtures/serp/volatility-case-1.expected.json
+#      (written by capture.ps1 / compute-fixture-expectations.ts — no manual copying).
+#   2. Seed the fixture into DB via seed-serp-fixture.ts.
+#   3. Parse the seeded projectId + keywordTargetId from stdout.
+#   4. Hit GET /api/seo/keyword-targets/{id}/volatility with fixture project headers.
+#   5. Assert value-level invariants against the loaded expectations:
+#      - sampleSize (exact)
+#      - snapshotCount (exact)
+#      - volatilityScore (+/-0.05)
+#      - rankVolatilityComponent (+/-0.05)
+#      - aiOverviewComponent (+/-0.05)
+#      - featureVolatilityComponent (exact when 0, else +/-0.05)
+#      - volatilityRegime (exact string)
+#      - aiOverviewChurn (exact int)
+#      - component sum within +/-0.10 of volatilityScore
+#   6. Assert GET /api/seo/risk-attribution-summary:
 #      - returns 200 with buckets array
-#      - sumCheck within ±0.05 when non-null
+#      - sumCheck within +/-0.05 when non-null
 #      - determinism across two calls
+#   7. RF-VOL-G: determinism — two GET volatility calls return identical fields
+#      (computedAt excluded).
 #
-# Fixture file: scripts/fixtures/serp/volatility-case-1.json
-# Seed script:  scripts/fixtures/seed-serp-fixture.ts
-#
-# Ground-truth expectations (from capture.ps1 / compute-fixture-expectations.ts):
-#   sampleSize=19  snapshotCount=20  volatilityScore=23.72
-#   rankComponent=4.77  aiComponent=18.95  featureComponent=0.00
-#   regime=shifting  aiOverviewChurn=18
+# Fixture file:   scripts/fixtures/serp/volatility-case-1.json
+# Expected file:  scripts/fixtures/serp/volatility-case-1.expected.json
+# Seed script:    scripts/fixtures/seed-serp-fixture.ts
 #
 # SKIP conditions (logged clearly, not FAIL):
 #   - Node.js / tsx not on PATH
-#   - Fixture file missing
+#   - Fixture file or expected.json missing
 #   - Seed script exits non-zero (e.g. DB not reachable)
 #
 # FAIL conditions:
+#   - expected.json present but malformed
 #   - Fixture file present but seed produces no projectId
 #   - Endpoint returns non-200
 #   - Value invariants violated
 
 Hammer-Section "REALDATA FIXTURE HARNESS"
 
-$_fixtureFile = Join-Path $PSScriptRoot "..\fixtures\serp\volatility-case-1.json"
-$_seedScript  = Join-Path $PSScriptRoot "..\fixtures\seed-serp-fixture.ts"
+$_fixtureName  = "volatility-case-1"
+$_fixtureFile  = Join-Path $PSScriptRoot "..\fixtures\serp\$_fixtureName.json"
+$_expectedFile = Join-Path $PSScriptRoot "..\fixtures\serp\$_fixtureName.expected.json"
+$_seedScript   = Join-Path $PSScriptRoot "..\fixtures\seed-serp-fixture.ts"
 
-# ── RF-SEED: Seed fixture data via tsx ────────────────────────────────────────
+# ── RF-EXP: Load expected values from expected.json ───────────────────────────
+$_exp              = $null   # expectations object; $null = SKIP all value tests
 $_fixtureProjectId = $null
 $_fixtureKtId      = $null
 $_fixtureLocale    = "en-US"
 $_fixtureDevice    = "desktop"
-$_fixtureHeaders   = $null  # populated after successful seed
+$_fixtureHeaders   = $null
 
+try {
+    Write-Host "Testing: RF-EXP  load volatility-case-1.expected.json" -NoNewline
+
+    if (-not (Test-Path $_expectedFile)) {
+        Write-Host ("  FAIL (expected.json not found: " + $_expectedFile + ")") -ForegroundColor Red
+        Write-Host "       Run: pwsh scripts/fixtures/capture.ps1 -KeywordTargetId <uuid> -Name volatility-case-1" -ForegroundColor DarkGray
+        Hammer-Record FAIL
+    } else {
+        $raw = Get-Content $_expectedFile -Raw | ConvertFrom-Json
+        # Validate required fields are present
+        $reqFields = @("sampleSize","snapshotCount","volatilityScore","rankVolatilityComponent",
+                       "aiOverviewComponent","featureVolatilityComponent","volatilityRegime","aiOverviewChurn")
+        $missing = $reqFields | Where-Object { $null -eq $raw.$_ -and $raw.$_ -isnot [int] -and $raw.$_ -isnot [double] }
+        # Use property existence check instead (ConvertFrom-Json returns PSCustomObject)
+        $props   = $raw | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
+        $missing = $reqFields | Where-Object { $props -notcontains $_ }
+        if ($missing.Count -gt 0) {
+            Write-Host ("  FAIL (expected.json missing fields: " + ($missing -join ", ") + ")") -ForegroundColor Red
+            Hammer-Record FAIL
+        } else {
+            $_exp = $raw
+            Write-Host ("  PASS (sampleSize=" + $_exp.sampleSize + " snapshotCount=" + $_exp.snapshotCount +
+                         " volatilityScore=" + $_exp.volatilityScore + " regime=" + $_exp.volatilityRegime + ")") -ForegroundColor Green
+            Hammer-Record PASS
+        }
+    }
+} catch {
+    Write-Host ("  FAIL (exception loading expected.json: " + $_.Exception.Message + ")") -ForegroundColor Red
+    Hammer-Record FAIL
+}
+
+# ── RF-SEED: Seed fixture data via tsx ────────────────────────────────────────
 try {
     Write-Host "Testing: RF-SEED  seed volatility-case-1 fixture into DB" -NoNewline
 
-    # Check prerequisites
     if (-not (Test-Path $_fixtureFile)) {
         Write-Host ("  FAIL (fixture file not found: " + $_fixtureFile + ")") -ForegroundColor Red; Hammer-Record FAIL
     } elseif (-not (Get-Command "node" -ErrorAction SilentlyContinue)) {
         Write-Host "  SKIP (node not on PATH)" -ForegroundColor DarkYellow; Hammer-Record SKIP
     } else {
-        # Check tsx availability
-        $tsxPath = $null
+        $tsxPath  = $null
         $localTsx = Join-Path $PSScriptRoot "..\..\node_modules\.bin\tsx"
         if (Test-Path $localTsx) {
             $tsxPath = $localTsx
@@ -70,7 +107,7 @@ try {
         if (-not $tsxPath) {
             Write-Host "  SKIP (tsx not found in node_modules/.bin or PATH)" -ForegroundColor DarkYellow; Hammer-Record SKIP
         } else {
-            $seedArgs = @("$_seedScript", "--file", "$_fixtureFile")
+            $seedArgs   = @("$_seedScript", "--file", "$_fixtureFile")
             $seedOutput = & node $tsxPath @seedArgs 2>&1
             $seedExitCode = $LASTEXITCODE
 
@@ -79,7 +116,6 @@ try {
                 Write-Host ($seedOutput | Out-String).Trim() -ForegroundColor DarkGray
                 Hammer-Record FAIL
             } else {
-                # Parse FIXTURE_PROJECT_ID and FIXTURE_KT_ID from stdout
                 foreach ($line in $seedOutput) {
                     if ($line -match "^FIXTURE_PROJECT_ID:\s*([0-9a-f\-]{36})") {
                         $_fixtureProjectId = $Matches[1].Trim()
@@ -120,8 +156,8 @@ try {
         if ($resp.StatusCode -ne 200) {
             Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL
         } else {
-            $d     = ($resp.Content | ConvertFrom-Json).data
-            $props = $d | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
+            $d        = ($resp.Content | ConvertFrom-Json).data
+            $props    = $d | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
             $required = @(
                 "keywordTargetId","query","locale","device",
                 "sampleSize","snapshotCount","volatilityScore",
@@ -163,7 +199,7 @@ try {
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── RF-VOL-C: component sum within ±0.02 of volatilityScore ───────────────────
+# ── RF-VOL-C: component sum within +/-0.10 of volatilityScore ─────────────────
 try {
     Write-Host "Testing: RF-VOL-C  component sum (rank+ai+feature) within +/-0.10 of volatilityScore" -NoNewline
     if (-not $_fixtureHeaders) {
@@ -176,11 +212,11 @@ try {
         if ($resp.StatusCode -ne 200) {
             Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
         } else {
-            $d      = ($resp.Content | ConvertFrom-Json).data
-            $rank   = [double]$d.rankVolatilityComponent
-            $ai     = [double]$d.aiOverviewComponent
-            $feat   = [double]$d.featureVolatilityComponent
-            $score  = [double]$d.volatilityScore
+            $d       = ($resp.Content | ConvertFrom-Json).data
+            $rank    = [double]$d.rankVolatilityComponent
+            $ai      = [double]$d.aiOverviewComponent
+            $feat    = [double]$d.featureVolatilityComponent
+            $score   = [double]$d.volatilityScore
             $compSum = [Math]::Round($rank + $ai + $feat, 4)
             $diff    = [Math]::Abs($compSum - $score)
             if ($diff -le 0.10) {
@@ -192,11 +228,42 @@ try {
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── RF-VOL-D: maturity == "developing" (fixture has 7 pairs, sampleSize=7) ────
+# ── RF-VOL-D: sampleSize and maturity from expected.json ──────────────────────
 try {
-    Write-Host "Testing: RF-VOL-D  sampleSize==19 and maturity==developing (volatility-case-1: 20 snapshots)" -NoNewline
-    if (-not $_fixtureHeaders) {
-        Write-Host "  SKIP (fixture not seeded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+    Write-Host "Testing: RF-VOL-D  sampleSize and maturity match expected.json" -NoNewline
+    if (-not $_fixtureHeaders -or -not $_exp) {
+        Write-Host "  SKIP (fixture not seeded or expected.json not loaded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+    } else {
+        $url  = Build-Url -Path "/api/seo/keyword-targets/$_fixtureKtId/volatility"
+        $resp = Invoke-WebRequest -Uri $url -Method GET -Headers $_fixtureHeaders `
+            -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+
+        if ($resp.StatusCode -ne 200) {
+            Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
+        } else {
+            $d              = ($resp.Content | ConvertFrom-Json).data
+            $gotSampleSize  = [int]$d.sampleSize
+            $gotMaturity    = $d.maturity
+            $wantSampleSize = [int]$_exp.sampleSize
+
+            # Maturity is derived from sampleSize: preliminary(<5), developing(5-19), stable(>=20)
+            $wantMaturity = if ($wantSampleSize -ge 20) { "stable" } elseif ($wantSampleSize -ge 5) { "developing" } else { "preliminary" }
+
+            if ($gotSampleSize -eq $wantSampleSize -and $gotMaturity -eq $wantMaturity) {
+                Write-Host ("  PASS (sampleSize=" + $gotSampleSize + " maturity=" + $gotMaturity + ")") -ForegroundColor Green; Hammer-Record PASS
+            } else {
+                Write-Host ("  FAIL (sampleSize=" + $gotSampleSize + " want=" + $wantSampleSize +
+                             " maturity=" + $gotMaturity + " want=" + $wantMaturity + ")") -ForegroundColor Red; Hammer-Record FAIL
+            }
+        }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── RF-VOL-E: aiOverviewChurn from expected.json ──────────────────────────────
+try {
+    Write-Host "Testing: RF-VOL-E  aiOverviewChurn matches expected.json" -NoNewline
+    if (-not $_fixtureHeaders -or -not $_exp) {
+        Write-Host "  SKIP (fixture not seeded or expected.json not loaded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
     } else {
         $url  = Build-Url -Path "/api/seo/keyword-targets/$_fixtureKtId/volatility"
         $resp = Invoke-WebRequest -Uri $url -Method GET -Headers $_fixtureHeaders `
@@ -206,44 +273,20 @@ try {
             Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
         } else {
             $d          = ($resp.Content | ConvertFrom-Json).data
-            $sampleSize = [int]$d.sampleSize
-            $maturity   = $d.maturity
-            if ($maturity -eq "developing" -and $sampleSize -eq 19) {
-                Write-Host ("  PASS (maturity=" + $maturity + " sampleSize=" + $sampleSize + ")") -ForegroundColor Green; Hammer-Record PASS
+            $gotChurn   = [int]$d.aiOverviewChurn
+            $wantChurn  = [int]$_exp.aiOverviewChurn
+            if ($gotChurn -eq $wantChurn) {
+                Write-Host ("  PASS (aiOverviewChurn=" + $gotChurn + ")") -ForegroundColor Green; Hammer-Record PASS
             } else {
-                Write-Host ("  FAIL (maturity=" + $maturity + " sampleSize=" + $sampleSize + "; expected developing/19)") -ForegroundColor Red; Hammer-Record FAIL
+                Write-Host ("  FAIL (aiOverviewChurn=" + $gotChurn + " expected " + $wantChurn + ")") -ForegroundColor Red; Hammer-Record FAIL
             }
         }
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── RF-VOL-E: aiOverviewChurn > 0 (fixture contains known AI flips) ───────────
+# ── RF-VOL-F: volatilityRegime boundary correctness ───────────────────────────
 try {
-    Write-Host "Testing: RF-VOL-E  aiOverviewChurn == 18 (volatility-case-1 ground truth)" -NoNewline
-    if (-not $_fixtureHeaders) {
-        Write-Host "  SKIP (fixture not seeded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
-    } else {
-        $url  = Build-Url -Path "/api/seo/keyword-targets/$_fixtureKtId/volatility"
-        $resp = Invoke-WebRequest -Uri $url -Method GET -Headers $_fixtureHeaders `
-            -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
-
-        if ($resp.StatusCode -ne 200) {
-            Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
-        } else {
-            $d     = ($resp.Content | ConvertFrom-Json).data
-            $churn = [int]$d.aiOverviewChurn
-            if ($churn -eq 18) {
-                Write-Host ("  PASS (aiOverviewChurn=" + $churn + ")") -ForegroundColor Green; Hammer-Record PASS
-            } else {
-                Write-Host ("  FAIL (aiOverviewChurn=" + $churn + " expected 18)") -ForegroundColor Red; Hammer-Record FAIL
-            }
-        }
-    }
-} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
-
-# ── RF-VOL-F: volatilityRegime is calm or shifting (fixture score expected < 50) ─
-try {
-    Write-Host "Testing: RF-VOL-F  volatilityRegime is calm or shifting (score < 50 expected)" -NoNewline
+    Write-Host "Testing: RF-VOL-F  volatilityRegime matches score boundary (generic invariant)" -NoNewline
     if (-not $_fixtureHeaders) {
         Write-Host "  SKIP (fixture not seeded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
     } else {
@@ -259,7 +302,6 @@ try {
             $score  = [double]$d.volatilityScore
             $validRegimes = @("calm","shifting","unstable","chaotic")
             if ($validRegimes -contains $regime) {
-                # Regime boundary correctness: regime must match the score
                 $expectedRegime = if ($score -le 20.0) { "calm" } elseif ($score -le 50.0) { "shifting" } elseif ($score -le 75.0) { "unstable" } else { "chaotic" }
                 if ($regime -eq $expectedRegime) {
                     Write-Host ("  PASS (regime=" + $regime + " score=" + $score + ")") -ForegroundColor Green; Hammer-Record PASS
@@ -273,7 +315,7 @@ try {
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── RF-VOL-G: determinism — two calls return identical score fields ─────────────
+# ── RF-VOL-G: determinism — two calls return identical score fields ────────────
 try {
     Write-Host "Testing: RF-VOL-G  two GET volatility calls return identical score fields" -NoNewline
     if (-not $_fixtureHeaders) {
@@ -292,7 +334,7 @@ try {
             $d1 = ($r1.Content | ConvertFrom-Json).data
             $d2 = ($r2.Content | ConvertFrom-Json).data
 
-            # Compare all score fields except computedAt (wall-clock) and windowStartAt (wall-clock)
+            # computedAt and windowStartAt are wall-clock — excluded from comparison
             $scoreFields = @(
                 "volatilityScore","rankVolatilityComponent","aiOverviewComponent",
                 "featureVolatilityComponent","sampleSize","snapshotCount",
@@ -326,8 +368,8 @@ try {
         if ($resp.StatusCode -ne 200) {
             Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
         } else {
-            $d = ($resp.Content | ConvertFrom-Json).data
-            $props = $d | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
+            $d        = ($resp.Content | ConvertFrom-Json).data
+            $props    = $d | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
             $required = @("windowDays","bucketDays","minMaturity","keywordLimit","buckets")
             $missing  = $required | Where-Object { $props -notcontains $_ }
             if ($missing.Count -eq 0 -and @($d.buckets).Count -gt 0) {
@@ -339,7 +381,7 @@ try {
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── RF-ATTR-B: sumCheck within ±0.05 for all non-null buckets ─────────────────
+# ── RF-ATTR-B: sumCheck within +/-0.05 for all non-null buckets ───────────────
 try {
     Write-Host "Testing: RF-ATTR-B  sumCheck within +/-0.05 for all non-null buckets" -NoNewline
     if (-not $_fixtureHeaders) {
@@ -352,7 +394,7 @@ try {
         if ($resp.StatusCode -ne 200) {
             Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
         } else {
-            $d         = ($resp.Content | ConvertFrom-Json).data
+            $d          = ($resp.Content | ConvertFrom-Json).data
             $violations = @()
             $checked    = 0
             foreach ($bucket in $d.buckets) {
@@ -389,7 +431,6 @@ try {
         if ($r1.StatusCode -ne 200 -or $r2.StatusCode -ne 200) {
             Write-Host ("  FAIL (status " + $r1.StatusCode + "/" + $r2.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
         } else {
-            # Serialize the buckets arrays for comparison (exclude top-level metadata that's identical by construction)
             $b1 = ($r1.Content | ConvertFrom-Json).data.buckets | ConvertTo-Json -Depth 10 -Compress
             $b2 = ($r2.Content | ConvertFrom-Json).data.buckets | ConvertTo-Json -Depth 10 -Compress
             if ($b1 -eq $b2) {
@@ -401,11 +442,36 @@ try {
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── RF-VOL-H: snapshotCount matches expected fixture count (8) ────────────────
+# ── RF-VOL-H: snapshotCount from expected.json ────────────────────────────────
 try {
-    Write-Host "Testing: RF-VOL-H  snapshotCount == 20 (volatility-case-1 has 20 snapshots)" -NoNewline
-    if (-not $_fixtureHeaders) {
-        Write-Host "  SKIP (fixture not seeded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+    Write-Host "Testing: RF-VOL-H  snapshotCount matches expected.json" -NoNewline
+    if (-not $_fixtureHeaders -or -not $_exp) {
+        Write-Host "  SKIP (fixture not seeded or expected.json not loaded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+    } else {
+        $url  = Build-Url -Path "/api/seo/keyword-targets/$_fixtureKtId/volatility"
+        $resp = Invoke-WebRequest -Uri $url -Method GET -Headers $_fixtureHeaders `
+            -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+
+        if ($resp.StatusCode -ne 200) {
+            Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
+        } else {
+            $d          = ($resp.Content | ConvertFrom-Json).data
+            $gotCount   = [int]$d.snapshotCount
+            $wantCount  = [int]$_exp.snapshotCount
+            if ($gotCount -eq $wantCount) {
+                Write-Host ("  PASS (snapshotCount=" + $gotCount + ")") -ForegroundColor Green; Hammer-Record PASS
+            } else {
+                Write-Host ("  FAIL (snapshotCount=" + $gotCount + " expected " + $wantCount + " — fixture may be stale)") -ForegroundColor Red; Hammer-Record FAIL
+            }
+        }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── RF-VOL-I: volatilityScore from expected.json (+/-0.05) ───────────────────
+try {
+    Write-Host "Testing: RF-VOL-I  volatilityScore matches expected.json +/-0.05" -NoNewline
+    if (-not $_fixtureHeaders -or -not $_exp) {
+        Write-Host "  SKIP (fixture not seeded or expected.json not loaded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
     } else {
         $url  = Build-Url -Path "/api/seo/keyword-targets/$_fixtureKtId/volatility"
         $resp = Invoke-WebRequest -Uri $url -Method GET -Headers $_fixtureHeaders `
@@ -415,129 +481,119 @@ try {
             Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
         } else {
             $d     = ($resp.Content | ConvertFrom-Json).data
-            $count = [int]$d.snapshotCount
-            if ($count -eq 20) {
-                Write-Host ("  PASS (snapshotCount=20)") -ForegroundColor Green; Hammer-Record PASS
-            } else {
-                Write-Host ("  FAIL (snapshotCount=" + $count + " expected 20 — fixture may have been partially seeded or is stale)") -ForegroundColor Red; Hammer-Record FAIL
-            }
-        }
-    }
-} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
-
-# ── RF-VOL-I: volatilityScore approximately equals 23.72 (+/-0.05) ────────────
-try {
-    Write-Host "Testing: RF-VOL-I  volatilityScore approx 23.72 +/-0.05 (volatility-case-1 ground truth)" -NoNewline
-    if (-not $_fixtureHeaders) {
-        Write-Host "  SKIP (fixture not seeded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
-    } else {
-        $url  = Build-Url -Path "/api/seo/keyword-targets/$_fixtureKtId/volatility"
-        $resp = Invoke-WebRequest -Uri $url -Method GET -Headers $_fixtureHeaders `
-            -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
-        if ($resp.StatusCode -ne 200) {
-            Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
-        } else {
-            $d     = ($resp.Content | ConvertFrom-Json).data
-            $score = [double]$d.volatilityScore
-            $diff  = [Math]::Abs($score - 23.72)
+            $got   = [double]$d.volatilityScore
+            $want  = [double]$_exp.volatilityScore
+            $diff  = [Math]::Abs($got - $want)
             if ($diff -le 0.05) {
-                Write-Host ("  PASS (volatilityScore=" + $score + " diff=" + $diff + ")") -ForegroundColor Green; Hammer-Record PASS
+                Write-Host ("  PASS (volatilityScore=" + $got + " expected=" + $want + " diff=" + $diff + ")") -ForegroundColor Green; Hammer-Record PASS
             } else {
-                Write-Host ("  FAIL (volatilityScore=" + $score + " expected ~23.72 diff=" + $diff + " > 0.05)") -ForegroundColor Red; Hammer-Record FAIL
+                Write-Host ("  FAIL (volatilityScore=" + $got + " expected=" + $want + " diff=" + $diff + " > 0.05)") -ForegroundColor Red; Hammer-Record FAIL
             }
         }
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── RF-VOL-J: rankVolatilityComponent approximately equals 4.77 (+/-0.05) ──────
+# ── RF-VOL-J: rankVolatilityComponent from expected.json (+/-0.05) ───────────
 try {
-    Write-Host "Testing: RF-VOL-J  rankVolatilityComponent approx 4.77 +/-0.05" -NoNewline
-    if (-not $_fixtureHeaders) {
-        Write-Host "  SKIP (fixture not seeded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+    Write-Host "Testing: RF-VOL-J  rankVolatilityComponent matches expected.json +/-0.05" -NoNewline
+    if (-not $_fixtureHeaders -or -not $_exp) {
+        Write-Host "  SKIP (fixture not seeded or expected.json not loaded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
     } else {
         $url  = Build-Url -Path "/api/seo/keyword-targets/$_fixtureKtId/volatility"
         $resp = Invoke-WebRequest -Uri $url -Method GET -Headers $_fixtureHeaders `
             -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+
         if ($resp.StatusCode -ne 200) {
             Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
         } else {
             $d    = ($resp.Content | ConvertFrom-Json).data
-            $comp = [double]$d.rankVolatilityComponent
-            $diff = [Math]::Abs($comp - 4.77)
+            $got  = [double]$d.rankVolatilityComponent
+            $want = [double]$_exp.rankVolatilityComponent
+            $diff = [Math]::Abs($got - $want)
             if ($diff -le 0.05) {
-                Write-Host ("  PASS (rankVolatilityComponent=" + $comp + " diff=" + $diff + ")") -ForegroundColor Green; Hammer-Record PASS
+                Write-Host ("  PASS (rankVolatilityComponent=" + $got + " expected=" + $want + " diff=" + $diff + ")") -ForegroundColor Green; Hammer-Record PASS
             } else {
-                Write-Host ("  FAIL (rankVolatilityComponent=" + $comp + " expected ~4.77 diff=" + $diff + " > 0.05)") -ForegroundColor Red; Hammer-Record FAIL
+                Write-Host ("  FAIL (rankVolatilityComponent=" + $got + " expected=" + $want + " diff=" + $diff + " > 0.05)") -ForegroundColor Red; Hammer-Record FAIL
             }
         }
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── RF-VOL-K: aiOverviewComponent approximately equals 18.95 (+/-0.05) ─────────
+# ── RF-VOL-K: aiOverviewComponent from expected.json (+/-0.05) ───────────────
 try {
-    Write-Host "Testing: RF-VOL-K  aiOverviewComponent approx 18.95 +/-0.05" -NoNewline
-    if (-not $_fixtureHeaders) {
-        Write-Host "  SKIP (fixture not seeded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+    Write-Host "Testing: RF-VOL-K  aiOverviewComponent matches expected.json +/-0.05" -NoNewline
+    if (-not $_fixtureHeaders -or -not $_exp) {
+        Write-Host "  SKIP (fixture not seeded or expected.json not loaded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
     } else {
         $url  = Build-Url -Path "/api/seo/keyword-targets/$_fixtureKtId/volatility"
         $resp = Invoke-WebRequest -Uri $url -Method GET -Headers $_fixtureHeaders `
             -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+
         if ($resp.StatusCode -ne 200) {
             Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
         } else {
             $d    = ($resp.Content | ConvertFrom-Json).data
-            $comp = [double]$d.aiOverviewComponent
-            $diff = [Math]::Abs($comp - 18.95)
+            $got  = [double]$d.aiOverviewComponent
+            $want = [double]$_exp.aiOverviewComponent
+            $diff = [Math]::Abs($got - $want)
             if ($diff -le 0.05) {
-                Write-Host ("  PASS (aiOverviewComponent=" + $comp + " diff=" + $diff + ")") -ForegroundColor Green; Hammer-Record PASS
+                Write-Host ("  PASS (aiOverviewComponent=" + $got + " expected=" + $want + " diff=" + $diff + ")") -ForegroundColor Green; Hammer-Record PASS
             } else {
-                Write-Host ("  FAIL (aiOverviewComponent=" + $comp + " expected ~18.95 diff=" + $diff + " > 0.05)") -ForegroundColor Red; Hammer-Record FAIL
+                Write-Host ("  FAIL (aiOverviewComponent=" + $got + " expected=" + $want + " diff=" + $diff + " > 0.05)") -ForegroundColor Red; Hammer-Record FAIL
             }
         }
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── RF-VOL-L: featureVolatilityComponent == 0.00 (exact — no feature churn) ───
+# ── RF-VOL-L: featureVolatilityComponent from expected.json ───────────────────
+# Exact when expected==0; +/-0.05 otherwise.
 try {
-    Write-Host "Testing: RF-VOL-L  featureVolatilityComponent == 0.00 (no feature churn in fixture)" -NoNewline
-    if (-not $_fixtureHeaders) {
-        Write-Host "  SKIP (fixture not seeded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+    Write-Host "Testing: RF-VOL-L  featureVolatilityComponent matches expected.json" -NoNewline
+    if (-not $_fixtureHeaders -or -not $_exp) {
+        Write-Host "  SKIP (fixture not seeded or expected.json not loaded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
     } else {
         $url  = Build-Url -Path "/api/seo/keyword-targets/$_fixtureKtId/volatility"
         $resp = Invoke-WebRequest -Uri $url -Method GET -Headers $_fixtureHeaders `
             -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+
         if ($resp.StatusCode -ne 200) {
             Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
         } else {
             $d    = ($resp.Content | ConvertFrom-Json).data
-            $comp = [double]$d.featureVolatilityComponent
-            if ($comp -eq 0.0) {
-                Write-Host ("  PASS (featureVolatilityComponent=" + $comp + ")") -ForegroundColor Green; Hammer-Record PASS
+            $got  = [double]$d.featureVolatilityComponent
+            $want = [double]$_exp.featureVolatilityComponent
+            # Use exact comparison when expected is 0; tolerance otherwise
+            $tol  = if ($want -eq 0.0) { 0.0 } else { 0.05 }
+            $diff = [Math]::Abs($got - $want)
+            if ($diff -le $tol) {
+                Write-Host ("  PASS (featureVolatilityComponent=" + $got + " expected=" + $want + ")") -ForegroundColor Green; Hammer-Record PASS
             } else {
-                Write-Host ("  FAIL (featureVolatilityComponent=" + $comp + " expected 0.00)") -ForegroundColor Red; Hammer-Record FAIL
+                Write-Host ("  FAIL (featureVolatilityComponent=" + $got + " expected=" + $want + " diff=" + $diff + ")") -ForegroundColor Red; Hammer-Record FAIL
             }
         }
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── RF-VOL-M: volatilityRegime == "shifting" (ground truth for score ~23.72) ───
+# ── RF-VOL-M: volatilityRegime from expected.json ─────────────────────────────
 try {
-    Write-Host "Testing: RF-VOL-M  volatilityRegime == shifting (score ~23.72 is in 20.01-50.00 band)" -NoNewline
-    if (-not $_fixtureHeaders) {
-        Write-Host "  SKIP (fixture not seeded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+    Write-Host "Testing: RF-VOL-M  volatilityRegime matches expected.json" -NoNewline
+    if (-not $_fixtureHeaders -or -not $_exp) {
+        Write-Host "  SKIP (fixture not seeded or expected.json not loaded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
     } else {
         $url  = Build-Url -Path "/api/seo/keyword-targets/$_fixtureKtId/volatility"
         $resp = Invoke-WebRequest -Uri $url -Method GET -Headers $_fixtureHeaders `
             -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+
         if ($resp.StatusCode -ne 200) {
             Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
         } else {
             $d      = ($resp.Content | ConvertFrom-Json).data
-            $regime = $d.volatilityRegime
-            if ($regime -eq "shifting") {
-                Write-Host ("  PASS (volatilityRegime=" + $regime + ")") -ForegroundColor Green; Hammer-Record PASS
+            $got    = $d.volatilityRegime
+            $want   = $_exp.volatilityRegime
+            if ($got -eq $want) {
+                Write-Host ("  PASS (volatilityRegime=" + $got + ")") -ForegroundColor Green; Hammer-Record PASS
             } else {
-                Write-Host ("  FAIL (volatilityRegime=" + $regime + " expected shifting)") -ForegroundColor Red; Hammer-Record FAIL
+                Write-Host ("  FAIL (volatilityRegime=" + $got + " expected " + $want + ")") -ForegroundColor Red; Hammer-Record FAIL
             }
         }
     }
@@ -549,7 +605,6 @@ try {
     if (-not $_fixtureHeaders) {
         Write-Host "  SKIP (fixture not seeded)" -ForegroundColor DarkYellow; Hammer-Record SKIP
     } else {
-        # Try to load the fixture KT from the default project headers
         $url  = Build-Url -Path "/api/seo/keyword-targets/$_fixtureKtId/volatility"
         $resp = Invoke-WebRequest -Uri $url -Method GET -Headers $Headers `
             -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
@@ -557,7 +612,6 @@ try {
         if ($resp.StatusCode -eq 404) {
             Write-Host "  PASS (fixture KT returns 404 under default project headers)" -ForegroundColor Green; Hammer-Record PASS
         } elseif ($resp.StatusCode -eq 200) {
-            # If default project == fixture project (same DB, same project), that is okay — SKIP
             $defaultProjectId = $Headers["x-project-id"]
             if ([string]::IsNullOrWhiteSpace($defaultProjectId) -or $defaultProjectId -eq $_fixtureProjectId) {
                 Write-Host "  SKIP (default project headers resolve to fixture project — isolation not testable)" -ForegroundColor DarkYellow; Hammer-Record SKIP

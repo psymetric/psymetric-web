@@ -6,21 +6,33 @@
  *     --file scripts/fixtures/serp/<name>.json
  *
  * Input:  fixture JSON produced by export-serp-fixture.ts
- * Output: printed assertion values for hammer tests (no DB access, no writes)
+ * Output:
+ *   1. Console — human-readable assertion summary (unchanged format)
+ *   2. scripts/fixtures/serp/<name>.expected.json — machine-readable expectations
+ *      for consumption by hammer-realdata-fixtures.ps1
+ *
+ * Expected JSON schema:
+ *   {
+ *     "sampleSize": number,
+ *     "snapshotCount": number,
+ *     "volatilityScore": number,
+ *     "rankVolatilityComponent": number,
+ *     "aiOverviewComponent": number,
+ *     "featureVolatilityComponent": number,
+ *     "volatilityRegime": string,
+ *     "aiOverviewChurn": number
+ *   }
  *
  * Uses the canonical computeVolatility() and classifyRegime() from
- * src/lib/seo/volatility-service.ts — the same functions used by the live
- * volatility endpoint. Output is therefore identical to what the API returns.
+ * src/lib/seo/volatility-service.ts — identical to the live volatility endpoint.
+ * Values in expected.json therefore match what the API returns.
  *
- * Printed format:
- *   Expected assertions:
- *   sampleSize=7 snapshotCount=8 volatilityScore=43.25 rankComponent=22.10 \
- *   aiComponent=18.40 featureComponent=2.75 regime=shifting aiOverviewChurn=2
+ * No DB access. No side effects beyond writing the expected.json file.
+ * Exits 0 on success, non-zero on error.
  */
 
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   computeVolatility,
   classifyRegime,
@@ -44,6 +56,17 @@ interface FixtureFile {
   locale: string;
   device: string;
   snapshots: FixtureSnapshot[];
+}
+
+export interface FixtureExpectations {
+  sampleSize: number;
+  snapshotCount: number;
+  volatilityScore: number;
+  rankVolatilityComponent: number;
+  aiOverviewComponent: number;
+  featureVolatilityComponent: number;
+  volatilityRegime: string;
+  aiOverviewChurn: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -96,8 +119,8 @@ function main(): void {
     throw new Error("Fixture has no snapshots");
   }
 
-  // Build SnapshotForVolatility array — supply a stable synthetic id derived
-  // from capturedAt since the fixture JSON does not store DB ids.
+  // Build SnapshotForVolatility array — stable synthetic id from index
+  // (fixture JSON does not store DB ids)
   const snapshotsForVolatility: SnapshotForVolatility[] = fixture.snapshots.map(
     (s, idx) => ({
       id: `fixture-snap-${idx}`,
@@ -107,7 +130,7 @@ function main(): void {
     })
   );
 
-  // Enforce deterministic ordering (fixture should already be sorted, but verify)
+  // Enforce deterministic ordering (fixture should already be sorted)
   snapshotsForVolatility.sort((a, b) => {
     const t = a.capturedAt.getTime() - b.capturedAt.getTime();
     if (t !== 0) return t;
@@ -118,6 +141,7 @@ function main(): void {
   const regime = classifyRegime(profile.volatilityScore);
   const snapshotCount = fixture.snapshots.length;
 
+  // ── 1. Console output (unchanged format) ───────────────────────────────────
   console.log("Expected assertions:");
   console.log(
     `sampleSize=${profile.sampleSize}` +
@@ -129,6 +153,23 @@ function main(): void {
       ` regime=${regime}` +
       ` aiOverviewChurn=${profile.aiOverviewChurn}`
   );
+
+  // ── 2. Write expected.json alongside the fixture ────────────────────────────
+  const expectations: FixtureExpectations = {
+    sampleSize: profile.sampleSize,
+    snapshotCount,
+    volatilityScore: profile.volatilityScore,
+    rankVolatilityComponent: profile.rankVolatilityComponent,
+    aiOverviewComponent: profile.aiOverviewComponent,
+    featureVolatilityComponent: profile.featureVolatilityComponent,
+    volatilityRegime: regime,
+    aiOverviewChurn: profile.aiOverviewChurn,
+  };
+
+  // Derive expected.json path from fixture path: <name>.json → <name>.expected.json
+  const expectedFile = absFile.replace(/\.json$/, ".expected.json");
+  fs.writeFileSync(expectedFile, JSON.stringify(expectations, null, 2) + "\n", "utf-8");
+  console.log(`Expectations written: ${expectedFile}`);
 }
 
 try {
