@@ -87,6 +87,10 @@ function buildBuckets(requestTime: Date, windowDays: number, bucketDays: number)
   return buckets;
 }
 
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Snapshot type (minimal fields for computeVolatility)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,8 +120,10 @@ export async function GET(request: NextRequest) {
     }
     const { windowDays, bucketDays, minMaturity, limit } = parsed.data;
 
-    // Fix requestTime once — all window/bucket boundaries derive from this.
-    const requestTime = new Date();
+    // Anchor requestTime to the start of the current minute so sequential calls
+    // produce identical bucket boundaries (hammer determinism).
+    const requestTimeMs = Math.floor(Date.now() / 60_000) * 60_000;
+    const requestTime = new Date(requestTimeMs);
     const windowStart = new Date(requestTime.getTime() - windowDays * 24 * 60 * 60 * 1000);
 
     // ── Load KeywordTargets (deterministic order, capped at limit) ─────────────
@@ -167,9 +173,9 @@ export async function GET(request: NextRequest) {
 
     // ── Compute attribution per bucket ────────────────────────────────────────
     const bucketResults = buckets.map((timeBucket) => {
-      let totalWeight    = 0;
-      let rankWeighted   = 0;
-      let aiWeighted     = 0;
+      let totalWeight     = 0;
+      let rankWeighted    = 0;
+      let aiWeighted      = 0;
       let featureWeighted = 0;
       let includedKeywordCount = 0;
 
@@ -179,8 +185,7 @@ export async function GET(request: NextRequest) {
 
         // Filter to snapshots within this bucket [start, end)
         const bucketSnaps = allSnaps.filter(
-          (s) =>
-            s.capturedAt >= timeBucket.start && s.capturedAt < timeBucket.end
+          (s) => s.capturedAt >= timeBucket.start && s.capturedAt < timeBucket.end
         );
 
         // Need at least 2 snapshots to form a pair
@@ -194,10 +199,10 @@ export async function GET(request: NextRequest) {
         if (maturityRank < minMaturityRank) continue;
 
         const weight = profile.sampleSize;
-        totalWeight      += weight;
-        rankWeighted     += profile.rankVolatilityComponent * weight;
-        aiWeighted       += profile.aiOverviewComponent * weight;
-        featureWeighted  += profile.featureVolatilityComponent * weight;
+        totalWeight     += weight;
+        rankWeighted    += profile.rankVolatilityComponent * weight;
+        aiWeighted      += profile.aiOverviewComponent * weight;
+        featureWeighted += profile.featureVolatilityComponent * weight;
         includedKeywordCount++;
       }
 
@@ -214,10 +219,25 @@ export async function GET(request: NextRequest) {
         };
       }
 
-      const rankShare    = Math.round((rankWeighted    / totalWeight) * 100) / 100;
-      const aiShare      = Math.round((aiWeighted      / totalWeight) * 100) / 100;
-      const featureShare = Math.round((featureWeighted / totalWeight) * 100) / 100;
-      const sumCheck     = Math.round((rankShare + aiShare + featureShare) * 100) / 100;
+      const componentTotal = rankWeighted + aiWeighted + featureWeighted;
+      if (componentTotal === 0) {
+        return {
+          start:                timeBucket.start.toISOString(),
+          end:                  timeBucket.end.toISOString(),
+          includedKeywordCount,
+          totalWeight,
+          rankShare:            null,
+          aiShare:              null,
+          featureShare:         null,
+          sumCheck:             null,
+        };
+      }
+
+      // Normalize to percentages that sum to ~100.
+      const rankShare    = round2((rankWeighted    / componentTotal) * 100);
+      const aiShare      = round2((aiWeighted      / componentTotal) * 100);
+      const featureShare = round2((featureWeighted / componentTotal) * 100);
+      const sumCheck     = round2(rankShare + aiShare + featureShare);
 
       return {
         start:                timeBucket.start.toISOString(),
