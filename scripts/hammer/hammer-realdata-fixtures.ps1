@@ -96,21 +96,29 @@ try {
     } elseif (-not (Get-Command "node" -ErrorAction SilentlyContinue)) {
         Write-Host "  SKIP (node not on PATH)" -ForegroundColor DarkYellow; Hammer-Record SKIP
     } else {
-        $tsxPath  = $null
-        $localTsx = Join-Path $PSScriptRoot "..\..\node_modules\.bin\tsx"
-        if (Test-Path $localTsx) {
-            $tsxPath = $localTsx
-        } elseif (Get-Command "tsx" -ErrorAction SilentlyContinue) {
-            $tsxPath = "tsx"
+        # Resolve tsx — prefer local Windows .cmd shim, then .ps1, then npx tsx
+        $repoRoot    = Resolve-Path (Join-Path $PSScriptRoot "..\..") 
+        $tsxCmd      = Join-Path $repoRoot "node_modules\.bin\tsx.cmd"
+        $tsxPs1      = Join-Path $repoRoot "node_modules\.bin\tsx.ps1"
+        $seedArgs    = @("$_seedScript", "--file", "$_fixtureFile")
+        $seedSkipped = $false
+
+        if (Test-Path $tsxCmd) {
+            $seedOutput   = & $tsxCmd @seedArgs 2>&1
+            $seedExitCode = $LASTEXITCODE
+        } elseif (Test-Path $tsxPs1) {
+            $seedOutput   = & $tsxPs1 @seedArgs 2>&1
+            $seedExitCode = $LASTEXITCODE
+        } elseif (Get-Command "npx" -ErrorAction SilentlyContinue) {
+            $seedOutput   = & "npx" "tsx" @seedArgs 2>&1
+            $seedExitCode = $LASTEXITCODE
+        } else {
+            Write-Host "  SKIP (tsx.cmd not found and npx not available; run npm install)" -ForegroundColor DarkYellow
+            Hammer-Record SKIP
+            $seedSkipped = $true
         }
 
-        if (-not $tsxPath) {
-            Write-Host "  SKIP (tsx not found in node_modules/.bin or PATH)" -ForegroundColor DarkYellow; Hammer-Record SKIP
-        } else {
-            $seedArgs   = @("$_seedScript", "--file", "$_fixtureFile")
-            $seedOutput = & node $tsxPath @seedArgs 2>&1
-            $seedExitCode = $LASTEXITCODE
-
+        if (-not $seedSkipped) {
             if ($seedExitCode -ne 0) {
                 Write-Host ("  FAIL (seed-serp-fixture exited " + $seedExitCode + ")") -ForegroundColor Red
                 Write-Host ($seedOutput | Out-String).Trim() -ForegroundColor DarkGray
