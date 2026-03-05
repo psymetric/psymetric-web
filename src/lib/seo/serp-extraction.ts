@@ -124,6 +124,172 @@ export function extractFeatureSortedArray(rawPayload: unknown): string[] {
 }
 
 // =============================================================================
+// extractFeatureSignals -- new export, SIL feature tracking
+// =============================================================================
+
+/**
+ * FeatureSignals -- structured SERP feature presence for a single snapshot.
+ *
+ * rawTypesSorted: deduplicated non-organic DataForSEO type strings, sorted.
+ * familiesSorted: normalized family strings, sorted.
+ * flags: boolean presence for each known family.
+ * parseWarning: true when payload shape is unrecognized, OR when items/features
+ *   array is non-empty but yields zero non-organic types (extraction failure).
+ */
+export interface FeatureSignals {
+  rawTypesSorted: string[];
+  familiesSorted: string[];
+  flags: {
+    hasFeaturedSnippet: boolean;
+    hasPeopleAlsoAsk: boolean;
+    hasLocalPack: boolean;
+    hasVideo: boolean;
+    hasShopping: boolean;
+    hasImages: boolean;
+    hasTopStories: boolean;
+    hasKnowledgePanel: boolean;
+    hasSitelinks: boolean;
+    hasReviews: boolean;
+    hasRelatedSearches: boolean;
+    hasOther: boolean;
+  };
+  parseWarning: boolean;
+}
+
+// Stable family mapping -- deterministic, case-insensitive, conservative.
+// Unknown types -> "other" (never throws, never returns undefined).
+function mapTypeToFamily(t: string): string {
+  switch (t.toLowerCase()) {
+    case "featured_snippet":  return "featured_snippet";
+    case "people_also_ask":   return "people_also_ask";
+    case "local_pack":        return "local_pack";
+    case "knowledge_graph":   return "knowledge_panel";
+    case "knowledge_panel":   return "knowledge_panel";
+    case "video":             return "video";
+    case "video_box":         return "video";
+    case "shopping":          return "shopping";
+    case "shopping_ads":      return "shopping";
+    case "images":            return "images";
+    case "image_pack":        return "images";
+    case "top_stories":       return "top_stories";
+    case "news_box":          return "top_stories";
+    case "sitelinks":         return "sitelinks";
+    case "reviews":           return "reviews";
+    case "review_snippet":    return "reviews";
+    case "related_searches":  return "related_searches";
+    default:                  return "other";
+  }
+}
+
+/**
+ * extractFeatureSignals -- pure function, no side effects.
+ *
+ * Reads non-organic SERP feature types from rawPayload and returns
+ * a fully structured FeatureSignals object.
+ *
+ * Strategy 1 -- DataForSEO items[] (primary):
+ *   items where item.type is a non-empty string !== "organic".
+ *
+ * Strategy 2 -- test/simple payloads:
+ *   payload.features[] (string or {type: string}).
+ *
+ * Does NOT touch extractFeatureSortedArray or extractOrganicResults.
+ * Does NOT mutate any shared state.
+ * Deterministic: identical rawPayload -> identical FeatureSignals.
+ */
+export function extractFeatureSignals(rawPayload: unknown): FeatureSignals {
+  const EMPTY_FLAGS = {
+    hasFeaturedSnippet: false,
+    hasPeopleAlsoAsk:   false,
+    hasLocalPack:       false,
+    hasVideo:           false,
+    hasShopping:        false,
+    hasImages:          false,
+    hasTopStories:      false,
+    hasKnowledgePanel:  false,
+    hasSitelinks:       false,
+    hasReviews:         false,
+    hasRelatedSearches: false,
+    hasOther:           false,
+  };
+
+  if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) {
+    return { rawTypesSorted: [], familiesSorted: [], flags: { ...EMPTY_FLAGS }, parseWarning: true };
+  }
+
+  const p = rawPayload as Record<string, unknown>;
+  const rawTypes = new Set<string>();
+  let recognized = false;
+
+  // Strategy 1: DataForSEO items[]
+  if (Array.isArray(p.items)) {
+    recognized = true;
+    for (const item of p.items) {
+      if (
+        item !== null &&
+        typeof item === "object" &&
+        !Array.isArray(item) &&
+        typeof (item as Record<string, unknown>).type === "string"
+      ) {
+        const t = ((item as Record<string, unknown>).type as string).trim();
+        if (t.length > 0 && t !== "organic") rawTypes.add(t);
+      }
+    }
+  }
+  // Strategy 2: test/simple features[]
+  else if (Array.isArray(p.features)) {
+    recognized = true;
+    for (const f of p.features) {
+      if (typeof f === "string" && f.trim().length > 0) {
+        rawTypes.add(f.trim());
+      } else if (
+        f !== null &&
+        typeof f === "object" &&
+        !Array.isArray(f) &&
+        typeof (f as Record<string, unknown>).type === "string"
+      ) {
+        const t = ((f as Record<string, unknown>).type as string).trim();
+        if (t.length > 0) rawTypes.add(t);
+      }
+    }
+  }
+
+  // parseWarning: unrecognized payload, OR non-empty input that yielded zero types
+  // (indicates all items had missing/null type fields -- extraction failure).
+  // An all-organic SERP (inputLength > 0, rawTypes empty because all were "organic")
+  // is NOT a warning -- it is valid. We cannot distinguish that case cheaply here,
+  // so we conservatively warn only on truly unrecognized payloads.
+  const parseWarning = !recognized;
+
+  const rawTypesSorted = Array.from(rawTypes).sort();
+
+  // Map to families (deduped set, then sorted)
+  const familySet = new Set<string>();
+  for (const t of rawTypesSorted) {
+    familySet.add(mapTypeToFamily(t));
+  }
+  const familiesSorted = Array.from(familySet).sort();
+
+  // Build flags
+  const flags = {
+    hasFeaturedSnippet: familySet.has("featured_snippet"),
+    hasPeopleAlsoAsk:   familySet.has("people_also_ask"),
+    hasLocalPack:       familySet.has("local_pack"),
+    hasVideo:           familySet.has("video"),
+    hasShopping:        familySet.has("shopping"),
+    hasImages:          familySet.has("images"),
+    hasTopStories:      familySet.has("top_stories"),
+    hasKnowledgePanel:  familySet.has("knowledge_panel"),
+    hasSitelinks:       familySet.has("sitelinks"),
+    hasReviews:         familySet.has("reviews"),
+    hasRelatedSearches: familySet.has("related_searches"),
+    hasOther:           familySet.has("other"),
+  };
+
+  return { rawTypesSorted, familiesSorted, flags, parseWarning };
+}
+
+// =============================================================================
 // extractOrganicResults
 // =============================================================================
 
