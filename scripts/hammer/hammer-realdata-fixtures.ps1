@@ -170,7 +170,7 @@ try {
                     if ($line -match "^FIXTURE_PROJECT_ID:\s*([0-9a-f\-]{36})") {
                         $_fixtureProjectId = $Matches[1].Trim()
                     }
-                    if ($line -match "^FIXTURE_KT_ID:\s*([0-9a-f\-]{36})\s+query=\"\"([^\"\"]+)\"\"\s+locale=\"\"([^\"\"]+)\"\"\s+device=\"\"([^\"\"]+)\"\"\"") {
+                    if ($line -match '^FIXTURE_KT_ID:\s*([0-9a-f\-]{36})\s+query="([^"]+)"\s+locale="([^"]+)"\s+device="([^"]+)"') {
                         $_fixtureKtId   = $Matches[1].Trim()
                         $_fixtureLocale = $Matches[3].Trim()
                         $_fixtureDevice = $Matches[4].Trim()
