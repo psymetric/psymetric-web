@@ -36,6 +36,7 @@ $_parseTargets = @(
     "$PSScriptRoot\hammer\hammer-domain-dominance.ps1"
     "$PSScriptRoot\hammer\hammer-intent-drift.ps1"
     "$PSScriptRoot\hammer\hammer-serp-similarity.ps1"
+    "$PSScriptRoot\hammer\hammer-change-classification.ps1"
     "$PSScriptRoot\hammer\hammer-dataforseo-ingest.ps1"
     "$PSScriptRoot\hammer\hammer-realdata-fixtures.ps1"
 )
@@ -91,6 +92,7 @@ if ($_seed -and $_seed.data -and $_seed.data.Count -gt 0) { $entityId = $_seed.d
 . "$PSScriptRoot\hammer\hammer-domain-dominance.ps1"
 . "$PSScriptRoot\hammer\hammer-intent-drift.ps1"
 . "$PSScriptRoot\hammer\hammer-serp-similarity.ps1"
+. "$PSScriptRoot\hammer\hammer-change-classification.ps1"
 . "$PSScriptRoot\hammer\hammer-dataforseo-ingest.ps1"
 . "$PSScriptRoot\hammer\hammer-realdata-fixtures.ps1"
 
