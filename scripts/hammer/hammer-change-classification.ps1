@@ -6,12 +6,13 @@
 # Two KTs are created:
 #
 #   $_ccKtId      (volatile)  -- 4 snapshots engineered to trigger algorithm_shift:
-#                                high rank churn + low structural similarity.
-#     snap0: wikipedia.org x10, feature=featured_snippet, aiOverview=absent
-#     snap1: reddit.com x10   , feature=video,            aiOverview=present   (total domain swap)
-#     snap2: wikipedia.org x10, feature=featured_snippet, aiOverview=absent    (flipped back)
-#     snap3: medium.com x10,    feature=shopping,         aiOverview=present   (another swap)
-#     Expected: high volatility, near-zero domain similarity across pairs -> algorithm_shift
+#                                5 shared URLs with large rank swaps (1-5 vs 25-29) across
+#                                consecutive pairs + rotating non-shared domains + AI flips.
+#     snap0: shared.com/a1-a5 @ ranks 1-5,  wiki.org/x1-x5 @ 6-10,  featured_snippet, absent
+#     snap1: shared.com/a1-a5 @ ranks 25-29, reddit.com/r1-r5 @ 1-5, video,           present
+#     snap2: shared.com/a1-a5 @ ranks 1-5,  medium.com/m1-m5 @ 6-10, featured_snippet, absent
+#     snap3: shared.com/a1-a5 @ ranks 25-29, nytimes.com/n1-n5 @ 1-5, shopping,        present
+#     Expected: high rank shift (24 per shared URL), AI churn 3/3, low similarity -> algorithm_shift
 #
 #   $_ccStableId  (stable)    -- 3 identical snapshots, no signal change.
 #     Expected: classification=stable
@@ -47,21 +48,70 @@ if ($_ccKtId) {
     $t2 = (Get-Date).AddMinutes(-6).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
     $t3 = (Get-Date).AddMinutes(-3).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
 
-    # Build organic items for a single domain
-    function New-OrgItems($domain, $count, $extraType) {
-        $items = @()
-        for ($i = 1; $i -le $count; $i++) {
-            $items += @{type="organic"; url="https://$domain/p$i"; rank_absolute=$i}
-        }
-        if ($extraType) { $items += @{type=$extraType; url="https://$domain/feature"; rank_absolute=0} }
-        return ,$items
-    }
+    # 5 shared URLs (shared.com/a1-a5) oscillate between ranks 1-5 and 25-29
+    # across consecutive pairs, producing rank shift of 24 per URL (saturates cap).
+    # 5 rotating non-shared domain URLs keep domain similarity low.
+    # AI overview flips every pair (3/3). Feature types rotate (2 changes/pair).
+    # Result: volatilityScore ~78, averageSimilarity ~0.17 -> algorithm_shift.
+
+    $snap0Items = @(
+        @{type="organic"; url="https://shared.com/a1"; rank_absolute=1}
+        @{type="organic"; url="https://shared.com/a2"; rank_absolute=2}
+        @{type="organic"; url="https://shared.com/a3"; rank_absolute=3}
+        @{type="organic"; url="https://shared.com/a4"; rank_absolute=4}
+        @{type="organic"; url="https://shared.com/a5"; rank_absolute=5}
+        @{type="organic"; url="https://wiki.org/x1"; rank_absolute=6}
+        @{type="organic"; url="https://wiki.org/x2"; rank_absolute=7}
+        @{type="organic"; url="https://wiki.org/x3"; rank_absolute=8}
+        @{type="organic"; url="https://wiki.org/x4"; rank_absolute=9}
+        @{type="organic"; url="https://wiki.org/x5"; rank_absolute=10}
+        @{type="featured_snippet"; url="https://wiki.org/fs"; rank_absolute=0}
+    )
+    $snap1Items = @(
+        @{type="organic"; url="https://shared.com/a1"; rank_absolute=25}
+        @{type="organic"; url="https://shared.com/a2"; rank_absolute=26}
+        @{type="organic"; url="https://shared.com/a3"; rank_absolute=27}
+        @{type="organic"; url="https://shared.com/a4"; rank_absolute=28}
+        @{type="organic"; url="https://shared.com/a5"; rank_absolute=29}
+        @{type="organic"; url="https://reddit.com/r1"; rank_absolute=1}
+        @{type="organic"; url="https://reddit.com/r2"; rank_absolute=2}
+        @{type="organic"; url="https://reddit.com/r3"; rank_absolute=3}
+        @{type="organic"; url="https://reddit.com/r4"; rank_absolute=4}
+        @{type="organic"; url="https://reddit.com/r5"; rank_absolute=5}
+        @{type="video"; url="https://reddit.com/vid"; rank_absolute=0}
+    )
+    $snap2Items = @(
+        @{type="organic"; url="https://shared.com/a1"; rank_absolute=1}
+        @{type="organic"; url="https://shared.com/a2"; rank_absolute=2}
+        @{type="organic"; url="https://shared.com/a3"; rank_absolute=3}
+        @{type="organic"; url="https://shared.com/a4"; rank_absolute=4}
+        @{type="organic"; url="https://shared.com/a5"; rank_absolute=5}
+        @{type="organic"; url="https://medium.com/m1"; rank_absolute=6}
+        @{type="organic"; url="https://medium.com/m2"; rank_absolute=7}
+        @{type="organic"; url="https://medium.com/m3"; rank_absolute=8}
+        @{type="organic"; url="https://medium.com/m4"; rank_absolute=9}
+        @{type="organic"; url="https://medium.com/m5"; rank_absolute=10}
+        @{type="featured_snippet"; url="https://medium.com/fs"; rank_absolute=0}
+    )
+    $snap3Items = @(
+        @{type="organic"; url="https://shared.com/a1"; rank_absolute=25}
+        @{type="organic"; url="https://shared.com/a2"; rank_absolute=26}
+        @{type="organic"; url="https://shared.com/a3"; rank_absolute=27}
+        @{type="organic"; url="https://shared.com/a4"; rank_absolute=28}
+        @{type="organic"; url="https://shared.com/a5"; rank_absolute=29}
+        @{type="organic"; url="https://nytimes.com/n1"; rank_absolute=1}
+        @{type="organic"; url="https://nytimes.com/n2"; rank_absolute=2}
+        @{type="organic"; url="https://nytimes.com/n3"; rank_absolute=3}
+        @{type="organic"; url="https://nytimes.com/n4"; rank_absolute=4}
+        @{type="organic"; url="https://nytimes.com/n5"; rank_absolute=5}
+        @{type="shopping"; url="https://nytimes.com/shop"; rank_absolute=0}
+    )
 
     $snapDefs = @(
-        @{ capturedAt=$t0; aiOverview="absent";  items=(New-OrgItems "wikipedia.org" 10 "featured_snippet") }
-        @{ capturedAt=$t1; aiOverview="present"; items=(New-OrgItems "reddit.com"    10 "video") }
-        @{ capturedAt=$t2; aiOverview="absent";  items=(New-OrgItems "wikipedia.org" 10 "featured_snippet") }
-        @{ capturedAt=$t3; aiOverview="present"; items=(New-OrgItems "medium.com"    10 "shopping") }
+        @{ capturedAt=$t0; aiOverview="absent";  items=$snap0Items }
+        @{ capturedAt=$t1; aiOverview="present"; items=$snap1Items }
+        @{ capturedAt=$t2; aiOverview="absent";  items=$snap2Items }
+        @{ capturedAt=$t3; aiOverview="present"; items=$snap3Items }
     )
 
     $allCreated = $true

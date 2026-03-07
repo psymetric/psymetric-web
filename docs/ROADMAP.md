@@ -18,8 +18,9 @@ Related specs:
 
 ## Current System State
 
-PsyMetric now includes a complete Search Intelligence Layer (SIL-1 through SIL-11B),
-an expanded SERP sensor suite, and an operator reasoning + briefing system.
+PsyMetric now includes a complete Search Intelligence Layer (SIL-1 through SIL-13),
+an expanded SERP sensor suite, operator reasoning + briefing system,
+change classification, and event timeline reconstruction.
 
 ### Core SIL Layers (Complete)
 
@@ -40,6 +41,8 @@ an expanded SERP sensor suite, and an operator reasoning + briefing system.
 - **SIL-10**: Temporal Risk Attribution Surface
 - **SIL-11**: Operator Reasoning Layer (project-level deterministic heuristics)
 - **SIL-11B**: Operator Briefing Packet (structured LLM-ready prompt generation)
+- **SIL-12**: Change Classification (deterministic SERP event classification from sensor signals)
+- **SIL-13**: SERP Event Timeline (chronological event stream with duplicate collapse)
 
 ### SERP Sensor Systems (Complete)
 
@@ -78,6 +81,24 @@ Implemented as pure library functions + read-only endpoints + hammer coverage.
   - Pure library: `src/lib/seo/serp-similarity.ts`
   - Hammer: SS-A through SS-J (10 tests)
 
+### Change Classification & Event Timeline (Complete)
+
+- **SIL-12 Change Classification** (`GET /api/seo/keyword-targets/:id/change-classification`)
+  - Combines all sensor signals to classify SERP change state
+  - Supported classifications: `algorithm_shift`, `competitor_surge`, `intent_shift`, `feature_turbulence`, `ai_overview_disruption`, `stable`
+  - Confidence scoring with overage-ratio scaling, clamped [50–100] for active rules
+  - Tie-break: confidence DESC, label ASC
+  - Pure library: `src/lib/seo/change-classification.ts`
+  - Hammer: CC-A through CC-G (7 tests)
+
+- **SIL-13 SERP Event Timeline** (`GET /api/seo/keyword-targets/:id/event-timeline`)
+  - Builds chronological sequence of SERP change events per keyword
+  - Snapshots processed in deterministic order (capturedAt ASC, id ASC)
+  - Classification computed per cumulative snapshot window
+  - Duplicate consecutive classifications collapsed — produces minimal event stream
+  - Pure library: `src/lib/seo/event-timeline.ts`
+  - Hammer: ET-A through ET-G (7 tests)
+
 ### Operator Reasoning Systems (Complete)
 
 - **SIL-11 Operator Reasoning Layer**
@@ -103,6 +124,7 @@ Implemented as pure library functions + read-only endpoints + hammer coverage.
 - No schema changes after SIL-1 initial migration — all SIL-2 through sensor suite are pure read surfaces
 - All volatility math is pure functions: deterministic for any given input set
 - Snapshot batch loading: O(K × S) where K = keyword count, S = snapshot count in window
+- SIL-13 event timeline computes cumulative signals across prefix windows: O(n²) relative to snapshot count. Acceptable at current scale; future optimization target using deterministic incremental accumulation. No architectural changes required.
 - Deterministic keyset pagination on all paginated surfaces
 - Shared extraction logic in `src/lib/seo/serp-extraction.ts`
 - Project isolation enforced on every endpoint via `resolveProjectId(request)` (headers only)
@@ -147,6 +169,7 @@ pure library + read-only endpoint + hammer coverage.
 - **AI Overview Stability Index**: rolling ratio of AI Overview presence/absence flips per keyword over configurable windows; extends aiOverviewChurn beyond per-window aggregate
 - **Feature Co-occurrence Matrix**: which feature families appear together most frequently; identifies structural SERP patterns
 - **Snippet Length Drift**: track character count changes in featured snippet text across snapshots (requires text field in rawPayload)
+- **SIL-14 Event Causality Detection** (planned): detect patterns in the event timeline such as `feature_turbulence → algorithm_shift`, `ai_overview_disruption → intent_shift`, `competitor_surge → volatility spike`. Constraints: compute-on-read, no new database tables, no background jobs, deterministic analysis.
 
 ---
 
@@ -189,6 +212,18 @@ Delivered:
 - Intent Drift Sensor
 - SERP Similarity Sensor
 - Hammer harness extended across all new surfaces
+
+---
+
+## Phase 0.4 — Change Classification + Event Timeline (DONE)
+
+Status: ✅ complete
+
+Delivered:
+- SIL-12: Change Classification — deterministic SERP event classifier combining all sensor signals
+- SIL-13: SERP Event Timeline — chronological event stream with duplicate collapse logic
+- Hammer modules: `hammer-change-classification.ps1`, `hammer-event-timeline.ps1`
+- Both wired into `scripts/api-hammer.ps1`
 
 ---
 
@@ -259,8 +294,11 @@ Constraints:
 All surfaces covered. Exact counts update with each run.
 Modules: `hammer-core`, `hammer-seo`, `hammer-sil2` through `hammer-sil11-briefing`,
 `hammer-feature-history`, `hammer-feature-volatility`, `hammer-domain-dominance`,
-`hammer-intent-drift`, `hammer-serp-similarity`, `hammer-dataforseo-ingest`,
-`hammer-realdata-fixtures`.
+`hammer-intent-drift`, `hammer-serp-similarity`, `hammer-change-classification`,
+`hammer-event-timeline`, `hammer-dataforseo-ingest`, `hammer-realdata-fixtures`.
+
+The hammer suite validates: classification determinism, event timeline collapse logic,
+isolation safety, endpoint shape, and operator-visible behavior across all SIL layers.
 
 ---
 
