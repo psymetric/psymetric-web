@@ -515,8 +515,13 @@ try {
             if ($null -eq $nc1) {
                 Write-Host "  SKIP (nextCursor is null; fewer than 3 snapshots returned)" -ForegroundColor DarkYellow; Hammer-Record SKIP
             } else {
-                $catParam = $nc1.cursorCapturedAt
-                $cidParam = $nc1.cursorId
+                # ConvertFrom-Json may parse ISO strings as DateTime objects.
+                # Force back to string before URL-encoding.
+                $catRaw = if ($nc1.cursorCapturedAt -is [datetime]) {
+                    $nc1.cursorCapturedAt.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+                } else { [string]$nc1.cursorCapturedAt }
+                $catParam = [uri]::EscapeDataString($catRaw)
+                $cidParam = [uri]::EscapeDataString([string]$nc1.cursorId)
                 $r2 = Invoke-WebRequest -Uri "$Base$_fhBase/$_fhKtId/feature-history?limit=2&cursorCapturedAt=$catParam&cursorId=$cidParam" `
                     -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
                 if ($r2.StatusCode -ne 200) {
