@@ -41,6 +41,7 @@ $_parseTargets = @(
     "$PSScriptRoot\hammer\hammer-event-causality.ps1"
     "$PSScriptRoot\hammer\hammer-dataforseo-ingest.ps1"
     "$PSScriptRoot\hammer\hammer-realdata-fixtures.ps1"
+    "$PSScriptRoot\hammer\hammer-keyword-overview.ps1"
 )
 foreach ($_pt in $_parseTargets) {
     $_tokens = $null
@@ -99,6 +100,7 @@ if ($_seed -and $_seed.data -and $_seed.data.Count -gt 0) { $entityId = $_seed.d
 . "$PSScriptRoot\hammer\hammer-event-causality.ps1"
 . "$PSScriptRoot\hammer\hammer-dataforseo-ingest.ps1"
 . "$PSScriptRoot\hammer\hammer-realdata-fixtures.ps1"
+. "$PSScriptRoot\hammer\hammer-keyword-overview.ps1"
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 Write-Host ""
