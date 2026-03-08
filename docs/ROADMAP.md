@@ -18,9 +18,9 @@ Related specs:
 
 ## Current System State
 
-PsyMetric now includes a complete Search Intelligence Layer (SIL-1 through SIL-13),
+PsyMetric now includes a complete Search Intelligence Layer (SIL-1 through SIL-14),
 an expanded SERP sensor suite, operator reasoning + briefing system,
-change classification, and event timeline reconstruction.
+change classification, event timeline reconstruction, and deterministic event causality detection.
 
 ### Core SIL Layers (Complete)
 
@@ -43,6 +43,7 @@ change classification, and event timeline reconstruction.
 - **SIL-11B**: Operator Briefing Packet (structured LLM-ready prompt generation)
 - **SIL-12**: Change Classification (deterministic SERP event classification from sensor signals)
 - **SIL-13**: SERP Event Timeline (chronological event stream with duplicate collapse)
+- **SIL-14**: Event Causality Detection (deterministic adjacent transition pattern detection)
 
 ### SERP Sensor Systems (Complete)
 
@@ -81,7 +82,7 @@ Implemented as pure library functions + read-only endpoints + hammer coverage.
   - Pure library: `src/lib/seo/serp-similarity.ts`
   - Hammer: SS-A through SS-J (10 tests)
 
-### Change Classification & Event Timeline (Complete)
+### Change Classification, Event Timeline & Causality (Complete)
 
 - **SIL-12 Change Classification** (`GET /api/seo/keyword-targets/:id/change-classification`)
   - Combines all sensor signals to classify SERP change state
@@ -98,6 +99,19 @@ Implemented as pure library functions + read-only endpoints + hammer coverage.
   - Duplicate consecutive classifications collapsed — produces minimal event stream
   - Pure library: `src/lib/seo/event-timeline.ts`
   - Hammer: ET-A through ET-G (7 tests)
+
+- **SIL-14 Event Causality Detection** (`GET /api/seo/keyword-targets/:id/event-causality`)
+  - Detects deterministic adjacent transition patterns from the SIL-13 event timeline
+  - Recognized patterns currently include:
+    - `feature_turbulence_to_algorithm_shift`
+    - `ai_overview_disruption_to_intent_shift`
+    - `competitor_surge_to_feature_turbulence`
+    - `competitor_surge_to_algorithm_shift`
+    - `intent_shift_to_competitor_surge`
+    - `intent_shift_to_algorithm_shift`
+  - Confidence = rounded mean of adjacent event confidences
+  - Pure library: `src/lib/seo/event-causality.ts`
+  - Hammer: EC-A through EC-G (7 tests)
 
 ### Operator Reasoning Systems (Complete)
 
@@ -125,6 +139,7 @@ Implemented as pure library functions + read-only endpoints + hammer coverage.
 - All volatility math is pure functions: deterministic for any given input set
 - Snapshot batch loading: O(K × S) where K = keyword count, S = snapshot count in window
 - SIL-13 event timeline computes cumulative signals across prefix windows: O(n²) relative to snapshot count. Acceptable at current scale; future optimization target using deterministic incremental accumulation. No architectural changes required.
+- SIL-14 event causality is downstream of SIL-13 and adds deterministic adjacent transition analysis only; no probabilistic inference, no multi-hop chain inference.
 - Deterministic keyset pagination on all paginated surfaces
 - Shared extraction logic in `src/lib/seo/serp-extraction.ts`
 - Project isolation enforced on every endpoint via `resolveProjectId(request)` (headers only)
@@ -169,7 +184,6 @@ pure library + read-only endpoint + hammer coverage.
 - **AI Overview Stability Index**: rolling ratio of AI Overview presence/absence flips per keyword over configurable windows; extends aiOverviewChurn beyond per-window aggregate
 - **Feature Co-occurrence Matrix**: which feature families appear together most frequently; identifies structural SERP patterns
 - **Snippet Length Drift**: track character count changes in featured snippet text across snapshots (requires text field in rawPayload)
-- **SIL-14 Event Causality Detection** (planned): detect patterns in the event timeline such as `feature_turbulence → algorithm_shift`, `ai_overview_disruption → intent_shift`, `competitor_surge → volatility spike`. Constraints: compute-on-read, no new database tables, no background jobs, deterministic analysis.
 
 ---
 
@@ -224,6 +238,19 @@ Delivered:
 - SIL-13: SERP Event Timeline — chronological event stream with duplicate collapse logic
 - Hammer modules: `hammer-change-classification.ps1`, `hammer-event-timeline.ps1`
 - Both wired into `scripts/api-hammer.ps1`
+
+---
+
+## Phase 0.5 — Event Causality Detection (DONE)
+
+Status: ✅ complete
+
+Delivered:
+- SIL-14: Event Causality Detection — deterministic adjacent event transition pattern detection downstream of SIL-13
+- Pure library: `src/lib/seo/event-causality.ts`
+- Endpoint: `GET /api/seo/keyword-targets/:id/event-causality`
+- Hammer module: `hammer-event-causality.ps1`
+- Wired into `scripts/api-hammer.ps1`
 
 ---
 
@@ -295,10 +322,10 @@ All surfaces covered. Exact counts update with each run.
 Modules: `hammer-core`, `hammer-seo`, `hammer-sil2` through `hammer-sil11-briefing`,
 `hammer-feature-history`, `hammer-feature-volatility`, `hammer-domain-dominance`,
 `hammer-intent-drift`, `hammer-serp-similarity`, `hammer-change-classification`,
-`hammer-event-timeline`, `hammer-dataforseo-ingest`, `hammer-realdata-fixtures`.
+`hammer-event-timeline`, `hammer-event-causality`, `hammer-dataforseo-ingest`, `hammer-realdata-fixtures`.
 
 The hammer suite validates: classification determinism, event timeline collapse logic,
-isolation safety, endpoint shape, and operator-visible behavior across all SIL layers.
+event causality pattern detection, isolation safety, endpoint shape, and operator-visible behavior across all SIL layers.
 
 ---
 
