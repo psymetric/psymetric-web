@@ -199,4 +199,189 @@ export const toolDefinitions = [
       additionalProperties: false,
     },
   },
+  // ── Keyword-level observatory tools ───────────────────────────────────────
+  {
+    name: "get_keyword_overview",
+    description:
+      "Returns a composite SIL-15 overview for a keyword target: volatility, classification, timeline, causality, intent drift, feature volatility, domain dominance, and SERP similarity — all in one payload.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywordTargetId: {
+          type: "string",
+          description: "KeywordTarget UUID",
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["keywordTargetId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_keyword_volatility",
+    description:
+      "Returns the volatility profile for a keyword target: score (0–100), regime, maturity, and SIL-7 attribution components (rank, AI overview, feature volatility).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywordTargetId: {
+          type: "string",
+          description: "KeywordTarget UUID",
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["keywordTargetId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_change_classification",
+    description:
+      "Returns the SIL-12 change classification for a keyword target: label (algorithm_shift, competitor_surge, intent_shift, feature_turbulence, ai_overview_disruption, or stable), confidence score, and contributing signals.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywordTargetId: {
+          type: "string",
+          description: "KeywordTarget UUID",
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["keywordTargetId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_event_timeline",
+    description:
+      "Returns the SIL-13 event timeline for a keyword target: a minimal ordered stream of SERP classification transitions (only emits on classification changes).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywordTargetId: {
+          type: "string",
+          description: "KeywordTarget UUID",
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["keywordTargetId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_event_causality",
+    description:
+      "Returns the SIL-14 event causality patterns for a keyword target: recognized adjacent event transition pairs (e.g. feature_turbulence → algorithm_shift).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywordTargetId: {
+          type: "string",
+          description: "KeywordTarget UUID",
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["keywordTargetId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_intent_drift",
+    description:
+      "Returns intent drift analysis for a keyword target: per-snapshot intent distributions and transitions between dominant intent buckets (informational, video, transactional, local, news).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywordTargetId: {
+          type: "string",
+          description: "KeywordTarget UUID",
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["keywordTargetId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_feature_volatility",
+    description:
+      "Returns SERP feature volatility for a keyword target: transitions in feature family presence (featured snippet, PAA, local pack, etc.) and a ranked summary of the most volatile features.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywordTargetId: {
+          type: "string",
+          description: "KeywordTarget UUID",
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["keywordTargetId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_domain_dominance",
+    description:
+      "Returns domain dominance analysis for a keyword target: which domains dominate the latest SERP snapshot, top domains by result count, and the dominance index.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywordTargetId: {
+          type: "string",
+          description: "KeywordTarget UUID",
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["keywordTargetId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_serp_similarity",
+    description:
+      "Returns SERP structural similarity analysis for a keyword target: consecutive-pair Jaccard similarity scores on domain sets and feature family sets.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywordTargetId: {
+          type: "string",
+          description: "KeywordTarget UUID",
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["keywordTargetId"],
+      additionalProperties: false,
+    },
+  },
+  // ── Operator-level observatory tools ─────────────────────────────────────
+  {
+    name: "get_operator_reasoning",
+    description:
+      "Returns operator reasoning output for the project: synthesized SEO intelligence derived from SERP signals, volatility, and classification data.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_operator_briefing",
+    description:
+      "Returns the operator briefing for the project: a structured summary of current SEO state, top risks, and recommended focus areas.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_risk_attribution_summary",
+    description:
+      "Returns the risk attribution summary for the project: ranked breakdown of volatility contributors and risk signals across all monitored keywords.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
 ] as const;

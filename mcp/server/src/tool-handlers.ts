@@ -134,6 +134,32 @@ export async function handleToolCall(
       return handleListSearchPerformance(args, apiClient);
     case "list_quotable_blocks":
       return handleListQuotableBlocks(args, apiClient);
+    // ── Keyword-level observatory tools ───────────────────────────────
+    case "get_keyword_overview":
+      return handleKeywordSubresource(args, apiClient, "overview");
+    case "get_keyword_volatility":
+      return handleKeywordSubresource(args, apiClient, "volatility");
+    case "get_change_classification":
+      return handleKeywordSubresource(args, apiClient, "change-classification");
+    case "get_event_timeline":
+      return handleKeywordSubresource(args, apiClient, "event-timeline");
+    case "get_event_causality":
+      return handleKeywordSubresource(args, apiClient, "event-causality");
+    case "get_intent_drift":
+      return handleKeywordSubresource(args, apiClient, "intent-drift");
+    case "get_feature_volatility":
+      return handleKeywordSubresource(args, apiClient, "feature-volatility");
+    case "get_domain_dominance":
+      return handleKeywordSubresource(args, apiClient, "domain-dominance");
+    case "get_serp_similarity":
+      return handleKeywordSubresource(args, apiClient, "serp-similarity");
+    // ── Operator-level observatory tools ─────────────────────────────
+    case "get_operator_reasoning":
+      return handleOperatorEndpoint(apiClient, "/api/seo/operator-reasoning");
+    case "get_operator_briefing":
+      return handleOperatorEndpoint(apiClient, "/api/seo/operator-briefing");
+    case "get_risk_attribution_summary":
+      return handleOperatorEndpoint(apiClient, "/api/seo/risk-attribution-summary");
     default:
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${toolName}`);
   }
@@ -314,6 +340,59 @@ async function handleListQuotableBlocks(
 
   const queryString = buildQueryString(queryParams);
   const response = await apiClient.fetch(`/api/quotable-blocks${queryString}`);
+
+  if (!response.ok) {
+    await handleApiError(response);
+  }
+
+  const data = await response.json();
+  return formatToolResult(data);
+}
+
+/**
+ * handleKeywordSubresource -- shared handler for all keyword-level observatory tools.
+ *
+ * GET /api/seo/keyword-targets/:keywordTargetId/:subresource
+ *
+ * Validates keywordTargetId UUID, then calls the backend subresource endpoint.
+ * Project scoping is handled entirely by the ApiClient headers — never by the caller.
+ */
+async function handleKeywordSubresource(
+  args: Record<string, unknown>,
+  apiClient: ApiClient,
+  subresource: string
+): Promise<unknown> {
+  const keywordTargetId = args.keywordTargetId as string;
+  if (!keywordTargetId) {
+    throw new McpError(ErrorCode.InvalidParams, "keywordTargetId is required");
+  }
+
+  validateUuid(keywordTargetId, "keywordTargetId");
+
+  const response = await apiClient.fetch(
+    `/api/seo/keyword-targets/${keywordTargetId}/${subresource}`
+  );
+
+  if (!response.ok) {
+    await handleApiError(response);
+  }
+
+  const data = await response.json();
+  return formatToolResult(data);
+}
+
+/**
+ * handleOperatorEndpoint -- shared handler for project-level operator tools.
+ *
+ * GET :path (no dynamic segments)
+ *
+ * Project scoping is handled entirely by the ApiClient headers.
+ */
+async function handleOperatorEndpoint(
+  apiClient: ApiClient,
+  path: string
+): Promise<unknown> {
+  const response = await apiClient.fetch(path);
 
   if (!response.ok) {
     await handleApiError(response);
