@@ -25,6 +25,7 @@
  *              No wall-clock fields in response body.
  * No writes. No EventLog. Read-only surface.
  */
+import { Prisma } from "@prisma/client";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { badRequest, notFound, serverError, successResponse } from "@/lib/api-response";
@@ -166,38 +167,36 @@ export async function GET(
     const { query, locale, device } = keywordTarget;
 
     // Build Prisma where clause
-    type WhereClause = Record<string, unknown>;
-    const where: WhereClause = {
+    const baseWhere: Prisma.SERPSnapshotWhereInput = {
       projectId,
       query,
       locale,
       device,
+      ...(windowStart !== null ? { capturedAt: { gte: windowStart } } : {}),
     };
 
-    if (windowStart !== null) {
-      where.capturedAt = { gte: windowStart };
-    }
-
     // Apply keyset cursor: rows strictly after (cursorCapturedAt, cursorId) ASC
-    if (cursor !== null) {
-      const afterClause = {
-        OR: [
-          { capturedAt: { gt: cursor.cursorCapturedAt } },
-          { capturedAt: { equals: cursor.cursorCapturedAt }, id: { gt: cursor.cursorId } },
-        ],
-      };
-      // Merge with existing where -- capturedAt filter and cursor are both needed
-      if (where.capturedAt) {
-        where.AND = [{ capturedAt: where.capturedAt }, afterClause];
-        delete where.capturedAt;
-      } else {
-        Object.assign(where, afterClause);
-      }
-    }
+    const where: Prisma.SERPSnapshotWhereInput =
+      cursor !== null
+        ? {
+            AND: [
+              baseWhere,
+              {
+                OR: [
+                  { capturedAt: { gt: cursor.cursorCapturedAt } },
+                  {
+                    capturedAt: { equals: cursor.cursorCapturedAt },
+                    id: { gt: cursor.cursorId },
+                  },
+                ],
+              },
+            ],
+          }
+        : baseWhere;
 
     // Fetch limit+1 to detect hasMore
     const rawSnapshots = await prisma.sERPSnapshot.findMany({
-      where:   where as Parameters<typeof prisma.sERPSnapshot.findMany>[0]["where"],
+      where,
       orderBy: [{ capturedAt: "asc" }, { id: "asc" }],
       take:    limit + 1,
       select: {

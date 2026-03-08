@@ -113,8 +113,9 @@ export function buildIntentDistribution(familiesSorted: string[]): IntentDistrib
     if (bucket) buckets[bucket] = true;
   }
 
-  const activeNames: IntentBucket[] = (
-    ["informational", "video", "transactional", "local", "news"] as IntentBucket[]
+  type ActiveBucket = Exclude<IntentBucket, "none">;
+  const activeNames: ActiveBucket[] = (
+    ["informational", "video", "transactional", "local", "news"] as ActiveBucket[]
   ).filter((b) => buckets[b]);
 
   const total = activeNames.length;
@@ -143,7 +144,7 @@ export function buildIntentDistribution(familiesSorted: string[]): IntentDistrib
   };
 
   // Dominant: highest percentage; tie-break by bucket name ASC
-  let dominant: IntentBucket = activeNames[0];
+  let dominant: ActiveBucket = activeNames[0];
   for (const b of activeNames) {
     if (dist[b] > dist[dominant] || (dist[b] === dist[dominant] && b < dominant)) {
       dominant = b;
@@ -178,7 +179,8 @@ export function computeIntentDrift(
   }));
 
   const transitions: IntentTransition[] = [];
-  const bucketKeys: IntentBucket[] = ["informational", "video", "transactional", "local", "news"];
+  type NumericBucket = Exclude<IntentBucket, "none">;
+  const bucketKeys: NumericBucket[] = ["informational", "video", "transactional", "local", "news"];
 
   for (let i = 0; i < intentSnapshots.length - 1; i++) {
     const from = intentSnapshots[i];

@@ -52,14 +52,14 @@ const QuerySchema = z
       .transform(Number)
       .pipe(z.number().int().min(1).max(365))
       .optional()
-      .default("60"),
+      .default(60),
     topSpikes: z
       .string()
       .regex(/^\d+$/, "topSpikes must be an integer")
       .transform(Number)
       .pipe(z.number().int().min(1).max(20))
       .optional()
-      .default("5"),
+      .default(5),
   })
   .strict();
 
@@ -80,7 +80,7 @@ export async function GET(request: NextRequest) {
       topSpikes:       sp.get("topSpikes")        ?? undefined,
     });
     if (!parsed.success) {
-      return badRequest(parsed.error.errors[0]?.message ?? "Invalid parameters");
+      return badRequest(parsed.error.issues[0]?.message ?? "Invalid parameters");
     }
 
     const { keywordTargetId, windowDays, topSpikes } = parsed.data;
@@ -181,15 +181,15 @@ export async function GET(request: NextRequest) {
       device,
       windowDays,
 
-      volatilityScore:           profile.volatilityScore,
+      volatilityScore:            profile.volatilityScore,
       regime,
       maturity,
-      sampleSize:                profile.sampleSize,
-      snapshotCount:             snapshots.length,
-      rankVolatilityComponent:   profile.rankVolatilityComponent,
-      aiOverviewComponent:       profile.aiOverviewComponent,
+      sampleSize:                 profile.sampleSize,
+      snapshotCount:              snapshots.length,
+      rankVolatilityComponent:    profile.rankVolatilityComponent,
+      aiOverviewComponent:        profile.aiOverviewComponent,
       featureVolatilityComponent: profile.featureVolatilityComponent,
-      aiOverviewChurn:           profile.aiOverviewChurn,
+      aiOverviewChurn:            profile.aiOverviewChurn,
 
       spikes,
       featureTransitions,
