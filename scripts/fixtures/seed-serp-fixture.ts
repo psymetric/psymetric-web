@@ -61,12 +61,26 @@ interface FixtureFileSingle {
   snapshots: FixtureSnapshot[];
 }
 
-function isMultiFixture(x: any): x is FixtureFileMulti {
-  return !!x && typeof x.name === "string" && Array.isArray(x.keywordTargets);
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
-function isSingleFixture(x: any): x is FixtureFileSingle {
-  return !!x && typeof x.query === "string" && typeof x.locale === "string" && typeof x.device === "string" && Array.isArray(x.snapshots);
+function isMultiFixture(x: unknown): x is FixtureFileMulti {
+  return (
+    isRecord(x) &&
+    typeof x.name === "string" &&
+    Array.isArray(x.keywordTargets)
+  );
+}
+
+function isSingleFixture(x: unknown): x is FixtureFileSingle {
+  return (
+    isRecord(x) &&
+    typeof x.query === "string" &&
+    typeof x.locale === "string" &&
+    typeof x.device === "string" &&
+    Array.isArray(x.snapshots)
+  );
 }
 
 async function main() {
@@ -75,7 +89,7 @@ async function main() {
   const filePath = process.argv[fileIndex + 1];
 
   const raw = fs.readFileSync(filePath, "utf-8");
-  const parsed = JSON.parse(raw);
+  const parsed: unknown = JSON.parse(raw);
 
   let fixture: FixtureFileMulti;
 
