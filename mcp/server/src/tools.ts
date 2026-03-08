@@ -353,11 +353,125 @@ export const toolDefinitions = [
       additionalProperties: false,
     },
   },
+  // ── Project-level diagnostic tools ────────────────────────────────────────
+  {
+    name: "get_project_diagnostic",
+    description:
+      "Compact project-level diagnostic packet. Fans out in parallel to volatility-summary, volatility-alerts, and risk-attribution-summary, then assembles a single operator-facing triage view: overall project volatility score, stability distribution, top alert keywords, and risk attribution percentages (rank vs AI overview vs feature). Use this as the first tool when diagnosing the health of a project.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_top_volatile_keywords",
+    description:
+      "Returns a compact triage list of the most volatile keywords in the project, sorted by volatility score descending. Calls the volatility-alerts endpoint and trims to the requested limit. Each entry includes keywordTargetId, query, volatility score, severity (regime label), and attribution components. Use this when you need a ranked list for triage without the full project diagnostic.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "number",
+          description: "Maximum number of keywords to return (default 10, min 1, max 50)",
+          minimum: 1,
+          maximum: 50,
+        },
+      },
+      additionalProperties: false,
+    },
+  },
   // ── Composite diagnostic tools ──────────────────────────────────────────
   {
     name: "get_keyword_diagnostic",
     description:
       "Compact operator diagnostic for a single keyword target. Fans out to overview, event timeline, and event causality in parallel and returns a single merged packet. Use this instead of calling those three tools individually to reduce tool chatter and token usage.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywordTargetId: {
+          type: "string",
+          description: "KeywordTarget UUID",
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["keywordTargetId"],
+      additionalProperties: false,
+    },
+  },
+  // ── Deep-dive keyword tools ────────────────────────────────────────────────
+  {
+    name: "get_serp_delta",
+    description:
+      "Returns the rank delta between the two most recent SERP snapshots for a keyword target: which URLs moved, entered, or exited the SERP, rank changes per URL, and AI Overview state change. The backend auto-selects the latest two snapshots — no snapshot IDs required.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywordTargetId: {
+          type: "string",
+          description: "KeywordTarget UUID",
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["keywordTargetId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_volatility_breakdown",
+    description:
+      "Returns which specific URLs are driving rank volatility for a keyword target. Each URL is scored by total absolute rank shift and average shift across consecutive snapshot pairs. Sorted by totalAbsShift descending — the top entry is the single biggest contributor to rank instability.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywordTargetId: {
+          type: "string",
+          description: "KeywordTarget UUID",
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["keywordTargetId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_volatility_spikes",
+    description:
+      "Returns the top-N highest-volatility consecutive snapshot pairs ('spikes') for a keyword target. Each spike includes pairVolatilityScore, rank shift magnitude, feature change count, and whether AI Overview flipped. Use this to pinpoint *when* disruption happened before calling get_serp_delta or get_spike_delta.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywordTargetId: {
+          type: "string",
+          description: "KeywordTarget UUID",
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["keywordTargetId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_operator_insight",
+    description:
+      "Returns a synthesized operator insight for a single keyword target: volatility regime, maturity, dominant risk driver, spike evidence, feature transition count, and a structured recommendation. This is the closest to a pre-reasoned narrative assessment the system produces for a keyword.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywordTargetId: {
+          type: "string",
+          description: "KeywordTarget UUID",
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["keywordTargetId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_spike_delta",
+    description:
+      "Composite tool: finds the single worst volatility spike for a keyword target, then fetches the full SERP rank delta for that exact snapshot pair. Returns the spike metadata and the moved/entered/exited URL diff in one call. Use this instead of calling get_volatility_spikes + get_serp_delta separately.",
     inputSchema: {
       type: "object",
       properties: {

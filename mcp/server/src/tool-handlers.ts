@@ -153,9 +153,25 @@ export async function handleToolCall(
       return handleKeywordSubresource(args, apiClient, "domain-dominance");
     case "get_serp_similarity":
       return handleKeywordSubresource(args, apiClient, "serp-similarity");
+    // ── Project-level diagnostic tools ───────────────────────────────
+    case "get_project_diagnostic":
+      return handleProjectDiagnostic(apiClient);
+    case "get_top_volatile_keywords":
+      return handleTopVolatileKeywords(args, apiClient);
     // ── Composite diagnostic tools ─────────────────────────────────
     case "get_keyword_diagnostic":
       return handleKeywordDiagnostic(args, apiClient);
+    // ── Deep-dive keyword tools ─────────────────────────────────────────
+    case "get_serp_delta":
+      return handleSerpDelta(args, apiClient);
+    case "get_volatility_breakdown":
+      return handleKeywordSubresource(args, apiClient, "volatility-breakdown");
+    case "get_volatility_spikes":
+      return handleKeywordSubresource(args, apiClient, "volatility-spikes");
+    case "get_operator_insight":
+      return handleOperatorInsight(args, apiClient);
+    case "get_spike_delta":
+      return handleSpikeDelta(args, apiClient);
     // ── Operator-level observatory tools ─────────────────────────────
     case "get_operator_reasoning":
       return handleOperatorEndpoint(apiClient, "/api/seo/operator-reasoning");
@@ -385,6 +401,190 @@ async function handleKeywordSubresource(
 }
 
 /**
+ * handleProjectDiagnostic -- compact project-level triage packet.
+ *
+ * Fans out three parallel API calls:
+ *   GET /api/seo/volatility-summary
+ *   GET /api/seo/volatility-alerts   (limit=5 — top alerts only)
+ *   GET /api/seo/risk-attribution-summary
+ *
+ * Assembles a compact operator packet:
+ *   projectVolatility  — overall score, counts, distribution
+ *   alerts             — count of keywords in alert + top 5 items
+ *   riskAttribution    — top3 risk keywords + rank/ai/feature percentages
+ *                        from the most recent non-null bucket
+ *
+ * Project scoping is handled entirely by ApiClient headers.
+ * No DB access. HTTP API only.
+ */
+async function handleProjectDiagnostic(
+  apiClient: ApiClient
+): Promise<unknown> {
+  // Fan out in parallel — three independent reads
+  const [summaryRes, alertsRes, riskRes] = await Promise.all([
+    apiClient.fetch("/api/seo/volatility-summary"),
+    apiClient.fetch("/api/seo/volatility-alerts?limit=5"),
+    apiClient.fetch("/api/seo/risk-attribution-summary"),
+  ]);
+
+  if (!summaryRes.ok) await handleApiError(summaryRes);
+  if (!alertsRes.ok)  await handleApiError(alertsRes);
+  if (!riskRes.ok)    await handleApiError(riskRes);
+
+  interface SummaryBody {
+    data: {
+      keywordCount:                   number;
+      activeKeywordCount:             number;
+      weightedProjectVolatilityScore: number;
+      highVolatilityCount:            number;
+      mediumVolatilityCount:          number;
+      lowVolatilityCount:             number;
+      stableCount:                    number;
+      alertKeywordCount:              number;
+      top3RiskKeywords:               unknown[];
+    };
+  }
+  interface AlertsBody {
+    data: {
+      items: Array<{
+        keywordTargetId: string;
+        query:           string;
+        volatilityScore: number;
+        volatilityRegime: string;
+        maturity:        string;
+        rankVolatilityComponent:    number;
+        aiOverviewComponent:        number;
+        featureVolatilityComponent: number;
+      }>;
+    };
+  }
+  interface RiskBody {
+    data: {
+      buckets: Array<{
+        rankShare:    number | null;
+        aiShare:      number | null;
+        featureShare: number | null;
+      }>;
+    };
+  }
+
+  const [summaryBody, alertsBody, riskBody] = await Promise.all([
+    summaryRes.json() as Promise<SummaryBody>,
+    alertsRes.json()  as Promise<AlertsBody>,
+    riskRes.json()    as Promise<RiskBody>,
+  ]);
+
+  const s = summaryBody.data;
+  const a = alertsBody.data;
+  const r = riskBody.data;
+
+  // Pick the last bucket that has non-null attribution shares (most recent)
+  const lastActiveBucket = [...(r.buckets ?? [])]
+    .reverse()
+    .find((b) => b.rankShare !== null) ?? null;
+
+  const packet = {
+    projectVolatility: {
+      keywordCount:                   s.keywordCount,
+      activeKeywordCount:             s.activeKeywordCount,
+      weightedProjectVolatilityScore: s.weightedProjectVolatilityScore,
+      stabilityDistribution: {
+        high:   s.highVolatilityCount,
+        medium: s.mediumVolatilityCount,
+        low:    s.lowVolatilityCount,
+        stable: s.stableCount,
+      },
+    },
+    alerts: {
+      count:     s.alertKeywordCount,
+      topAlerts: (a.items ?? []).map((item) => ({
+        keywordTargetId: item.keywordTargetId,
+        query:           item.query,
+        volatilityScore: item.volatilityScore,
+        severity:        item.volatilityRegime,
+        maturity:        item.maturity,
+      })),
+    },
+    riskAttribution: {
+      top3RiskKeywords: s.top3RiskKeywords,
+      rankPercent:    lastActiveBucket?.rankShare    ?? null,
+      aiPercent:      lastActiveBucket?.aiShare      ?? null,
+      featurePercent: lastActiveBucket?.featureShare ?? null,
+    },
+  };
+
+  return formatToolResult(packet);
+}
+
+/**
+ * handleTopVolatileKeywords -- compact triage list of highest-volatility keywords.
+ *
+ * Calls:
+ *   GET /api/seo/volatility-alerts?limit=:limit
+ *
+ * The alerts endpoint natively supports `limit` (1–50) and sorts by
+ * volatilityScore DESC, query ASC, keywordTargetId ASC — no client-side
+ * sorting required.
+ *
+ * Each item in the response already carries volatilityRegime (severity label).
+ * `classification` is NOT present on this endpoint — omitted per spec.
+ *
+ * Project scoping is handled entirely by ApiClient headers.
+ * No DB access. HTTP API only.
+ */
+async function handleTopVolatileKeywords(
+  args: Record<string, unknown>,
+  apiClient: ApiClient
+): Promise<unknown> {
+  // Clamp limit: default 10, min 1, max 50 (alerts endpoint ceiling)
+  const rawLimit = args.limit !== undefined ? Number(args.limit) : 10;
+  if (!Number.isFinite(rawLimit) || rawLimit < 1 || rawLimit > 50) {
+    throw new McpError(ErrorCode.InvalidParams, "limit must be between 1 and 50");
+  }
+  const limit = Math.floor(rawLimit);
+
+  const response = await apiClient.fetch(
+    `/api/seo/volatility-alerts?limit=${limit}`
+  );
+
+  if (!response.ok) await handleApiError(response);
+
+  interface AlertsBody {
+    data: {
+      items: Array<{
+        keywordTargetId:            string;
+        query:                      string;
+        volatilityScore:            number;
+        volatilityRegime:           string;
+        maturity:                   string;
+        rankVolatilityComponent:    number;
+        aiOverviewComponent:        number;
+        featureVolatilityComponent: number;
+      }>;
+    };
+  }
+
+  const body = await response.json() as AlertsBody;
+  const items = body.data?.items ?? [];
+
+  const packet = {
+    count:    items.length,
+    keywords: items.map((item) => ({
+      keywordTargetId:            item.keywordTargetId,
+      query:                      item.query,
+      volatilityScore:            item.volatilityScore,
+      severity:                   item.volatilityRegime,
+      maturity:                   item.maturity,
+      rankVolatilityComponent:    item.rankVolatilityComponent,
+      aiOverviewComponent:        item.aiOverviewComponent,
+      featureVolatilityComponent: item.featureVolatilityComponent,
+    })),
+  };
+
+  return formatToolResult(packet);
+}
+
+/**
  * handleKeywordDiagnostic -- composite diagnostic packet.
  *
  * Fans out three parallel API calls:
@@ -451,6 +651,133 @@ async function handleKeywordDiagnostic(
   };
 
   return formatToolResult(packet);
+}
+
+/**
+ * handleSerpDelta -- GET /api/seo/serp-deltas?keywordTargetId=:id
+ *
+ * Backend auto-selects the latest two snapshots when no snapshot IDs are
+ * supplied. Returns moved/entered/exited URL sets + AI Overview state change.
+ * Project scoping via ApiClient headers. HTTP API only.
+ */
+async function handleSerpDelta(
+  args: Record<string, unknown>,
+  apiClient: ApiClient
+): Promise<unknown> {
+  const keywordTargetId = args.keywordTargetId as string;
+  if (!keywordTargetId) {
+    throw new McpError(ErrorCode.InvalidParams, "keywordTargetId is required");
+  }
+  validateUuid(keywordTargetId, "keywordTargetId");
+
+  const response = await apiClient.fetch(
+    `/api/seo/serp-deltas?keywordTargetId=${keywordTargetId}`
+  );
+
+  if (!response.ok) await handleApiError(response);
+
+  const data = await response.json();
+  return formatToolResult(data);
+}
+
+/**
+ * handleOperatorInsight -- GET /api/seo/operator-insight?keywordTargetId=:id
+ *
+ * Returns synthesized insight: regime, maturity, dominant risk driver,
+ * spike evidence, feature transition count, and structured recommendation.
+ * Project scoping via ApiClient headers. HTTP API only.
+ */
+async function handleOperatorInsight(
+  args: Record<string, unknown>,
+  apiClient: ApiClient
+): Promise<unknown> {
+  const keywordTargetId = args.keywordTargetId as string;
+  if (!keywordTargetId) {
+    throw new McpError(ErrorCode.InvalidParams, "keywordTargetId is required");
+  }
+  validateUuid(keywordTargetId, "keywordTargetId");
+
+  const response = await apiClient.fetch(
+    `/api/seo/operator-insight?keywordTargetId=${keywordTargetId}`
+  );
+
+  if (!response.ok) await handleApiError(response);
+
+  const data = await response.json();
+  return formatToolResult(data);
+}
+
+/**
+ * handleSpikeDelta -- composite: worst spike → SERP delta for that pair.
+ *
+ * Step 1: GET /api/seo/keyword-targets/:id/volatility-spikes?topN=1
+ *         Extract fromSnapshotId + toSnapshotId from the top spike.
+ * Step 2: GET /api/seo/serp-deltas?keywordTargetId=:id&fromSnapshotId=:from&toSnapshotId=:to
+ *
+ * Returns { keywordTargetId, spike, delta }.
+ * If sampleSize < 2 (no spikes), returns { keywordTargetId, spike: null, delta: null,
+ * insufficient_snapshots: true } without erroring.
+ *
+ * Project scoping via ApiClient headers. HTTP API only. Sequential by design
+ * (step 2 depends on step 1 output).
+ */
+async function handleSpikeDelta(
+  args: Record<string, unknown>,
+  apiClient: ApiClient
+): Promise<unknown> {
+  const keywordTargetId = args.keywordTargetId as string;
+  if (!keywordTargetId) {
+    throw new McpError(ErrorCode.InvalidParams, "keywordTargetId is required");
+  }
+  validateUuid(keywordTargetId, "keywordTargetId");
+
+  // Step 1: fetch the single worst spike
+  const spikesRes = await apiClient.fetch(
+    `/api/seo/keyword-targets/${keywordTargetId}/volatility-spikes?topN=1`
+  );
+  if (!spikesRes.ok) await handleApiError(spikesRes);
+
+  interface SpikesBody {
+    data: {
+      sampleSize: number;
+      spikes: Array<{
+        fromSnapshotId: string;
+        toSnapshotId:   string;
+        [key: string]:  unknown;
+      }>;
+    };
+  }
+
+  const spikesBody = await spikesRes.json() as SpikesBody;
+  const spikesData = spikesBody.data;
+
+  // No pairs available — return gracefully without error
+  if (!spikesData.spikes || spikesData.spikes.length === 0) {
+    return formatToolResult({
+      keywordTargetId,
+      insufficient_snapshots: true,
+      spike: null,
+      delta: null,
+    });
+  }
+
+  const topSpike = spikesData.spikes[0];
+  const { fromSnapshotId, toSnapshotId } = topSpike;
+
+  // Step 2: fetch the SERP delta for that exact pair
+  const deltaRes = await apiClient.fetch(
+    `/api/seo/serp-deltas?keywordTargetId=${keywordTargetId}` +
+    `&fromSnapshotId=${fromSnapshotId}&toSnapshotId=${toSnapshotId}`
+  );
+  if (!deltaRes.ok) await handleApiError(deltaRes);
+
+  const deltaBody = await deltaRes.json() as { data: unknown };
+
+  return formatToolResult({
+    keywordTargetId,
+    spike: topSpike,
+    delta: deltaBody.data,
+  });
 }
 
 /**
