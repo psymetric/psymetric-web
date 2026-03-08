@@ -153,6 +153,9 @@ export async function handleToolCall(
       return handleKeywordSubresource(args, apiClient, "domain-dominance");
     case "get_serp_similarity":
       return handleKeywordSubresource(args, apiClient, "serp-similarity");
+    // ── Composite diagnostic tools ─────────────────────────────────
+    case "get_keyword_diagnostic":
+      return handleKeywordDiagnostic(args, apiClient);
     // ── Operator-level observatory tools ─────────────────────────────
     case "get_operator_reasoning":
       return handleOperatorEndpoint(apiClient, "/api/seo/operator-reasoning");
@@ -379,6 +382,75 @@ async function handleKeywordSubresource(
 
   const data = await response.json();
   return formatToolResult(data);
+}
+
+/**
+ * handleKeywordDiagnostic -- composite diagnostic packet.
+ *
+ * Fans out three parallel API calls:
+ *   GET /api/seo/keyword-targets/:id/overview
+ *   GET /api/seo/keyword-targets/:id/event-timeline
+ *   GET /api/seo/keyword-targets/:id/event-causality
+ *
+ * Assembles a compact operator packet from the results:
+ *   - overview.data.latestSnapshot     (point-in-time summary)
+ *   - overview.data.volatility         (score, regime, maturity)
+ *   - overview.data.classification     (label + confidence)
+ *   - timeline.data.timeline           (event stream)
+ *   - causality.data.patterns          (causal transitions)
+ *
+ * Fails fast if any fetch returns a non-OK status.
+ * Project scoping is handled entirely by ApiClient headers.
+ */
+async function handleKeywordDiagnostic(
+  args: Record<string, unknown>,
+  apiClient: ApiClient
+): Promise<unknown> {
+  const keywordTargetId = args.keywordTargetId as string;
+  if (!keywordTargetId) {
+    throw new McpError(ErrorCode.InvalidParams, "keywordTargetId is required");
+  }
+  validateUuid(keywordTargetId, "keywordTargetId");
+
+  const base = `/api/seo/keyword-targets/${keywordTargetId}`;
+
+  // Fan out in parallel — three independent reads
+  const [overviewRes, timelineRes, causalityRes] = await Promise.all([
+    apiClient.fetch(`${base}/overview`),
+    apiClient.fetch(`${base}/event-timeline`),
+    apiClient.fetch(`${base}/event-causality`),
+  ]);
+
+  // Fail fast on any non-OK response
+  if (!overviewRes.ok)   await handleApiError(overviewRes);
+  if (!timelineRes.ok)   await handleApiError(timelineRes);
+  if (!causalityRes.ok)  await handleApiError(causalityRes);
+
+  const [overviewBody, timelineBody, causalityBody] = await Promise.all([
+    overviewRes.json()  as Promise<{ data: Record<string, unknown> }>,
+    timelineRes.json()  as Promise<{ data: Record<string, unknown> }>,
+    causalityRes.json() as Promise<{ data: Record<string, unknown> }>,
+  ]);
+
+  const o = overviewBody.data;
+  const t = timelineBody.data;
+  const c = causalityBody.data;
+
+  // Compact packet — only what an operator needs for fast triage
+  const packet = {
+    keywordTargetId,
+    query:          o.query,
+    locale:         o.locale,
+    device:         o.device,
+    snapshotCount:  o.snapshotCount,
+    latestSnapshot: o.latestSnapshot,
+    volatility:     o.volatility,
+    classification: o.classification,
+    timeline:       t.timeline,
+    causality:      c.patterns,
+  };
+
+  return formatToolResult(packet);
 }
 
 /**

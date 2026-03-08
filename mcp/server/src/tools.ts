@@ -353,6 +353,24 @@ export const toolDefinitions = [
       additionalProperties: false,
     },
   },
+  // ── Composite diagnostic tools ──────────────────────────────────────────
+  {
+    name: "get_keyword_diagnostic",
+    description:
+      "Compact operator diagnostic for a single keyword target. Fans out to overview, event timeline, and event causality in parallel and returns a single merged packet. Use this instead of calling those three tools individually to reduce tool chatter and token usage.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywordTargetId: {
+          type: "string",
+          description: "KeywordTarget UUID",
+          pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["keywordTargetId"],
+      additionalProperties: false,
+    },
+  },
   // ── Operator-level observatory tools ─────────────────────────────────────
   {
     name: "get_operator_reasoning",
