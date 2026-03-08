@@ -107,8 +107,9 @@ function buildObservations(input: OperatorReasoningInput): Observation[] {
   const raw: Observation[] = [];
 
   // Rule 1 — High volatility keywords (one observation per qualifying keyword)
+  // Gate: only emit when project average volatility > 30 (hammer-authoritative SIL11-J)
   for (const kw of keywords) {
-    if (kw.volatilityScore > HIGH_VOLATILITY_THRESHOLD) {
+    if (summary.averageVolatility > 30 && kw.volatilityScore > HIGH_VOLATILITY_THRESHOLD) {
       raw.push({
         type: "HIGH_VOLATILITY_KEYWORD",
         keywordId: kw.keywordTargetId,
@@ -277,8 +278,9 @@ function buildRecommendedActions(input: OperatorReasoningInput): RecommendedActi
   const raw: RecommendedAction[] = [];
 
   // Action per high-volatility keyword
+  // Gate: match observation gate (summary.averageVolatility > 30) per SIL11-J
   for (const kw of keywords) {
-    if (kw.volatilityScore > HIGH_VOLATILITY_THRESHOLD) {
+    if (summary.averageVolatility > 30 && kw.volatilityScore > HIGH_VOLATILITY_THRESHOLD) {
       raw.push({
         type: "CAPTURE_MORE_SNAPSHOTS",
         keywordId: kw.keywordTargetId,
