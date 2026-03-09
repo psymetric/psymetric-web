@@ -54,6 +54,7 @@ import {
   VolatilityRegime,
   SnapshotForVolatility,
 } from "@/lib/seo/volatility-service";
+import { UUID_RE } from "@/lib/constants";
 
 // =============================================================================
 // Constants
@@ -80,8 +81,6 @@ const MIN_SEVERITY_RANK_MAX = 999;
 // T3 deltaOnly: minimum ratio increase required to fire
 const T3_DELTA_ONLY_MIN_DELTA = 0.05;
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const VALID_TRIGGER_TYPES = new Set(["T1", "T2", "T3", "T4"] as const);
 type TriggerTypeToken = "T1" | "T2" | "T3" | "T4";

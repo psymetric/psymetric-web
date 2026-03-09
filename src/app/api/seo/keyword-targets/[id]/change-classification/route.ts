@@ -33,12 +33,12 @@ import { computeIntentDrift }     from "@/lib/seo/intent-drift";
 import { computeSerpSimilarity }  from "@/lib/seo/serp-similarity";
 import { computeDomainDominance } from "@/lib/seo/domain-dominance";
 import { computeChangeClassification } from "@/lib/seo/change-classification";
+import { UUID_RE } from "@/lib/constants";
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-const UUID_RE    = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const WINDOW_MIN = 1;
 const WINDOW_MAX = 365;
 

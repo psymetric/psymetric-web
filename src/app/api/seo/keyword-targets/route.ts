@@ -28,6 +28,7 @@ import {
 import { resolveProjectId } from "@/lib/project";
 import { normalizeQuery } from "@/lib/validation";
 import { CreateKeywordTargetSchema } from "@/lib/schemas/keyword-target";
+import { formatZodErrors } from "@/lib/zod-helpers";
 import { Prisma } from "@prisma/client";
 
 // Allowed device values — enforced at API boundary (DB stores string)
@@ -136,20 +137,7 @@ export async function POST(request: NextRequest) {
 
     const parsed = CreateKeywordTargetSchema.safeParse(body);
     if (!parsed.success) {
-      const flat = parsed.error.flatten();
-      return badRequest("Validation failed", [
-        ...flat.formErrors.map((msg) => ({
-          code: "VALIDATION_ERROR" as const,
-          message: msg,
-        })),
-        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
-          (messages ?? []).map((msg) => ({
-            code: "VALIDATION_ERROR" as const,
-            field,
-            message: msg,
-          }))
-        ),
-      ]);
+      return badRequest("Validation failed", formatZodErrors(parsed.error));
     }
 
     const data = parsed.data;

@@ -30,6 +30,7 @@ import {
 } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import { RunAuditSchema } from "@/lib/schemas/audit";
+import { formatZodErrors } from "@/lib/zod-helpers";
 
 const BYDA_S0_SCHEMA_VERSION = "byda.s0.v1";
 const ALLOWED_KIND = DraftArtifactKind.byda_s_audit;
@@ -124,20 +125,7 @@ export async function POST(request: NextRequest) {
 
     const parsed = RunAuditSchema.safeParse(body);
     if (!parsed.success) {
-      const flat = parsed.error.flatten();
-      return badRequest("Validation failed", [
-        ...flat.formErrors.map((msg) => ({
-          code: "VALIDATION_ERROR" as const,
-          message: msg,
-        })),
-        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
-          (messages ?? []).map((msg) => ({
-            code: "VALIDATION_ERROR" as const,
-            field,
-            message: msg,
-          }))
-        ),
-      ]);
+      return badRequest("Validation failed", formatZodErrors(parsed.error));
     }
 
     const entityId = parsed.data.entityId;

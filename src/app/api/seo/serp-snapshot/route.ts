@@ -30,6 +30,7 @@ import {
 import { resolveProjectId } from "@/lib/project";
 import { normalizeQuery } from "@/lib/validation";
 import { SERPSnapshotIngestSchema } from "@/lib/schemas/serp-snapshot-ingest";
+import { formatZodErrors } from "@/lib/zod-helpers";
 import { Prisma } from "@prisma/client";
 import {
   fetchSerpSnapshot,
@@ -60,20 +61,7 @@ export async function POST(request: NextRequest) {
 
     const parsed = SERPSnapshotIngestSchema.safeParse(body);
     if (!parsed.success) {
-      const flat = parsed.error.flatten();
-      return badRequest("Validation failed", [
-        ...flat.formErrors.map((msg) => ({
-          code: "VALIDATION_ERROR" as const,
-          message: msg,
-        })),
-        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
-          (messages ?? []).map((msg) => ({
-            code: "VALIDATION_ERROR" as const,
-            field,
-            message: msg,
-          }))
-        ),
-      ]);
+      return badRequest("Validation failed", formatZodErrors(parsed.error));
     }
 
     const data = parsed.data;

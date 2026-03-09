@@ -23,6 +23,7 @@ import {
 } from "@/lib/api-response";
 import { resolveProjectId } from "@/lib/project";
 import { KeywordResearchSchema } from "@/lib/schemas/keyword-research";
+import { formatZodErrors } from "@/lib/zod-helpers";
 
 // =============================================================================
 // POST /api/seo/keyword-research
@@ -48,20 +49,7 @@ export async function POST(request: NextRequest) {
 
     const parsed = KeywordResearchSchema.safeParse(body);
     if (!parsed.success) {
-      const flat = parsed.error.flatten();
-      return badRequest("Validation failed", [
-        ...flat.formErrors.map((msg) => ({
-          code: "VALIDATION_ERROR" as const,
-          message: msg,
-        })),
-        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
-          (messages ?? []).map((msg) => ({
-            code: "VALIDATION_ERROR" as const,
-            field,
-            message: msg,
-          }))
-        ),
-      ]);
+      return badRequest("Validation failed", formatZodErrors(parsed.error));
     }
 
     const { keywords, locale, device, confirm } = parsed.data;

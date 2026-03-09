@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PsyMetric Admin",
+  title: "VEDA",
   description: "PsyMetric Admin Dashboard",
 };
 

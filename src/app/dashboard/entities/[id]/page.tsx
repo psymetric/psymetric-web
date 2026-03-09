@@ -16,10 +16,9 @@ import { EntityEditor } from "./entity-editor";
 import { LifecycleActions } from "./lifecycle-actions";
 import { RelationshipCreator } from "./relationship-creator";
 import { RelationshipsPanel } from "./relationships-panel";
+import { UUID_RE } from "@/lib/constants";
 
 // UUID validation regex
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 async function getEntity(id: string) {
   const entity = await prisma.entity.findUnique({

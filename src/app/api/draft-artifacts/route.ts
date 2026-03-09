@@ -30,9 +30,9 @@ import {
 } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import { CreateDraftArtifactSchema } from "@/lib/schemas/draft-artifact";
+import { formatZodErrors } from "@/lib/zod-helpers";
+import { UUID_RE } from "@/lib/constants";
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ISO_TIMESTAMP_RE =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 
@@ -191,20 +191,7 @@ export async function POST(request: NextRequest) {
 
     const parsed = CreateDraftArtifactSchema.safeParse(body);
     if (!parsed.success) {
-      const flat = parsed.error.flatten();
-      return badRequest("Validation failed", [
-        ...flat.formErrors.map((msg) => ({
-          code: "VALIDATION_ERROR" as const,
-          message: msg,
-        })),
-        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
-          (messages ?? []).map((msg) => ({
-            code: "VALIDATION_ERROR" as const,
-            field,
-            message: msg,
-          }))
-        ),
-      ]);
+      return badRequest("Validation failed", formatZodErrors(parsed.error));
     }
 
     const data = parsed.data;

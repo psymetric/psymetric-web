@@ -13,13 +13,12 @@ import { prisma } from "@/lib/prisma";
 import { badRequest, notFound, serverError, successResponse } from "@/lib/api-response";
 import { resolveProjectId } from "@/lib/project";
 import { buildKeywordOverview } from "@/lib/seo/keyword-overview";
+import { UUID_RE } from "@/lib/constants";
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // =============================================================================
 // Params promise compat (Next.js 15+)

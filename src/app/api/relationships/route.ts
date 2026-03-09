@@ -20,10 +20,10 @@ import { RelationType, ContentEntityType, EntityType } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import { resolveProjectId, assertSameProject } from "@/lib/project";
 import { CreateRelationshipSchema } from "@/lib/schemas/relationship";
+import { formatZodErrors } from "@/lib/zod-helpers";
+import { UUID_RE } from "@/lib/constants";
 
 // UUID validation regex
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // Valid relation types from schema
 const VALID_RELATION_TYPES = Object.values(RelationType);
@@ -140,20 +140,7 @@ export async function POST(request: NextRequest) {
 
     const parsed = CreateRelationshipSchema.safeParse(body);
     if (!parsed.success) {
-      const flat = parsed.error.flatten();
-      return badRequest("Validation failed", [
-        ...flat.formErrors.map((msg) => ({
-          code: "VALIDATION_ERROR" as const,
-          message: msg,
-        })),
-        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
-          (messages ?? []).map((msg) => ({
-            code: "VALIDATION_ERROR" as const,
-            field,
-            message: msg,
-          }))
-        ),
-      ]);
+      return badRequest("Validation failed", formatZodErrors(parsed.error));
     }
 
     const data = parsed.data;

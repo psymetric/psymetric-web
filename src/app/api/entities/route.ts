@@ -22,6 +22,7 @@ import {
 } from "@/lib/validation";
 import { resolveProjectId } from "@/lib/project";
 import { CreateEntitySchema } from "@/lib/schemas/entity";
+import { formatZodErrors } from "@/lib/zod-helpers";
 import type { Prisma } from "@prisma/client";
 
 // =============================================================================
@@ -115,20 +116,7 @@ export async function POST(request: NextRequest) {
 
     const parsed = CreateEntitySchema.safeParse(body);
     if (!parsed.success) {
-      const flat = parsed.error.flatten();
-      return badRequest("Validation failed", [
-        ...flat.formErrors.map((msg) => ({
-          code: "VALIDATION_ERROR" as const,
-          message: msg,
-        })),
-        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
-          (messages ?? []).map((msg) => ({
-            code: "VALIDATION_ERROR" as const,
-            field,
-            message: msg,
-          }))
-        ),
-      ]);
+      return badRequest("Validation failed", formatZodErrors(parsed.error));
     }
 
     const data = parsed.data;

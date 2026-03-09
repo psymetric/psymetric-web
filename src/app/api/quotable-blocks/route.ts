@@ -25,9 +25,9 @@ import { resolveProjectId } from "@/lib/project";
 import { ClaimType, EventType, EntityType, ActorType } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import { CreateQuotableBlockSchema } from "@/lib/schemas/quotable-block";
+import { formatZodErrors } from "@/lib/zod-helpers";
+import { UUID_RE } from "@/lib/constants";
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // Explicit array of valid ClaimType values (type-safe)
 const VALID_CLAIM_TYPES: readonly ClaimType[] = [
@@ -181,20 +181,7 @@ export async function POST(request: NextRequest) {
 
     const parsed = CreateQuotableBlockSchema.safeParse(body);
     if (!parsed.success) {
-      const flat = parsed.error.flatten();
-      return badRequest("Validation failed", [
-        ...flat.formErrors.map((msg) => ({
-          code: "VALIDATION_ERROR" as const,
-          message: msg,
-        })),
-        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
-          (messages ?? []).map((msg) => ({
-            code: "VALIDATION_ERROR" as const,
-            field,
-            message: msg,
-          }))
-        ),
-      ]);
+      return badRequest("Validation failed", formatZodErrors(parsed.error));
     }
 
     const data = parsed.data;

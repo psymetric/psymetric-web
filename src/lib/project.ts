@@ -19,13 +19,12 @@
 
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { UUID_RE } from "@/lib/constants";
 
 // Deterministic UUID matching the migration seed row
 export const DEFAULT_PROJECT_ID = "00000000-0000-4000-a000-000000000001";
 export const DEFAULT_PROJECT_SLUG = "psymetric";
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * Resolve projectId from the request.

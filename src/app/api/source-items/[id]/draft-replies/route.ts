@@ -24,12 +24,12 @@ import {
 } from "@/lib/api-response";
 import { resolveProjectId } from "@/lib/project";
 import { CreateDraftReplySchema } from "@/lib/schemas/draft-reply";
+import { formatZodErrors } from "@/lib/zod-helpers";
+import { UUID_RE } from "@/lib/constants";
 
 type DraftStyle = "short" | "medium" | "thread";
 
 // UUID validation regex
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function buildStubReply(args: {
   style: DraftStyle;
@@ -111,20 +111,7 @@ export async function POST(
       style: rawStyle ?? undefined,
     });
     if (!parsed.success) {
-      const flat = parsed.error.flatten();
-      return badRequest("Validation failed", [
-        ...flat.formErrors.map((msg) => ({
-          code: "VALIDATION_ERROR" as const,
-          message: msg,
-        })),
-        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
-          (messages ?? []).map((msg) => ({
-            code: "VALIDATION_ERROR" as const,
-            field,
-            message: msg,
-          }))
-        ),
-      ]);
+      return badRequest("Validation failed", formatZodErrors(parsed.error));
     }
 
     const count = parsed.data.count;

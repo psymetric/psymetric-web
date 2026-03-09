@@ -21,6 +21,7 @@ import {
 import { generateContentHash } from "@/lib/validation";
 import { resolveProjectId } from "@/lib/project";
 import { CaptureSourceItemSchema } from "@/lib/schemas/source-item";
+import { formatZodErrors } from "@/lib/zod-helpers";
 
 export async function POST(request: NextRequest) {
   try {
@@ -42,20 +43,7 @@ export async function POST(request: NextRequest) {
 
     const parsed = CaptureSourceItemSchema.safeParse(body);
     if (!parsed.success) {
-      const flat = parsed.error.flatten();
-      return badRequest("Validation failed", [
-        ...flat.formErrors.map((msg) => ({
-          code: "VALIDATION_ERROR" as const,
-          message: msg,
-        })),
-        ...Object.entries(flat.fieldErrors).flatMap(([field, messages]) =>
-          (messages ?? []).map((msg) => ({
-            code: "VALIDATION_ERROR" as const,
-            field,
-            message: msg,
-          }))
-        ),
-      ]);
+      return badRequest("Validation failed", formatZodErrors(parsed.error));
     }
 
     const data = parsed.data;

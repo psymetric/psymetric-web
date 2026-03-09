@@ -31,12 +31,12 @@ import { prisma } from "@/lib/prisma";
 import { badRequest, notFound, serverError, successResponse } from "@/lib/api-response";
 import { resolveProjectId } from "@/lib/project";
 import { extractFeatureSignals } from "@/lib/seo/serp-extraction";
+import { UUID_RE } from "@/lib/constants";
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-const UUID_RE        = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ISO_DATE_RE    = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const WINDOW_MIN     = 1;
 const WINDOW_MAX     = 365;
