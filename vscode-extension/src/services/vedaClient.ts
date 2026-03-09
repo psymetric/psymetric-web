@@ -7,6 +7,7 @@
 import { ConfigService } from './configService';
 import { StateService } from './stateService';
 import { VedaError } from '../utils/errors';
+import { PageCommandCenterResponse } from '../types/pageCommandCenter';
 
 export class VedaClient {
   constructor(
@@ -79,11 +80,36 @@ export class VedaClient {
     return this.get('/api/projects?limit=100');
   }
 
+  async getVolatilitySummary(windowDays = 7): Promise<unknown> {
+    return this.get(`/api/seo/volatility-summary?windowDays=${windowDays}`);
+  }
+
+  async listAlerts(windowDays = 7, limit = 20): Promise<unknown> {
+    return this.get(`/api/seo/alerts?windowDays=${windowDays}&limit=${limit}`);
+  }
+
   async listKeywordTargets(limit = 100): Promise<unknown> {
     return this.get(`/api/seo/keyword-targets?limit=${limit}`);
   }
 
   async getKeywordDiagnostic(keywordTargetId: string): Promise<unknown> {
     return this.get(`/api/seo/keyword-targets/${keywordTargetId}/overview`);
+  }
+
+  /**
+   * Fetch the Page Command Center packet from the backend.
+   * The backend owns observatory synthesis; the extension supplies editor context only.
+   */
+  async getPageCommandCenter(params: {
+    routeHint?: string;
+    fileName?: string;
+    fileType?: string;
+  }): Promise<PageCommandCenterResponse> {
+    const qs = new URLSearchParams();
+    if (params.routeHint) { qs.set('routeHint', params.routeHint); }
+    if (params.fileName)  { qs.set('fileName',  params.fileName);  }
+    if (params.fileType)  { qs.set('fileType',  params.fileType);  }
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+    return this.get<PageCommandCenterResponse>(`/api/seo/page-command-center${query}`);
   }
 }

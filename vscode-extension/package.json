@@ -14,7 +14,21 @@
     "onCommand:veda.refreshContext",
     "onCommand:veda.investigateProject",
     "onCommand:veda.keywordDiagnostic",
-    "onView:veda.projectContext"
+    "onCommand:veda.investigateCurrentPage",
+    "onCommand:veda.pageKeywordDiagnostic",
+    "onCommand:veda.riskKeywordFromPageContext",
+    "onCommand:veda.refreshEditorContext",
+    "onCommand:veda.refreshSummary",
+    "onCommand:veda.refreshAlerts",
+    "onCommand:veda.refreshKeywords",
+    "onView:veda.projectContext",
+    "onView:veda.editorContext",
+    "onView:veda.investigationSummary",
+    "onView:veda.topAlerts",
+    "onView:veda.keywords",
+    "onView:veda.recentPageWorkflow",
+    "onCommand:veda.replayWorkflowEntry",
+    "onCommand:veda.summaryKeywordDiagnostic"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -38,6 +52,55 @@
       {
         "command": "veda.keywordDiagnostic",
         "title": "VEDA: Keyword Diagnostic"
+      },
+      {
+        "command": "veda.investigateCurrentPage",
+        "title": "VEDA: Investigate Current Page Context",
+        "icon": "$(search)"
+      },
+      {
+        "command": "veda.pageKeywordDiagnostic",
+        "title": "VEDA: Choose Project Keyword Diagnostic"
+      },
+      {
+        "command": "veda.riskKeywordFromPageContext",
+        "title": "VEDA: Risk Keyword Diagnostic from Page Context"
+      },
+      {
+        "command": "veda.refreshEditorContext",
+        "title": "VEDA: Refresh Editor Context",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "veda.refreshSummary",
+        "title": "VEDA: Refresh Summary",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "veda.refreshAlerts",
+        "title": "VEDA: Refresh Alerts",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "veda.refreshKeywords",
+        "title": "VEDA: Refresh Keywords",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "veda.alertItemSelected",
+        "title": "VEDA: Open Alert Detail"
+      },
+      {
+        "command": "veda.keywordItemSelected",
+        "title": "VEDA: Keyword Item Diagnostic"
+      },
+      {
+        "command": "veda.replayWorkflowEntry",
+        "title": "VEDA: Replay Workflow Entry"
+      },
+      {
+        "command": "veda.summaryKeywordDiagnostic",
+        "title": "VEDA: Summary Keyword Diagnostic"
       }
     ],
     "viewsContainers": {
@@ -55,6 +118,27 @@
           "id": "veda.projectContext",
           "name": "Project Context",
           "type": "webview"
+        },
+        {
+          "id": "veda.editorContext",
+          "name": "Editor Context",
+          "type": "webview"
+        },
+        {
+          "id": "veda.investigationSummary",
+          "name": "Investigation Summary"
+        },
+        {
+          "id": "veda.topAlerts",
+          "name": "Top Alerts"
+        },
+        {
+          "id": "veda.keywords",
+          "name": "Keywords"
+        },
+        {
+          "id": "veda.recentPageWorkflow",
+          "name": "Recent Page Workflow"
         }
       ]
     },
@@ -82,6 +166,31 @@
         {
           "command": "veda.refreshContext",
           "when": "view == veda.projectContext",
+          "group": "navigation"
+        },
+        {
+          "command": "veda.investigateCurrentPage",
+          "when": "view == veda.editorContext",
+          "group": "navigation"
+        },
+        {
+          "command": "veda.refreshEditorContext",
+          "when": "view == veda.editorContext",
+          "group": "navigation"
+        },
+        {
+          "command": "veda.refreshSummary",
+          "when": "view == veda.investigationSummary",
+          "group": "navigation"
+        },
+        {
+          "command": "veda.refreshAlerts",
+          "when": "view == veda.topAlerts",
+          "group": "navigation"
+        },
+        {
+          "command": "veda.refreshKeywords",
+          "when": "view == veda.keywords",
           "group": "navigation"
         }
       ]

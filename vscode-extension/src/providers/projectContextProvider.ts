@@ -2,10 +2,33 @@
 //
 // Sidebar webview provider. Displays active project context: name, domain,
 // lifecycle state, maturity summary, next valid action.
+// Phase 1.8: lifecycle badge with colour emphasis; nextValidAction prominently displayed.
 
 import * as vscode from 'vscode';
 import { StateService } from '../services/stateService';
 import { escapeHtml, capitalise } from '../utils/formatting';
+
+// ── Lifecycle presentation helpers ────────────────────────────────────────────
+
+/**
+ * Return a CSS variable name for the lifecycle state accent colour.
+ * Uses only VS Code semantic colour tokens — no hardcoded hex.
+ */
+function lifecycleColor(state: string): string {
+  const s = state.toLowerCase();
+  if (s === 'seasoned' || s === 'mature')    return 'var(--vscode-terminal-ansiGreen)';
+  if (s === 'developing' || s === 'active')  return 'var(--vscode-textLink-foreground)';
+  if (s === 'observing' || s === 'new')      return 'var(--vscode-editorWarning-foreground)';
+  return 'var(--vscode-descriptionForeground)';
+}
+
+/**
+ * Return a short display label for the lifecycle state.
+ * Backend may return lowercase slugs; normalise to upper for badge display.
+ */
+function lifecycleLabel(state: string): string {
+  return state.toUpperCase();
+}
 
 export class ProjectContextProvider implements vscode.WebviewViewProvider {
   public static readonly VIEW_ID = 'veda.projectContext';
@@ -14,9 +37,6 @@ export class ProjectContextProvider implements vscode.WebviewViewProvider {
   private _stateDisposable: vscode.Disposable;
 
   constructor(private readonly state: StateService) {
-    // Register the state listener once here, not inside resolveWebviewView.
-    // resolveWebviewView can be called multiple times (e.g. panel hide/show)
-    // and registering there would accumulate duplicate listeners.
     this._stateDisposable = state.onStateChange(() => this._render());
   }
 
@@ -60,6 +80,7 @@ export class ProjectContextProvider implements vscode.WebviewViewProvider {
     --warn: var(--vscode-editorWarning-foreground);
     --badge-bg: var(--vscode-badge-background);
     --badge-fg: var(--vscode-badge-foreground);
+    --editor-bg: var(--vscode-editor-background);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -79,22 +100,42 @@ export class ProjectContextProvider implements vscode.WebviewViewProvider {
     color: var(--badge-fg);
     margin-bottom: 8px;
   }
-  h2 { font-size: 0.82em; font-weight: 600; text-transform: uppercase;
-       letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
-  .project-name { font-size: 1em; font-weight: 600; margin-bottom: 2px; }
+  h2 {
+    font-size: 0.82em; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px;
+  }
+  .project-name { font-size: 1em; font-weight: 600; margin-bottom: 6px; }
+  .lifecycle-badge {
+    display: inline-block;
+    font-size: 0.78em;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 3px;
+    letter-spacing: 0.07em;
+    border: 1px solid currentColor;
+    margin-bottom: 6px;
+  }
   .row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 0.88em; }
   .row .lbl { color: var(--muted); }
   .row .val { font-weight: 500; }
   .divider { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
   .next-action {
-    background: var(--vscode-editor-background);
+    background: var(--editor-bg);
     border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 8px 10px;
-    font-size: 0.85em;
-    margin-top: 4px;
+    border-left: 3px solid var(--accent);
+    border-radius: 3px;
+    padding: 7px 10px;
+    font-size: 0.84em;
+    margin-top: 8px;
   }
-  .next-action .label { color: var(--muted); font-size: 0.8em; margin-bottom: 3px; }
+  .next-action .label {
+    color: var(--muted);
+    font-size: 0.78em;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 3px;
+  }
+  .next-action .text { color: var(--fg); font-weight: 500; }
   .empty {
     color: var(--muted);
     font-size: 0.88em;
@@ -114,10 +155,12 @@ export class ProjectContextProvider implements vscode.WebviewViewProvider {
 </body></html>`;
     }
 
-    const lifecycleRow = project.lifecycleState
-      ? `<div class="row"><span class="lbl">Lifecycle</span><span class="val">${escapeHtml(capitalise(project.lifecycleState))}</span></div>`
+    // ── Lifecycle badge (prominent, colour-coded) ─────────────────────────
+    const lifecycleBadge = project.lifecycleState
+      ? `<div class="lifecycle-badge" style="color:${lifecycleColor(project.lifecycleState)}">${escapeHtml(lifecycleLabel(project.lifecycleState))}</div>`
       : '';
 
+    // ── Supporting rows ───────────────────────────────────────────────────
     const domainRow = project.domain
       ? `<div class="row"><span class="lbl">Domain</span><span class="val">${escapeHtml(project.domain)}</span></div>`
       : '';
@@ -126,19 +169,23 @@ export class ProjectContextProvider implements vscode.WebviewViewProvider {
       ? `<div class="row"><span class="lbl">Maturity</span><span class="val">${escapeHtml(project.maturitySummary)}</span></div>`
       : '';
 
-    const nextAction = project.nextValidAction
-      ? `<div class="next-action"><div class="label">Next Action</div>${escapeHtml(project.nextValidAction)}</div>`
+    // ── Next valid action — rendered as a left-accented guidance block ────
+    const nextActionBlock = project.nextValidAction
+      ? `<div class="next-action">
+           <div class="label">Next Action</div>
+           <div class="text">${escapeHtml(project.nextValidAction)}</div>
+         </div>`
       : '';
 
     return `<!DOCTYPE html><html><head><meta charset="UTF-8">${styles}</head><body>
 <div class="env-pill">ENV: ${escapeHtml(envName.toUpperCase())}</div>
 <h2>Active Project</h2>
 <div class="project-name">${escapeHtml(project.name)}</div>
+${lifecycleBadge}
 <hr class="divider">
 ${domainRow}
-${lifecycleRow}
 ${maturityRow}
-${nextAction}
+${nextActionBlock}
 </body></html>`;
   }
 }

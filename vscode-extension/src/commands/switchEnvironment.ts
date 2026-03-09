@@ -39,13 +39,31 @@ export async function switchEnvironment(
   // Clear stale project state when environment changes
   state.setActiveProject(null);
 
-  updateStatusBar(statusBarItem, selectedName);
+  updateStatusBar(statusBarItem, selectedName, null);
   provider.refresh();
 
   vscode.window.showInformationMessage(`VEDA environment switched to: ${selectedName.toUpperCase()}`);
 }
 
-export function updateStatusBar(item: vscode.StatusBarItem, envName: string): void {
-  item.text = `$(telescope) VEDA: ${envName.toUpperCase()}`;
-  item.tooltip = `VEDA Observatory — ${envName} environment. Click to switch.`;
+/**
+ * Update the status bar item text.
+ * Format: "⟨telescope⟩ VEDA: ENV | Project Name" (project truncated at 24 chars).
+ * If no project is active, shows env only.
+ */
+export function updateStatusBar(
+  item: vscode.StatusBarItem,
+  envName: string,
+  projectName: string | null
+): void {
+  const env = envName.toUpperCase();
+  if (projectName) {
+    const truncated = projectName.length > 24
+      ? projectName.slice(0, 22) + '…'
+      : projectName;
+    item.text = `$(telescope) VEDA: ${env} | ${truncated}`;
+    item.tooltip = `VEDA Observatory — ${env} · ${projectName}. Click to switch environment.`;
+  } else {
+    item.text = `$(telescope) VEDA: ${env}`;
+    item.tooltip = `VEDA Observatory — ${env} environment. Click to switch.`;
+  }
 }

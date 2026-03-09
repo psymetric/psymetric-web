@@ -12,6 +12,8 @@ export class StateService {
   private _activeProject: Project | null = null;
   private _projectList: Project[] = [];
   private _openPanel: vscode.WebviewPanel | null = null;
+  /** ID of the project whose data is currently displayed in the open panel. */
+  private _panelProjectId: string | null = null;
 
   private _listeners: StateChangeHandler[] = [];
 
@@ -44,6 +46,16 @@ export class StateService {
 
   setOpenPanel(panel: vscode.WebviewPanel | null): void {
     this._openPanel = panel;
+  }
+
+  // ── Panel project tracking ────────────────────────────────────────────────
+
+  get panelProjectId(): string | null {
+    return this._panelProjectId;
+  }
+
+  setPanelProjectId(id: string | null): void {
+    this._panelProjectId = id;
   }
 
   // ── Change listeners ──────────────────────────────────────────────────────
