@@ -491,7 +491,11 @@ export const toolDefinitions = [
     description:
       "Run a full VEDA project investigation and return a structured observatory briefing. " +
       "Orchestrates project diagnostic, volatility alerts, per-keyword overview and causality, " +
-      "and operator reasoning into a single compact packet. Read-only.",
+      "and operator reasoning into a single compact packet. Read-only. " +
+      "Response field alertsSource indicates the alert data origin: " +
+      "\"alerts\" = volatility-alerts endpoint returned mature results; " +
+      "\"fallback\" = no mature alerts found, preliminary-maturity volatile keywords used instead. " +
+      "Fallback alert items include maturity and source fields; primary items include source: \"alerts\".",
     inputSchema: {
       type: "object",
       properties: {},

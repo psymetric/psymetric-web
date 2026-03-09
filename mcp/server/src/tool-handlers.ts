@@ -860,6 +860,7 @@ async function handleProjectInvestigation(
     query:            string;
     volatilityScore:  number;
     volatilityRegime: string;
+    maturity?:        string;
   }
   interface AlertsBody {
     data: { items: AlertItem[] };
@@ -882,7 +883,6 @@ async function handleProjectInvestigation(
   ]);
 
   const s      = summaryBody.data;
-  const alerts = alertsBody.data?.items ?? [];
   const r      = riskBody.data;
 
   // Pick the last bucket with non-null shares (most recent) — same logic as
@@ -891,7 +891,34 @@ async function handleProjectInvestigation(
     .reverse()
     .find((b) => b.rankShare !== null) ?? null;
 
-  // Step 2: select top 3 by volatilityScore (already sorted DESC by backend)
+  // Step 2: Resolve alert list — with maturity fallback.
+  //
+  // The alerts endpoint defaults to minMaturity=developing. In early projects
+  // many keywords are still "preliminary" (insufficient snapshots to graduate).
+  // When the primary call returns empty, fall back to
+  // volatility-alerts?minMaturity=preliminary to surface those keywords instead
+  // of leaving the investigation packet empty. The fallback result is marked
+  // source:"fallback" so the operator understands why maturity-gated alerts
+  // are absent but volatile keywords are still listed.
+  let alerts: AlertItem[] = alertsBody.data?.items ?? [];
+  let alertsSource: "alerts" | "fallback" = "alerts";
+
+  if (alerts.length === 0) {
+    const fallbackRes = await apiClient.fetch(
+      "/api/seo/volatility-alerts?limit=10&minMaturity=preliminary"
+    );
+    if (fallbackRes.ok) {
+      const fallbackBody = await fallbackRes.json() as AlertsBody;
+      const fallbackItems = fallbackBody.data?.items ?? [];
+      if (fallbackItems.length > 0) {
+        alerts = fallbackItems;
+        alertsSource = "fallback";
+      }
+    }
+    // If fallback also fails or is empty, alerts stays [] and alertsSource stays "alerts".
+  }
+
+  // Step 3: select top 3 by volatilityScore (already sorted DESC by backend)
   const top3 = alerts.slice(0, 3);
 
   // Step 3: parallel per-keyword deep-dive
@@ -937,11 +964,13 @@ async function handleProjectInvestigation(
         featurePercent: lastActiveBucket?.featureShare ?? null,
       },
     },
+    alertsSource,
     alerts: alerts.map((item) => ({
       keywordTargetId: item.keywordTargetId,
       query:           item.query,
       volatilityScore: item.volatilityScore,
       regime:          item.volatilityRegime,
+      ...(alertsSource === "fallback" ? { maturity: item.maturity ?? "preliminary", source: "fallback" } : { source: "alerts" }),
     })),
     investigations,
     reasoning: (reasoningBody as { data?: unknown })?.data ?? reasoningBody,
