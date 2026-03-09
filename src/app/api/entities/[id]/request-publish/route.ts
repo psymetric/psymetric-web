@@ -4,7 +4,7 @@
  * Phase 1 Publish Lifecycle - Chunk 2: Publish review flow
  * - Validates entity before allowing publish request
  * - Enforces state transitions (draft -> publish_requested)
- * - Logs validation failures and publish requests
+ * - EventLog only on actual state change (per INV-3.2)
  *
  * Multi-project hardened:
  * - Resolves projectId from request
@@ -21,7 +21,6 @@ import {
   serverError,
 } from "@/lib/api-response";
 import { validateEntityForPublish } from "@/lib/entity-validation";
-import type { Prisma } from "@prisma/client";
 import { resolveProjectId } from "@/lib/project";
 
 const UUID_RE =
@@ -74,32 +73,7 @@ export async function POST(
     const validation = await validateEntityForPublish({ entity, projectId });
 
     if (validation.status === "fail") {
-      // Log validation failure event (no state change)
-      const errorsJson: Prisma.InputJsonArray = validation.errors.map((e) => ({
-        code: e.code,
-        category: e.category,
-        level: e.level,
-        message: e.message,
-      }));
-
-      const details: Prisma.InputJsonObject = {
-        status: validation.status,
-        categories: validation.categories,
-        errors: errorsJson,
-      };
-
-      await prisma.eventLog.create({
-        data: {
-          eventType: "ENTITY_VALIDATION_FAILED",
-          entityType: entity.entityType,
-          entityId: entity.id,
-          actor: "human",
-          projectId,
-          details,
-        },
-      });
-
-      // Return 409 with validation errors
+      // Return 409 with validation errors (no EventLog - no state change per INV-3.2)
       return errorResponse(
         "VALIDATION_FAILED",
         "Cannot request publish: validation failed",

@@ -10,10 +10,13 @@
     "postinstall": "prisma generate",
     "vercel-build": "prisma generate && next build",
     "db:migrate:dev": "prisma migrate dev",
-    "db:migrate:deploy": "prisma migrate deploy"
+    "db:migrate:deploy": "prisma migrate deploy",
+    "fixtures:export": "tsx scripts/fixtures/export-serp-fixture.ts",
+    "fixtures:seed": "tsx scripts/fixtures/seed-serp-fixture.ts",
+    "fixtures:capture": "tsx scripts/fixtures/export-serp-fixture.ts"
   },
   "dependencies": {
-    "@prisma/client": "^6.15.0",
+    "@prisma/client": "^6.19.2",
     "next": "^16.1.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
@@ -28,6 +31,7 @@
     "eslint-config-next": "^16.1.6",
     "prisma": "^6.15.0",
     "tailwindcss": "^4.1.11",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }
