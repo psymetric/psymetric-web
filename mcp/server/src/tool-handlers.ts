@@ -172,6 +172,8 @@ export async function handleToolCall(
       return handleOperatorInsight(args, apiClient);
     case "get_spike_delta":
       return handleSpikeDelta(args, apiClient);
+    case "run_project_investigation":
+      return handleProjectInvestigation(apiClient);
     // ── Operator-level observatory tools ─────────────────────────────
     case "get_operator_reasoning":
       return handleOperatorEndpoint(apiClient, "/api/seo/operator-reasoning");
@@ -799,4 +801,151 @@ async function handleOperatorEndpoint(
 
   const data = await response.json();
   return formatToolResult(data);
+}
+
+/**
+ * handleProjectInvestigation -- full project observatory briefing.
+ *
+ * Orchestration sequence:
+ *   Step 1 (parallel): GET /api/seo/project-diagnostic
+ *                      GET /api/seo/volatility-alerts?limit=10
+ *                      GET /api/seo/operator-reasoning
+ *   Step 2: Select top 3 keywords by volatilityScore from alerts.
+ *   Step 3 (parallel per keyword):
+ *                      GET /api/seo/keyword-targets/:id/overview
+ *                      GET /api/seo/keyword-targets/:id/event-causality
+ *
+ * Returns a compact investigation packet:
+ *   project        -- keywordCount, activeKeywordCount, weightedProjectVolatilityScore,
+ *                     volatilityConcentrationRatio
+ *   alerts         -- top 10 alert keywords (keywordTargetId, query, volatilityScore, regime)
+ *   investigations -- per-keyword overview + causality for top 3
+ *   reasoning      -- operator reasoning output
+ *
+ * Read-only. No DB access. HTTP API only.
+ * Project scoping is handled entirely by ApiClient headers.
+ */
+async function handleProjectInvestigation(
+  apiClient: ApiClient
+): Promise<unknown> {
+  // Step 1: parallel fan-out — mirror the same backend routes used by
+  // handleProjectDiagnostic. /api/seo/project-diagnostic does not exist as
+  // a backend route; it is an MCP composite only.
+  const [summaryRes, alertsRes, riskRes, reasoningRes] = await Promise.all([
+    apiClient.fetch("/api/seo/volatility-summary"),
+    apiClient.fetch("/api/seo/volatility-alerts?limit=10"),
+    apiClient.fetch("/api/seo/risk-attribution-summary"),
+    apiClient.fetch("/api/seo/operator-reasoning"),
+  ]);
+
+  if (!summaryRes.ok)   await handleApiError(summaryRes);
+  if (!alertsRes.ok)    await handleApiError(alertsRes);
+  if (!riskRes.ok)      await handleApiError(riskRes);
+  if (!reasoningRes.ok) await handleApiError(reasoningRes);
+
+  interface SummaryBody {
+    data: {
+      keywordCount:                   number;
+      activeKeywordCount:             number;
+      weightedProjectVolatilityScore: number;
+      alertKeywordCount:              number;
+      highVolatilityCount:            number;
+      mediumVolatilityCount:          number;
+      lowVolatilityCount:             number;
+      stableCount:                    number;
+    };
+  }
+  interface AlertItem {
+    keywordTargetId:  string;
+    query:            string;
+    volatilityScore:  number;
+    volatilityRegime: string;
+  }
+  interface AlertsBody {
+    data: { items: AlertItem[] };
+  }
+  interface RiskBody {
+    data: {
+      buckets: Array<{
+        rankShare:    number | null;
+        aiShare:      number | null;
+        featureShare: number | null;
+      }>;
+    };
+  }
+
+  const [summaryBody, alertsBody, riskBody, reasoningBody] = await Promise.all([
+    summaryRes.json()   as Promise<SummaryBody>,
+    alertsRes.json()    as Promise<AlertsBody>,
+    riskRes.json()      as Promise<RiskBody>,
+    reasoningRes.json() as Promise<unknown>,
+  ]);
+
+  const s      = summaryBody.data;
+  const alerts = alertsBody.data?.items ?? [];
+  const r      = riskBody.data;
+
+  // Pick the last bucket with non-null shares (most recent) — same logic as
+  // handleProjectDiagnostic.
+  const lastActiveBucket = [...(r.buckets ?? [])]
+    .reverse()
+    .find((b) => b.rankShare !== null) ?? null;
+
+  // Step 2: select top 3 by volatilityScore (already sorted DESC by backend)
+  const top3 = alerts.slice(0, 3);
+
+  // Step 3: parallel per-keyword deep-dive
+  const investigations = await Promise.all(
+    top3.map(async (item) => {
+      const base = `/api/seo/keyword-targets/${item.keywordTargetId}`;
+      const [overviewRes, causalityRes] = await Promise.all([
+        apiClient.fetch(`${base}/overview`),
+        apiClient.fetch(`${base}/event-causality`),
+      ]);
+
+      // Per-keyword errors are surfaced individually, not silently swallowed.
+      if (!overviewRes.ok)  await handleApiError(overviewRes);
+      if (!causalityRes.ok) await handleApiError(causalityRes);
+
+      const [overviewBody, causalityBody] = await Promise.all([
+        overviewRes.json()  as Promise<{ data: unknown }>,
+        causalityRes.json() as Promise<{ data: { patterns?: unknown[] } }>,
+      ]);
+
+      return {
+        keywordTargetId: item.keywordTargetId,
+        overview:        overviewBody.data,
+        causality:       causalityBody.data?.patterns ?? [],
+      };
+    })
+  );
+
+  // volatilityConcentrationRatio: fraction of alert keywords vs total keywords.
+  // Measures how concentrated risk is. 0 = no alerts, 1 = all keywords in alert.
+  const concentrationRatio =
+    s.keywordCount > 0 ? s.alertKeywordCount / s.keywordCount : 0;
+
+  const packet = {
+    project: {
+      keywordCount:                   s.keywordCount,
+      activeKeywordCount:             s.activeKeywordCount,
+      weightedProjectVolatilityScore: s.weightedProjectVolatilityScore,
+      volatilityConcentrationRatio:   Math.round(concentrationRatio * 10000) / 10000,
+      riskAttribution: {
+        rankPercent:    lastActiveBucket?.rankShare    ?? null,
+        aiPercent:      lastActiveBucket?.aiShare      ?? null,
+        featurePercent: lastActiveBucket?.featureShare ?? null,
+      },
+    },
+    alerts: alerts.map((item) => ({
+      keywordTargetId: item.keywordTargetId,
+      query:           item.query,
+      volatilityScore: item.volatilityScore,
+      regime:          item.volatilityRegime,
+    })),
+    investigations,
+    reasoning: (reasoningBody as { data?: unknown })?.data ?? reasoningBody,
+  };
+
+  return formatToolResult(packet);
 }

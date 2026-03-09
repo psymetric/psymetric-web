@@ -485,6 +485,19 @@ export const toolDefinitions = [
       additionalProperties: false,
     },
   },
+  // ── Project investigation composite tool ──────────────────────────────────
+  {
+    name: "run_project_investigation",
+    description:
+      "Run a full VEDA project investigation and return a structured observatory briefing. " +
+      "Orchestrates project diagnostic, volatility alerts, per-keyword overview and causality, " +
+      "and operator reasoning into a single compact packet. Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
   // ── Operator-level observatory tools ─────────────────────────────────────
   {
     name: "get_operator_reasoning",
