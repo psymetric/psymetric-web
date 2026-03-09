@@ -4,16 +4,18 @@
  * Per SIL-1-OBSERVATION-LEDGER.md and SIL-1-INGEST-DISCIPLINE.md:
  * - Operator-triggered only (no automation)
  * - Confirm gate: confirm=false returns cost estimate without writing
- * - confirm=true writes SERPSnapshot + EventLog in same transaction
+ * - confirm=true calls DataForSEO, normalizes result, writes SERPSnapshot + EventLog
  * - Query normalized at API boundary (normalizeQuery)
- * - capturedAt and validAt are server-assigned (now())
- * - rawPayload is a simulated provider response (no external API call)
- * - source is fixed to "dataforseo" (matches allowlist)
+ * - capturedAt is server-assigned (now())
+ * - validAt uses provider datetime if present, else capturedAt
+ * - rawPayload stores the full provider response (no truncation)
+ * - source is fixed to "dataforseo"
+ * - Locale "en-US" only: other locales return 400 before the provider is called
+ * - Provider response shape is validated (tasks[0].result[0].items) before write
  * - Idempotency: P2002 on (projectId, query, locale, device, capturedAt) -> 200, no EventLog
  *
  * Hard constraints:
  * - No schema changes
- * - No real provider integration
  * - No list/update/delete
  * - Mutation and EventLog co-located in prisma.$transaction()
  */
@@ -29,28 +31,14 @@ import { resolveProjectId } from "@/lib/project";
 import { normalizeQuery } from "@/lib/validation";
 import { SERPSnapshotIngestSchema } from "@/lib/schemas/serp-snapshot-ingest";
 import { Prisma } from "@prisma/client";
+import {
+  fetchSerpSnapshot,
+  DataForSeoError,
+} from "@/lib/integrations/dataforseo/client";
+import { normalizeDataForSeoSerp } from "@/lib/integrations/dataforseo/normalize-serp";
 
-// Fixed mock cost per ingest task (DataForSEO standard queue unit price).
-// Replace with real cost computation when provider integration is wired.
-const MOCK_ESTIMATED_COST = 0.001;
-
-// Simulated provider response -- no external API call.
-// Shape matches the DataForSEO SERP Advanced endpoint structure.
-// Replace with real provider call when integration is wired.
-function buildMockRawPayload(
-  query: string,
-  locale: string,
-  device: string
-): Prisma.InputJsonValue {
-  return {
-    provider: "mock",
-    query,
-    locale,
-    device,
-    results: [],
-    ai_overview: null,
-  } as Prisma.InputJsonValue;
-}
+// Fixed cost per ingest task (DataForSEO live/advanced unit price).
+const ESTIMATED_COST_USD = 0.0012;
 
 export async function POST(request: NextRequest) {
   try {
@@ -96,7 +84,7 @@ export async function POST(request: NextRequest) {
     if (!data.confirm) {
       return successResponse({
         confirm_required: true,
-        estimated_cost: MOCK_ESTIMATED_COST,
+        estimated_cost: ESTIMATED_COST_USD,
       });
     }
 
@@ -106,12 +94,72 @@ export async function POST(request: NextRequest) {
 
     const normalizedQuery = normalizeQuery(data.query);
 
-    // Server-assigns both timestamps (operator-triggered, not backfill).
+    // capturedAt is server-assigned once and used for idempotency key
     const capturedAt = new Date();
-    const validAt = capturedAt; // fallback rule: validAt = capturedAt when provider omits it
 
-    const rawPayload = buildMockRawPayload(normalizedQuery, data.locale, data.device);
+    // -- Call DataForSEO provider --------------------------------------------
+    let providerResponse: unknown;
+    try {
+      providerResponse = await fetchSerpSnapshot({
+        query: normalizedQuery,
+        locale: data.locale,
+        device: data.device,
+      });
+    } catch (err) {
+      if (err instanceof DataForSeoError) {
+        // Locale validation failures are client errors (400), not provider errors.
+        const isLocaleError = err.message.startsWith("Unsupported locale");
+        return Response.json(
+          isLocaleError
+            ? { error: "invalid_locale", message: err.message }
+            : {
+                error: "provider_error",
+                provider: "dataforseo",
+                message: err.providerMessage ?? err.message,
+              },
+          { status: isLocaleError ? 400 : 502 }
+        );
+      }
+      throw err;
+    }
 
+    // -- Validate provider response shape before normalizing or writing -------
+    // Avoids writing a broken/empty snapshot when DataForSEO returns an
+    // unexpected envelope (e.g. quota exhausted, partial response).
+    {
+      const r = providerResponse as Record<string, unknown>;
+      const tasks = r?.tasks;
+      const validShape =
+        Array.isArray(tasks) &&
+        tasks.length > 0 &&
+        Array.isArray((tasks[0] as Record<string, unknown>)?.result) &&
+        ((tasks[0] as Record<string, unknown>).result as unknown[]).length > 0 &&
+        Array.isArray(
+          (((tasks[0] as Record<string, unknown>).result as unknown[])[0] as Record<string, unknown>)?.items
+        );
+
+      if (!validShape) {
+        return Response.json(
+          {
+            error: "provider_error",
+            provider: "dataforseo",
+            message:
+              "Provider response missing expected shape: tasks[0].result[0].items",
+          },
+          { status: 502 }
+        );
+      }
+    }
+
+    // -- Normalize provider response -----------------------------------------
+    const normalized = normalizeDataForSeoSerp(providerResponse);
+
+    // validAt: use provider datetime if present, else fall back to capturedAt
+    const validAt = normalized.validAt ? new Date(normalized.validAt) : capturedAt;
+
+    const rawPayload = normalized.rawPayload as Prisma.InputJsonValue;
+
+    // -- Write snapshot + event log atomically --------------------------------
     try {
       const snapshot = await prisma.$transaction(async (tx) => {
         const created = await tx.sERPSnapshot.create({
@@ -124,8 +172,8 @@ export async function POST(request: NextRequest) {
             validAt,
             rawPayload,
             payloadSchemaVersion: null,
-            aiOverviewStatus: "absent",
-            aiOverviewText: null,
+            aiOverviewStatus: normalized.aiOverviewStatus,
+            aiOverviewText: normalized.aiOverviewText,
             source: "dataforseo",
             batchRef: null,
           },
@@ -143,6 +191,9 @@ export async function POST(request: NextRequest) {
               locale: data.locale,
               device: data.device,
               source: "dataforseo",
+              organicResultCount: normalized.organicResults.length,
+              aiOverviewPresent: normalized.aiOverviewPresent,
+              features: normalized.features,
             },
           },
         });
@@ -160,12 +211,16 @@ export async function POST(request: NextRequest) {
         aiOverviewStatus: snapshot.aiOverviewStatus,
         source: snapshot.source,
         batchRef: snapshot.batchRef,
+        organicResultCount: normalized.organicResults.length,
+        topDomains: normalized.topDomains,
+        aiOverviewPresent: normalized.aiOverviewPresent,
+        features: normalized.features,
         createdAt: snapshot.createdAt.toISOString(),
       });
     } catch (err) {
       // Idempotent replay: unique constraint on (projectId, query, locale, device, capturedAt).
-      // Because capturedAt is server-assigned to now(), a collision within the same second
-      // is the only realistic replay path (e.g. double-submit). No EventLog on replay.
+      // capturedAt is server-assigned to now(), so collision within the same millisecond
+      // is the only realistic replay path (double-submit). No EventLog on replay.
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === "P2002"

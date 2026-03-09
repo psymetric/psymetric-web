@@ -246,21 +246,36 @@ try {
     } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
+# Track whether the confirm=true write succeeded so the replay test can depend on it.
+$w5WriteOk = $false
+
 try {
     Write-Host "Testing: POST /api/seo/serp-snapshot confirm=true -> 201 + snapshot fields" -NoNewline
     $resp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshot" -Method POST -Headers $Headers -Body ($w5Base + @{confirm=$true} | ConvertTo-Json -Depth 5 -Compress) -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
     if ($resp.StatusCode -eq 201) {
         $d = ($resp.Content | ConvertFrom-Json).data
-        if ($d -ne $null -and $null -ne $d.query -and $null -ne $d.locale -and $null -ne $d.device -and $null -ne $d.capturedAt) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
-        else { Write-Host "  FAIL (missing required snapshot fields)" -ForegroundColor Red; Hammer-Record FAIL }
+        if ($d -ne $null -and $null -ne $d.query -and $null -ne $d.locale -and $null -ne $d.device -and $null -ne $d.capturedAt) {
+            $w5WriteOk = $true
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else { Write-Host "  FAIL (missing required snapshot fields)" -ForegroundColor Red; Hammer-Record FAIL }
+    } elseif ($resp.StatusCode -eq 502) {
+        # DataForSEO credentials not configured in this environment — structural SKIP.
+        $errBody = try { ($resp.Content | ConvertFrom-Json) } catch { $null }
+        $isProviderError = $errBody -and ($errBody.error -eq "provider_error" -or $errBody.message -like "*credentials missing*")
+        if ($isProviderError) { Write-Host "  SKIP (DataForSEO credentials not configured)" -ForegroundColor DarkYellow; Hammer-Record SKIP }
+        else { Write-Host ("  FAIL (got 502, expected 201; body: " + $resp.Content.Substring(0, [Math]::Min(120, $resp.Content.Length)) + ")") -ForegroundColor Red; Hammer-Record FAIL }
     } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 201)") -ForegroundColor Red; Hammer-Record FAIL }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
 try {
     Write-Host "Testing: POST /api/seo/serp-snapshot replay -> 200 or 201 (idempotency timing-sensitive)" -NoNewline
-    $resp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshot" -Method POST -Headers $Headers -Body ($w5Base + @{confirm=$true} | ConvertTo-Json -Depth 5 -Compress) -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
-    if ($resp.StatusCode -eq 200 -or $resp.StatusCode -eq 201) { Write-Host ("  PASS (" + $resp.StatusCode + ")") -ForegroundColor Green; Hammer-Record PASS }
-    else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200 or 201)") -ForegroundColor Red; Hammer-Record FAIL }
+    if (-not $w5WriteOk) {
+        Write-Host "  SKIP (confirm=true write did not succeed; replay not testable)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+    } else {
+        $resp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshot" -Method POST -Headers $Headers -Body ($w5Base + @{confirm=$true} | ConvertTo-Json -Depth 5 -Compress) -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 200 -or $resp.StatusCode -eq 201) { Write-Host ("  PASS (" + $resp.StatusCode + ")") -ForegroundColor Green; Hammer-Record PASS }
+        else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200 or 201)") -ForegroundColor Red; Hammer-Record FAIL }
+    }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
 try {
@@ -284,7 +299,11 @@ try {
 if ($OtherHeaders.Count -gt 0) {
     try {
         Write-Host "Testing: POST /api/seo/serp-snapshot cross-project write -> 201 (isolated)" -NoNewline
-        $resp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshot" -Method POST -Headers $OtherHeaders -Body ($w5Base + @{confirm=$true} | ConvertTo-Json -Depth 5 -Compress) -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
-        if ($resp.StatusCode -eq 201) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 201)") -ForegroundColor Red; Hammer-Record FAIL }
+        if (-not $w5WriteOk) {
+            Write-Host "  SKIP (DataForSEO credentials not configured; provider writes unavailable)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+        } else {
+            $resp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshot" -Method POST -Headers $OtherHeaders -Body ($w5Base + @{confirm=$true} | ConvertTo-Json -Depth 5 -Compress) -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+            if ($resp.StatusCode -eq 201) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 201)") -ForegroundColor Red; Hammer-Record FAIL }
+        }
     } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 }
