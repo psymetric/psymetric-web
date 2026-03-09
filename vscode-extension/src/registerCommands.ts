@@ -199,10 +199,7 @@ export function registerCommands(
           resultsPanel.showPageContext(
             `Page Context (replayed): ${entry.routeHint ?? entry.fileName}`,
             replayCtx,
-            undefined, // risk keywords not re-fetched on replay
-            false,
-            undefined, // route matches not re-fetched on replay
-            false,
+            undefined, // packet not re-fetched on replay
             recentEntries,
             true        // isReplayed
           );
