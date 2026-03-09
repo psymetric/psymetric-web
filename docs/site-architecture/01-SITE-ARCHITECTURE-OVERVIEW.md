@@ -1,5 +1,25 @@
 # Site Architecture Overview
 
+## Relationship to VEDA Content Graph
+
+The website architecture defined in this directory is modeled inside VEDA through the **Content Graph Layer**.
+
+This allows VEDA to reason about the structure of the project website programmatically — comparing it against live SERP signals to surface gaps, opportunities, and execution priorities.
+
+The flow is:
+
+```
+Site architecture rules  (this directory)
+        ↓
+Content Graph spec       docs/specs/CONTENT-GRAPH-LAYER.md
+        ↓
+VEDA reasoning           operator insights, execution planning, SEO lab
+```
+
+See: `docs/specs/CONTENT-GRAPH-LAYER.md`
+
+---
+
 ## Purpose
 This document defines the high-level architecture of the PsyMetric website system.
 

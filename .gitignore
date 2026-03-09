@@ -5,6 +5,10 @@
 /.next/
 /out/
 
+# vscode extension build artifacts
+vscode-extension/node_modules/
+vscode-extension/out/
+
 # environment variables
 .env*
 
