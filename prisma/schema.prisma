@@ -67,6 +67,16 @@ enum EntityType {
   draftArtifact
   keywordTarget
   serpSnapshot
+  cgSurface
+  cgSite
+  cgPage
+  cgContentArchetype
+  cgTopic
+  cgEntity
+  cgInternalLink
+  cgSchemaUsage
+  cgPageTopic
+  cgPageEntity
 }
 
 enum ContentEntityType {
@@ -120,6 +130,7 @@ enum RelationType {
 
 // EventType — from docs/07-RELATIONSHIP-AND-EVENT-VOCABULARY.md
 // SEO additions: SEO-SUBSYSTEM-FINAL-CONVERGENCE.md
+// Content Graph additions: CONTENT-GRAPH-PHASES.md Phase 1
 enum EventType {
   ENTITY_CREATED
   ENTITY_UPDATED
@@ -144,6 +155,16 @@ enum EventType {
   QUOTABLE_BLOCK_CREATED
   KEYWORD_TARGET_CREATED
   SERP_SNAPSHOT_RECORDED
+  CG_SURFACE_CREATED
+  CG_SITE_CREATED
+  CG_PAGE_CREATED
+  CG_ARCHETYPE_CREATED
+  CG_TOPIC_CREATED
+  CG_ENTITY_CREATED
+  CG_INTERNAL_LINK_CREATED
+  CG_SCHEMA_USAGE_CREATED
+  CG_PAGE_TOPIC_CREATED
+  CG_PAGE_ENTITY_CREATED
 }
 
 enum ActorType {
@@ -195,6 +216,37 @@ enum ClaimType {
   howto_step
 }
 
+// Content Graph Phase 1 Enums
+// Per docs/specs/CONTENT-GRAPH-DATA-MODEL.md
+
+enum CgSurfaceType {
+  website
+  wiki
+  blog
+  x
+  youtube
+}
+
+enum CgPublishingState {
+  draft
+  published
+  archived
+}
+
+enum CgPageRole {
+  primary
+  supporting
+  reviewed
+  compared
+  navigation
+}
+
+enum CgLinkRole {
+  hub
+  support
+  navigation
+}
+
 // =============================================================================
 // Project — Multi-project scoping
 // Every domain entity belongs to exactly one project.
@@ -222,6 +274,15 @@ model Project {
   quotableBlocks     QuotableBlock[]
   keywordTargets     KeywordTarget[]
   serpSnapshots      SERPSnapshot[]
+  // Content Graph Phase 1
+  cgSurfaces         CgSurface[]
+  cgSites            CgSite[]
+  cgPages            CgPage[]
+  cgContentArchetypes CgContentArchetype[]
+  cgTopics           CgTopic[]
+  cgEntities         CgEntity[]
+  cgInternalLinks    CgInternalLink[]
+  cgSchemaUsages     CgSchemaUsage[]
 }
 
 // =============================================================================
@@ -604,4 +665,190 @@ model SystemConfig {
   value     Json
   updatedBy ActorType
   updatedAt DateTime  @updatedAt
+}
+
+// =============================================================================
+// Content Graph Phase 1 — Core structural registration layer
+// Per docs/specs/CONTENT-GRAPH-DATA-MODEL.md, docs/specs/CONTENT-GRAPH-PHASES.md
+// Phase 1 scope: Surface, Site, Page, ContentArchetype, Topic, Entity,
+//                PageTopic, PageEntity, InternalLink, SchemaUsage
+// Intelligence is compute-on-read only. No materialized scores.
+// =============================================================================
+
+// CgSurface — A brand surface where content exists (website, wiki, blog, X, YouTube)
+model CgSurface {
+  id         String        @id @default(uuid()) @db.Uuid
+  projectId  String        @db.Uuid
+  project    Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  type       CgSurfaceType
+  key        String        // Stable short identifier, e.g. "main-site", "wiki"
+  label      String?
+  enabled    Boolean       @default(true)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  sites      CgSite[]
+
+  @@unique([projectId, key])
+  @@index([projectId, type])
+}
+
+// CgSite — A web property within a surface
+model CgSite {
+  id          String    @id @default(uuid()) @db.Uuid
+  projectId   String    @db.Uuid
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  surfaceId   String    @db.Uuid
+  surface     CgSurface @relation(fields: [surfaceId], references: [id], onDelete: Restrict)
+  domain      String
+  framework   String?   // e.g. "nextjs", "wordpress"
+  isCanonical Boolean   @default(true)
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  pages       CgPage[]
+
+  @@unique([projectId, domain])
+  @@index([projectId, surfaceId])
+}
+
+// CgContentArchetype — Structural page type (guide, comparison, review, tutorial, reference)
+model CgContentArchetype {
+  id        String   @id @default(uuid()) @db.Uuid
+  projectId String   @db.Uuid
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  key       String   // Stable short identifier, e.g. "guide", "comparison"
+  label     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pages     CgPage[]
+
+  @@unique([projectId, key])
+  @@index([projectId])
+}
+
+// CgPage — A canonical content unit on a site
+model CgPage {
+  id                  String              @id @default(uuid()) @db.Uuid
+  projectId           String              @db.Uuid
+  project             Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  siteId              String              @db.Uuid
+  site                CgSite              @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  contentArchetypeId  String?             @db.Uuid
+  contentArchetype    CgContentArchetype? @relation(fields: [contentArchetypeId], references: [id], onDelete: SetNull)
+  url                 String
+  title               String
+  canonicalUrl        String?
+  publishingState     CgPublishingState   @default(draft)
+  isIndexable         Boolean             @default(true)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  pageTopics          CgPageTopic[]
+  pageEntities        CgPageEntity[]
+  outboundLinks       CgInternalLink[]    @relation("InternalLinkSource")
+  inboundLinks        CgInternalLink[]    @relation("InternalLinkTarget")
+  schemaUsages        CgSchemaUsage[]
+
+  @@unique([projectId, url])
+  @@index([projectId, siteId, publishingState])
+}
+
+// CgTopic — Conceptual territory cluster
+model CgTopic {
+  id        String      @id @default(uuid()) @db.Uuid
+  projectId String      @db.Uuid
+  project   Project     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  key       String      // Stable short identifier
+  label     String
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  pageTopics CgPageTopic[]
+
+  @@unique([projectId, key])
+  @@index([projectId])
+}
+
+// CgEntity — Real-world entity referenced by content (product, technology, concept, etc.)
+model CgEntity {
+  id          String        @id @default(uuid()) @db.Uuid
+  projectId   String        @db.Uuid
+  project     Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  key         String        // Stable short identifier
+  label       String
+  entityType  String        // e.g. "product", "technology", "concept", "organization"
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  pageEntities CgPageEntity[]
+
+  @@unique([projectId, key])
+  @@index([projectId, entityType])
+}
+
+// CgPageTopic — Junction: page ↔ topic
+model CgPageTopic {
+  id        String      @id @default(uuid()) @db.Uuid
+  projectId String      @db.Uuid
+  pageId    String      @db.Uuid
+  page      CgPage      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  topicId   String      @db.Uuid
+  topic     CgTopic     @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  role      CgPageRole  @default(supporting)
+  createdAt DateTime    @default(now())
+
+  @@unique([pageId, topicId])
+  @@index([projectId, topicId])
+}
+
+// CgPageEntity — Junction: page ↔ entity
+model CgPageEntity {
+  id        String      @id @default(uuid()) @db.Uuid
+  projectId String      @db.Uuid
+  pageId    String      @db.Uuid
+  page      CgPage      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  entityId  String      @db.Uuid
+  entity    CgEntity    @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  role      CgPageRole  @default(supporting)
+  createdAt DateTime    @default(now())
+
+  @@unique([pageId, entityId])
+  @@index([projectId, entityId])
+}
+
+// CgInternalLink — Structural link between two pages
+model CgInternalLink {
+  id             String     @id @default(uuid()) @db.Uuid
+  projectId      String     @db.Uuid
+  project        Project    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  sourcePageId   String     @db.Uuid
+  sourcePage     CgPage     @relation("InternalLinkSource", fields: [sourcePageId], references: [id], onDelete: Cascade)
+  targetPageId   String     @db.Uuid
+  targetPage     CgPage     @relation("InternalLinkTarget", fields: [targetPageId], references: [id], onDelete: Cascade)
+  anchorText     String?
+  linkRole       CgLinkRole @default(support)
+  createdAt      DateTime   @default(now())
+
+  @@unique([sourcePageId, targetPageId])
+  @@index([projectId, sourcePageId])
+  @@index([projectId, targetPageId])
+}
+
+// CgSchemaUsage — Structured data used on a page (Article, Product, FAQ, HowTo, Recipe, etc.)
+model CgSchemaUsage {
+  id          String   @id @default(uuid()) @db.Uuid
+  projectId   String   @db.Uuid
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  pageId      String   @db.Uuid
+  page        CgPage   @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  schemaType  String   // e.g. "Article", "Product", "FAQ", "HowTo", "Recipe"
+  isPrimary   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@unique([pageId, schemaType])
+  @@index([projectId, schemaType])
+  @@index([projectId, pageId])
 }
