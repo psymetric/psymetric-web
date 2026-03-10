@@ -1,134 +1,178 @@
-# VEDA Roadmap (Binding)
+# VEDA Roadmap
 
 This roadmap is the **single source of truth for scope**.
 
-Rules:
-- If it's not in the current active phase, it is out of scope.
+- If it is not in the current active phase, it is out of scope.
 - Any scope change requires an explicit roadmap edit.
-- System invariants are non-negotiable: **project isolation**, **transactional mutations + event logging**, **determinism**, **API-only assistants**.
-
-Related specs:
-- `docs/BYDA-S-SPEC.md`
-- `docs/VSCODE-EXTENSION-SPEC.md`
-- `docs/04-LLM-OPERATING-RULES.md`
-- `docs/07-RELATIONSHIP-AND-EVENT-VOCABULARY.md`
-- `docs/specs/SIL-1-OBSERVATION-LEDGER.md`
+- Detailed behavior lives in `docs/specs/`. This document is the navigation map.
 
 ---
 
-## VEDA Observational Surfaces
+## 1. System Principles
 
-VEDA is designed as a **multi-surface observatory for search ecosystems**. Rather than analyzing only rankings or only content, the system observes several complementary data surfaces that together describe how knowledge flows across the web.
+All system behavior is governed by five non-negotiable invariants:
 
-Each surface represents a different perspective on the same search landscape.
+- **Project isolation** — all queries resolve project scope via `resolveProjectId()`. Cross-project data access is a critical violation.
+- **Transactional mutations + event logging** — every state change is transactional and emits an EventLog entry.
+- **Deterministic ordering** — all API responses use deterministic sort with tie-breakers. No random, no `Date.now()` in analytics.
+- **Compute-on-read analytics** — no materialized volatility state. All intelligence is derived at query time.
+- **LLMs propose, humans commit** — LLM assistants may draft and suggest. They may never mutate system state silently.
+
+---
+
+## 2. VEDA System Model
+
+VEDA is a **Search Ecosystem Operating System**.
+
+Each project is a **brand ecosystem container**, not simply a website. A project declares which surfaces it operates on, tracks keyword territory, and accumulates observation history across its full lifecycle.
+
+- Projects are strictly isolated. No shared state between projects.
+- All queries scope to a project via `resolveProjectId()`.
+- Projects may use any combination of VEDA system capabilities: SERP observatory, content graph, social media surfaces, video platforms, authority signal tracking, and future surfaces as they are defined.
+- LLM systems interact with VEDA through MCP tools that expose the HTTP API surface. LLMs may read system state and propose actions but cannot mutate system state directly.
+
+Specifications:
+- `docs/specs/VEDA-MCP-TOOLS-SPEC.md`
+
+---
+
+## 3. Observational Surfaces
+
+VEDA observes multiple surfaces of the search ecosystem simultaneously.
 
 ### Search Graph — SERP Observatory
-
-The Search Graph models the **external search ecosystem**.
-
-Signals come from SERP snapshots and the SIL sensor stack.
-
-Examples:
-
-- ranking positions
-- domain dominance
-- feature presence
-- intent drift
-- SERP volatility
-- AI overview behavior
-
-This surface answers the question:
-
-*What is happening in the search results?*
-
----
+Models the external search ecosystem via SERP snapshots and the SIL sensor stack.
+Signals: rankings, domain dominance, SERP features, intent drift, AI overview behavior, volatility.
 
 ### Content Graph — Project Website
+Models the internal structure of the project's own site, explicitly stewarded through VEDA workflows.
+Signals: pages, page types, internal links, anchor text, schema usage, topic and entity coverage.
 
-The Content Graph models the **internal structure of the project website**.
-
-Unlike competitor systems, this graph is **explicitly stewarded** through VEDA workflows when pages are created, updated, or removed.
-
-Examples:
-
-- pages and page types
-- internal linking relationships
-- anchor text usage
-- schema usage
-- topic and entity coverage
-
-This surface answers the question:
-
-*What structure does our site expose to search engines?*
-
----
+Specifications:
+- `docs/specs/CONTENT-GRAPH-DATA-MODEL.md`
+- `docs/specs/CONTENT-GRAPH-PHASES.md`
 
 ### Competitor Content Observatory
-
-Competitor sites cannot be stewarded directly. Instead, VEDA observes the structure of competitor pages that appear in tracked SERPs.
-
-SERP snapshots act as the **selection mechanism** for competitor page observation.
-
-Examples of observed signals:
-
-- page archetype patterns
-- schema usage
-- internal support structures
-- citation and reference patterns
-
-This surface answers the question:
-
-*How are competing pages structured, and why might they be winning?*
-
----
+Observes structural patterns of competitor pages appearing in tracked SERPs. SERP snapshots act as the selection mechanism.
+Signals: page archetypes, schema usage, internal support structures, citation patterns.
 
 ### LLM Citation Observatory
+Tracks domain citation behavior across AI systems.
+Signals: domain citation frequency, entity mention frequency, citation volatility, cross-model coverage.
 
-This system monitors **AI assistant citation behavior** across models such as ChatGPT, Claude, Gemini, and Perplexity.
+### Social Surface Observatories *(Future)*
+VEDA will extend observation to social media ecosystems as additional surface layers. Each platform will expose its own visibility signals through platform APIs.
 
-Signals include:
+Platforms:
+- X (Twitter)
+- YouTube
+- Future social platforms
 
-- domain citation frequency
-- entity mention frequency
-- citation volatility
-- cross-model citation coverage
+Signals:
+- engagement
+- reach
+- entity references
+- cross-platform authority signals
 
-These signals represent a new form of visibility beyond traditional rankings.
+These signals integrate with VEDA's multi-surface intelligence model alongside SERP and content graph signals.
 
-This surface answers the question:
+#### AI-Assisted Social Interaction Workflows *(Future)*
 
-*Which domains are treated as authoritative sources by AI systems?*
+VEDA will support **operator-assisted engagement workflows** for social platforms.
+
+Purpose:
+- assist operators in responding to conversations
+- reinforce brand authority in public discussions
+- capture recurring questions and misconceptions
+
+Initial platform focus:
+- X (Twitter)
+
+Example workflow:
+
+```
+Social reply detected or selected
+→ captured as SourceItem
+→ conversation context analyzed
+→ VEDA generates DraftArtifact (x_reply)
+→ operator reviews and edits
+→ operator posts response manually
+```
+
+This workflow integrates existing system primitives:
+
+- `SourceItem` capture
+- `DraftArtifact` generation (`x_reply`)
+- `MetricSnapshot` tracking for engagement signals
+
+The system remains **human-in-the-loop**. VEDA never posts automatically.
 
 ---
 
-### Multi-Surface Intelligence
+## 4. Project Lifecycle
 
-By observing all surfaces simultaneously, VEDA can reason across relationships such as:
+Projects move through a defined set of lifecycle states:
 
-- strong SERP rankings but weak AI citations
-- strong AI citations but weak search visibility
-- competitor structural patterns correlated with ranking stability
-- gaps between SERP expectations and site structure
+`created` → `draft` → `researching` → `targeting` → `observing` → `developing` → `seasoned` → `paused` / `archived`
 
-This multi-surface model is the foundation for the **Strategy Synthesis Layer**, which compares demand signals (search ecosystem behavior) with supply signals (site and competitor structures).
+All lifecycle transitions follow the **Propose → Review → Apply** rule. LLMs may assist in proposing transitions. They cannot apply them.
+
+Specification:
+- `docs/veda-project-lifecycle-workflow.md`
 
 ---
 
-## Architectural Layers
+## 5. Project Blueprint Phase
 
-VEDA is organized as a strict stack of layers. Each layer depends only on the layers below it.
+The **Project Blueprint** defines the intended structure of a project before keyword targeting begins. It is produced during the `draft` lifecycle stage.
+
+A project blueprint is required before a project may proceed to the research phase.
+
+Blueprint components:
+- Brand identity and strategic niche
+- Surface registry (which VEDA surfaces the project uses)
+- Website architecture model
+- Content archetypes
+- Entity clusters
+- Initial keyword territory
+- Authority model
+
+The blueprint acts as the architectural contract for all subsequent targeting and observation work.
+
+Specifications:
+- `docs/specs/PROJECT-BLUEPRINT-SPEC.md`
+- `docs/specs/VEDA-CREATE-PROJECT-WORKFLOW.md`
+
+---
+
+## 6. Brand Surface Registry
+
+Each project declares which surfaces it operates on. VEDA treats these as parts of a single brand ecosystem.
+
+Possible surfaces:
+- Website
+- Wiki
+- Blog / editorial
+- X (Twitter)
+- YouTube
+- Future media surfaces
+
+Surface declarations are stored per-project and scope signal collection accordingly.
+
+---
+
+## 7. Architectural Stack
 
 ```
 ┌──────────────────────────────────────────────┐
 │         Operator Interfaces                  │
-│   VS Code Extension · MCP Bridge · (UI TBD)  │
+│   VS Code Extension · MCP Bridge             │
 ├──────────────────────────────────────────────┤
-│         SEO Lab / Experiments Layer          │
-│   (Post-MVP — ranking hypothesis testing)    │
+│         SEO Lab  (future)                    │
+│   Ranking hypothesis testing                 │
 ├──────────────────────────────────────────────┤
-│         Tactics Layer  ("Checkers SEO")       │
-│   Mechanical ranking signal execution        │
-│   Keywords · Links · Schema · Entity · YT    │
+│         Tactics Layer                        │
+│   Keywords · Links · Schema · Entity         │
 ├──────────────────────────────────────────────┤
 │         Execution Planning Layer             │
 │   Page-level plans · Playbooks · Defense     │
@@ -137,29 +181,75 @@ VEDA is organized as a strict stack of layers. Each layer depends only on the la
 │   Synthesis · Territory Intelligence         │
 ├──────────────────────────────────────────────┤
 │         Operator Reasoning Layer             │
-│   Operator Reasoning · Briefing · Insights   │
+│   Reasoning · Briefing · Insights            │
 ├──────────────────────────────────────────────┤
 │         Diagnostics Layer                    │
 │   Project Diagnostic · Keyword Diagnostic    │
 │   Spike Delta · Risk Attribution             │
 ├──────────────────────────────────────────────┤
-│         SIL Sensor Layer  ("Chess SEO")       │
-│   SIL-1 → SIL-20: Volatility · Class.        │
-│   Causality · Intent · Features · Radar      │
+│         SIL Sensor Layer                     │
+│   SIL-1 → SIL-24: Volatility · Class.        │
+│   Causality · Intent · Features · Weather    │
 ├──────────────────────────────────────────────┤
 │         Observation Ledger                   │
 │   SERPSnapshot · KeywordTarget · MetricSnap  │
 │   EventLog · QuotableBlock · SearchPerf      │
 ├──────────────────────────────────────────────┤
 │         Data Ingestion Layer                 │
-│   DataForSEO Live SERP Ingest (W5)           │
+│   DataForSEO Live SERP Ingest                │
 │   Search Console Ingest · Manual Capture     │
 └──────────────────────────────────────────────┘
 ```
 
-Each layer is append-only and compute-on-read. No materialized volatility state.
-All mutations are transactional and emit event log entries.
+Specifications:
+- `docs/specs/SIL-1-OBSERVATION-LEDGER.md`
+
+All analytics are compute-on-read. No materialized volatility state is permitted.
 
 ---
 
-(remaining roadmap content unchanged)
+## 8. Completed Milestones
+
+- Multi-project isolation architecture
+- Observation ledger (SERPSnapshot, KeywordTarget, MetricSnapshot)
+- DataForSEO SERP ingest pipeline
+- SERP delta detection
+- Keyword volatility engine
+- Volatility alerts
+- Operator reasoning layer
+- SERP disturbance detection (SIL-16)
+- Event attribution (SIL-17)
+- SERP weather model (SIL-18)
+- Weather forecasting + momentum (SIL-19, SIL-19B)
+- Weather alerts (SIL-20)
+- Alert briefing engine (SIL-21)
+- Keyword impact ranking (SIL-22)
+- Alert-affected keyword selection (SIL-23)
+- Operator investigation hints (SIL-24)
+- VS Code Command Center (multi-panel sidebar)
+- SERP Observatory panel
+
+---
+
+## 9. Active Development
+
+- Content Graph layer *(in progress)*
+- Project Blueprint workflow
+- Brand Surface Registry
+- Page Command Center expansion
+- MCP toolset for project creation and blueprint workflows
+
+---
+
+## 10. Future Phases
+
+The order of future phases reflects architectural dependencies. Structural observatories and graph models must exist before higher-level strategy and experimentation layers can operate.
+
+- Competitor Content Graph
+- Social surface observatories (X, YouTube)
+- AI-assisted social interaction workflows
+- LLM citation observatory expansion
+- Strategy synthesis engine
+- Execution planning layer
+- SEO Lab experimentation framework
+- SERP ecosystem simulation
