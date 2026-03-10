@@ -52,6 +52,7 @@ $_parseTargets = @(
     "$PSScriptRoot\hammer\hammer-sil21.ps1"
     "$PSScriptRoot\hammer\hammer-sil22-24.ps1"
     "$PSScriptRoot\hammer\hammer-content-graph-phase1.ps1"
+    "$PSScriptRoot\hammer\hammer-content-graph-intelligence.ps1"
 )
 foreach ($_pt in $_parseTargets) {
     $_tokens = $null
@@ -121,6 +122,7 @@ if ($_seed -and $_seed.data -and $_seed.data.Count -gt 0) { $entityId = $_seed.d
 . "$PSScriptRoot\hammer\hammer-sil21.ps1"
 . "$PSScriptRoot\hammer\hammer-sil22-24.ps1"
 . "$PSScriptRoot\hammer\hammer-content-graph-phase1.ps1"
+. "$PSScriptRoot\hammer\hammer-content-graph-intelligence.ps1"
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 Write-Host ""
