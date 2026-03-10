@@ -14,6 +14,7 @@ import { AlertsProvider, AlertTreeItem } from './providers/alertsProvider';
 import { KeywordsProvider, KeywordTreeItem } from './providers/keywordsProvider';
 import { RecentPageWorkflowProvider, RecentWorkflowTreeItem } from './providers/recentPageWorkflowProvider';
 import { SerpObservatoryProvider } from './providers/serpObservatoryProvider';
+import { VedaBrainProvider } from './providers/vedaBrainProvider';
 import { PageWorkflowMemory } from './services/pageWorkflowMemory';
 import { ResultsPanel } from './views/resultsPanel';
 import { registerCommands } from './registerCommands';
@@ -146,6 +147,17 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
+  // ── VEDA Brain sidebar view ────────────────────────────────────────────────
+  const vedaBrainProvider = new VedaBrainProvider(client, state);
+  context.subscriptions.push(
+    vedaBrainProvider,
+    vscode.window.registerWebviewViewProvider(
+      VedaBrainProvider.VIEW_ID,
+      vedaBrainProvider,
+      { webviewOptions: { retainContextWhenHidden: true } }
+    )
+  );
+
   // ── Commands ──────────────────────────────────────────────────────────────
   registerCommands(
     context,
@@ -161,7 +173,8 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBarItem,
     workflowMemory,
     workflowProvider,
-    serpObservatoryProvider
+    serpObservatoryProvider,
+    vedaBrainProvider
   );
 
   // ── Config change watcher ─────────────────────────────────────────────────

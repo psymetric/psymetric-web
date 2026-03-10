@@ -6,6 +6,11 @@ export interface ApiError {
   code?: string;
 }
 
+/** Generic envelope wrapping all successful API responses. */
+export interface ApiEnvelope<T> {
+  data: T;
+}
+
 export interface InvestigationPacket {
   project: {
     keywordCount: number;

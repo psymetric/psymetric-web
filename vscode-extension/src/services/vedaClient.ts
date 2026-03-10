@@ -8,6 +8,8 @@ import { ConfigService } from './configService';
 import { StateService } from './stateService';
 import { VedaError } from '../utils/errors';
 import { PageCommandCenterResponse } from '../types/pageCommandCenter';
+import { ApiEnvelope } from '../types/api';
+import { VedaBrainDiagnosticsResponse } from '../types/vedaBrain';
 
 export class VedaClient {
   constructor(
@@ -119,5 +121,15 @@ export class VedaClient {
     if (params.fileType)  { qs.set('fileType',  params.fileType);  }
     const query = qs.toString() ? `?${qs.toString()}` : '';
     return this.get<PageCommandCenterResponse>(`/api/seo/page-command-center${query}`);
+  }
+
+  /**
+   * Fetch VEDA Brain Phase 1 project diagnostics.
+   * Returns compute-on-read mismatch diagnostics: keyword-page mapping,
+   * archetype alignment, entity gaps, topic territory gaps,
+   * authority opportunities, schema opportunities, readiness classification.
+   */
+  async getVedaBrainDiagnostics(): Promise<ApiEnvelope<VedaBrainDiagnosticsResponse>> {
+    return this.get<ApiEnvelope<VedaBrainDiagnosticsResponse>>('/api/veda-brain/project-diagnostics');
   }
 }
