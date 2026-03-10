@@ -533,4 +533,53 @@ export const toolDefinitions = [
       additionalProperties: false,
     },
   },
+  // ── Project bootstrap tools ──────────────────────────────────────────────
+  {
+    name: "create_project",
+    description:
+      "Create a new VEDA project container. Returns the created project record. The project starts in 'created' lifecycle state. Slug is auto-derived from name if not provided.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Project name (1-200 characters)",
+          minLength: 1,
+          maxLength: 200,
+        },
+        slug: {
+          type: "string",
+          description:
+            "URL-safe slug (optional, auto-derived from name if omitted). Lowercase alphanumeric with hyphens.",
+          minLength: 2,
+          maxLength: 100,
+        },
+        description: {
+          type: "string",
+          description: "Optional project description (max 2000 characters)",
+          maxLength: 2000,
+        },
+      },
+      required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_project",
+    description:
+      "Retrieve a single project by ID with full details including lifecycleState.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: {
+          type: "string",
+          description: "Project UUID",
+          pattern:
+            "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        },
+      },
+      required: ["projectId"],
+      additionalProperties: false,
+    },
+  },
 ] as const;

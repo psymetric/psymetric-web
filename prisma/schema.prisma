@@ -77,6 +77,7 @@ enum EntityType {
   cgSchemaUsage
   cgPageTopic
   cgPageEntity
+  vedaProject
 }
 
 enum ContentEntityType {
@@ -153,6 +154,9 @@ enum EventType {
   DRAFT_CREATED
   DRAFT_EXPIRED
   QUOTABLE_BLOCK_CREATED
+  PROJECT_CREATED
+  BLUEPRINT_PROPOSED
+  BLUEPRINT_APPLIED
   KEYWORD_TARGET_CREATED
   SERP_SNAPSHOT_RECORDED
   CG_SURFACE_CREATED
@@ -182,6 +186,7 @@ enum DraftArtifactKind {
   seo_llm_mentions
   seo_llm_response
   byda_s_audit
+  project_blueprint
 }
 
 enum DraftArtifactStatus {
@@ -253,12 +258,13 @@ enum CgLinkRole {
 // =============================================================================
 
 model Project {
-  id          String   @id @default(uuid()) @db.Uuid
-  name        String
-  slug        String   @unique
-  description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(uuid()) @db.Uuid
+  name           String
+  slug           String   @unique
+  description    String?
+  lifecycleState String?  @default("created")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   // Reverse relations
   entities           Entity[]

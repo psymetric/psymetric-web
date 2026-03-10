@@ -1,0 +1,300 @@
+# hammer-project-bootstrap.ps1 — Project Bootstrap & Blueprint hammer tests
+# Dot-sourced by api-hammer.ps1. Inherits $Headers, $OtherHeaders, $Base, Hammer-Section, Hammer-Record.
+#
+# Coverage:
+#   POST /api/projects — create, validation, duplicate slug, strict mode
+#   GET  /api/projects/:id — retrieve, 404, invalid UUID
+#   GET  /api/projects — list includes new project
+#   POST /api/projects/:id/blueprint — propose, validation, lifecycle transition
+#   GET  /api/projects/:id/blueprint — retrieve active blueprint
+#   POST /api/projects/:id/blueprint/apply — apply, idempotent re-apply
+#   Lifecycle: created → draft on first proposal
+#   Post-apply: blueprint archived, second apply 400
+
+Hammer-Section "PROJECT BOOTSTRAP & BLUEPRINT"
+
+$testSlug = "hammer-bp-$(Get-Date -Format 'yyyyMMddHHmmss')"
+$testProjectId = $null
+
+# ── Project creation ─────────────────────────────────────────────────────────
+
+# PB-1: POST /api/projects creates a project
+try {
+    Write-Host "Testing: PB-1 POST /api/projects creates a project" -NoNewline
+    $createBody = @{ name = "Hammer BP Test"; slug = $testSlug; description = "Blueprint hammer test" } | ConvertTo-Json
+    $resp = Invoke-WebRequest -Uri "$Base/api/projects" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body $createBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 201) {
+        $created = ($resp.Content | ConvertFrom-Json).data
+        $testProjectId = $created.id
+        if ($created.name -eq "Hammer BP Test" -and $created.slug -eq $testSlug -and $created.lifecycleState -eq "created") {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host "  FAIL (unexpected data: $($resp.Content))" -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ") body=" + $resp.Content) -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-2: Duplicate slug returns 409
+try {
+    Write-Host "Testing: PB-2 Duplicate slug returns 409" -NoNewline
+    $dupeBody = @{ name = "Duplicate"; slug = $testSlug } | ConvertTo-Json
+    $resp = Invoke-WebRequest -Uri "$Base/api/projects" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body $dupeBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 409) {
+        Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 409)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-3: POST with missing name returns 400
+try {
+    Write-Host "Testing: PB-3 POST with missing name returns 400" -NoNewline
+    $badBody = @{ description = "no name" } | ConvertTo-Json
+    $resp = Invoke-WebRequest -Uri "$Base/api/projects" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body $badBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 400) {
+        Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 400)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-4: POST with extra fields returns 400 (strict)
+try {
+    Write-Host "Testing: PB-4 POST with extra fields returns 400" -NoNewline
+    $extraBody = @{ name = "Extra"; slug = "extra-strict"; bogus = "field" } | ConvertTo-Json
+    $resp = Invoke-WebRequest -Uri "$Base/api/projects" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body $extraBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 400) {
+        Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 400)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── Project retrieval ────────────────────────────────────────────────────────
+
+# PB-5: GET /api/projects/:id returns project
+try {
+    Write-Host "Testing: PB-5 GET /api/projects/:id returns project" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $resp = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId" -Method GET -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 200) {
+            $proj = ($resp.Content | ConvertFrom-Json).data
+            if ($proj.id -eq $testProjectId -and $proj.slug -eq $testSlug) {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } else { Write-Host "  FAIL (mismatch)" -ForegroundColor Red; Hammer-Record FAIL }
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-6: Non-existent project returns 404
+try {
+    Write-Host "Testing: PB-6 Non-existent project returns 404" -NoNewline
+    $fakeId = "00000000-0000-4000-a000-000000000099"
+    $resp = Invoke-WebRequest -Uri "$Base/api/projects/$fakeId" -Method GET -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 404) {
+        Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-7: Invalid UUID returns 400
+try {
+    Write-Host "Testing: PB-7 Invalid UUID returns 400" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$Base/api/projects/not-a-uuid" -Method GET -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 400) {
+        Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-8: GET /api/projects list includes new project
+try {
+    Write-Host "Testing: PB-8 GET /api/projects list includes new project" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $resp = Invoke-WebRequest -Uri "$Base/api/projects?limit=100" -Method GET -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 200) {
+            $found = ($resp.Content | ConvertFrom-Json).data | Where-Object { $_.id -eq $testProjectId }
+            if ($null -ne $found) {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } else { Write-Host "  FAIL (not in list)" -ForegroundColor Red; Hammer-Record FAIL }
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── Blueprint: pre-proposal state ────────────────────────────────────────────
+
+# PB-9: GET blueprint with none proposed returns 404
+try {
+    Write-Host "Testing: PB-9 GET blueprint before proposal returns 404" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $resp = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId/blueprint" -Method GET -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 404) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── Blueprint: proposal ──────────────────────────────────────────────────────
+
+$blueprintContent = @{
+    schemaVersion = "blueprint.v1"
+    brandIdentity = @{
+        projectName = "Hammer BP Test"
+        strategicNiche = "AI education"
+    }
+    surfaceRegistry = @(
+        @{ type = "website"; key = "main-site"; label = "Main Website" }
+    )
+    websiteArchitecture = @{
+        domain = "hammertest.example.com"
+        framework = "nextjs"
+    }
+    contentArchetypes = @(
+        @{ key = "guide"; label = "Guide" }
+        @{ key = "tutorial"; label = "Tutorial" }
+    )
+    entityClusters = @(
+        @{ key = "machine-learning"; label = "Machine Learning" }
+        @{ key = "openai"; label = "OpenAI"; entityType = "organization" }
+    )
+}
+
+# PB-10: POST blueprint proposal succeeds
+try {
+    Write-Host "Testing: PB-10 POST blueprint proposal succeeds" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $bpBody = @{ content = $blueprintContent } | ConvertTo-Json -Depth 10
+        $resp = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId/blueprint" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body $bpBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 201) {
+            $bpData = ($resp.Content | ConvertFrom-Json).data
+            if ($bpData.projectId -eq $testProjectId -and $null -ne $bpData.blueprint.id) {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } else { Write-Host "  FAIL (shape)" -ForegroundColor Red; Hammer-Record FAIL }
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ") body=" + $resp.Content) -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-11: Lifecycle transitioned to "draft"
+try {
+    Write-Host "Testing: PB-11 Lifecycle is 'draft' after proposal" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $resp = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId" -Method GET -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        $proj = ($resp.Content | ConvertFrom-Json).data
+        if ($proj.lifecycleState -eq "draft") {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else { Write-Host ("  FAIL (got: " + $proj.lifecycleState + ")") -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-12: GET blueprint returns proposed blueprint
+try {
+    Write-Host "Testing: PB-12 GET blueprint returns proposed content" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $resp = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId/blueprint" -Method GET -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 200) {
+            $bpData = ($resp.Content | ConvertFrom-Json).data
+            if ($null -ne $bpData.blueprint -and $null -ne $bpData.blueprint.content) {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } else { Write-Host "  FAIL (missing)" -ForegroundColor Red; Hammer-Record FAIL }
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-13: Invalid blueprint content returns 400
+try {
+    Write-Host "Testing: PB-13 Invalid blueprint content returns 400" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $badBp = @{ content = @{ schemaVersion = "blueprint.v1"; brandIdentity = @{ projectName = "X" } } } | ConvertTo-Json -Depth 10
+        $resp = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId/blueprint" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body $badBp -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 400) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── Blueprint: apply ─────────────────────────────────────────────────────────
+
+# PB-14: Re-propose clean blueprint for apply test (previous was overwritten by PB-13 attempt)
+try {
+    Write-Host "Testing: PB-14 Re-propose blueprint for apply" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $bpBody = @{ content = $blueprintContent } | ConvertTo-Json -Depth 10
+        $resp = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId/blueprint" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body $bpBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 201) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-15: POST blueprint apply succeeds
+try {
+    Write-Host "Testing: PB-15 POST blueprint apply succeeds" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $resp = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId/blueprint/apply" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body "{}" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 200) {
+            $applyData = ($resp.Content | ConvertFrom-Json).data
+            if ($applyData.applied -eq $true -and $applyData.created.surfaces -ge 1 -and $applyData.created.archetypes -ge 1) {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } else { Write-Host ("  FAIL (result: " + $resp.Content + ")") -ForegroundColor Red; Hammer-Record FAIL }
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ") body=" + $resp.Content) -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-16: After apply, blueprint is archived (GET returns 404)
+try {
+    Write-Host "Testing: PB-16 After apply, GET blueprint returns 404" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $resp = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId/blueprint" -Method GET -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 404) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-17: Apply with no active blueprint returns 400
+try {
+    Write-Host "Testing: PB-17 Apply with no blueprint returns 400" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $resp = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId/blueprint/apply" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body "{}" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 400) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── Idempotent re-apply ──────────────────────────────────────────────────────
+
+# PB-18: Re-propose + re-apply creates 0 new records (idempotent)
+try {
+    Write-Host "Testing: PB-18 Idempotent re-apply creates 0 new records" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $bpBody = @{ content = $blueprintContent } | ConvertTo-Json -Depth 10
+        $resp1 = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId/blueprint" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body $bpBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp1.StatusCode -ne 201) {
+            Write-Host ("  FAIL (re-propose got " + $resp1.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
+        } else {
+            $resp2 = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId/blueprint/apply" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body "{}" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+            if ($resp2.StatusCode -eq 200) {
+                $ad = ($resp2.Content | ConvertFrom-Json).data
+                if ($ad.created.surfaces -eq 0 -and $ad.created.archetypes -eq 0 -and $ad.created.topics -eq 0 -and $ad.created.entities -eq 0 -and $ad.created.sites -eq 0) {
+                    Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+                } else { Write-Host ("  FAIL (expected 0s, got: " + $resp2.Content + ")") -ForegroundColor Red; Hammer-Record FAIL }
+            } else { Write-Host ("  FAIL (re-apply got " + $resp2.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+        }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-19: Auto-derived slug works
+try {
+    Write-Host "Testing: PB-19 POST with auto-derived slug" -NoNewline
+    $autoBody = @{ name = "Auto Slug $(Get-Date -Format 'yyyyMMddHHmmss')" } | ConvertTo-Json
+    $resp = Invoke-WebRequest -Uri "$Base/api/projects" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body $autoBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 201) {
+        $c = ($resp.Content | ConvertFrom-Json).data
+        if (-not [string]::IsNullOrWhiteSpace($c.slug)) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else { Write-Host "  FAIL (empty slug)" -ForegroundColor Red; Hammer-Record FAIL }
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-20: Blueprint on non-existent project returns 404
+try {
+    Write-Host "Testing: PB-20 Blueprint on non-existent project returns 404" -NoNewline
+    $fakeId = "00000000-0000-4000-a000-000000000099"
+    $resp = Invoke-WebRequest -Uri "$Base/api/projects/$fakeId/blueprint" -Method GET -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 404) {
+        Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }

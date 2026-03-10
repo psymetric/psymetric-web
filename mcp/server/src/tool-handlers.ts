@@ -181,6 +181,11 @@ export async function handleToolCall(
       return handleOperatorEndpoint(apiClient, "/api/seo/operator-briefing");
     case "get_risk_attribution_summary":
       return handleOperatorEndpoint(apiClient, "/api/seo/risk-attribution-summary");
+    // ── Project bootstrap tools ─────────────────────────────────────────
+    case "create_project":
+      return handleCreateProject(args, apiClient);
+    case "get_project":
+      return handleGetProject(args, apiClient);
     default:
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${toolName}`);
   }
@@ -516,6 +521,64 @@ async function handleProjectDiagnostic(
   };
 
   return formatToolResult(packet);
+}
+
+/**
+ * create_project: POST /api/projects
+ *
+ * Creates a new VEDA project container. No project scoping header required.
+ * Returns the created project record.
+ */
+async function handleCreateProject(
+  args: Record<string, unknown>,
+  apiClient: ApiClient
+): Promise<unknown> {
+  const name = args.name as string;
+  if (!name) {
+    throw new McpError(ErrorCode.InvalidParams, "name is required");
+  }
+
+  const body: Record<string, unknown> = { name };
+  if (args.slug) body.slug = args.slug;
+  if (args.description) body.description = args.description;
+
+  const response = await apiClient.fetch("/api/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    await handleApiError(response);
+  }
+
+  const data = await response.json();
+  return formatToolResult(data);
+}
+
+/**
+ * get_project: GET /api/projects/:id
+ *
+ * Retrieves a single project by ID. No project scoping header required.
+ */
+async function handleGetProject(
+  args: Record<string, unknown>,
+  apiClient: ApiClient
+): Promise<unknown> {
+  const projectId = args.projectId as string;
+  if (!projectId) {
+    throw new McpError(ErrorCode.InvalidParams, "projectId is required");
+  }
+  validateUuid(projectId, "projectId");
+
+  const response = await apiClient.fetch(`/api/projects/${projectId}`);
+
+  if (!response.ok) {
+    await handleApiError(response);
+  }
+
+  const data = await response.json();
+  return formatToolResult(data);
 }
 
 /**
