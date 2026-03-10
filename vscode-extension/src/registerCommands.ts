@@ -10,6 +10,7 @@ import { InvestigationSummaryProvider } from './providers/investigationSummaryPr
 import { AlertsProvider, AlertTreeItem } from './providers/alertsProvider';
 import { KeywordsProvider, KeywordTreeItem } from './providers/keywordsProvider';
 import { RecentPageWorkflowProvider } from './providers/recentPageWorkflowProvider';
+import { SerpObservatoryProvider } from './providers/serpObservatoryProvider';
 import { PageWorkflowMemory, RecentWorkflowEntry } from './services/pageWorkflowMemory';
 import { ResultsPanel } from './views/resultsPanel';
 
@@ -36,7 +37,8 @@ export function registerCommands(
   resultsPanel: ResultsPanel,
   statusBarItem: vscode.StatusBarItem,
   memory: PageWorkflowMemory,
-  workflowProvider: RecentPageWorkflowProvider
+  workflowProvider: RecentPageWorkflowProvider,
+  serpObservatoryProvider: SerpObservatoryProvider
 ): void {
   updateStatusBar(statusBarItem, config.getActiveEnvironmentName(), state.activeProject?.name ?? null);
 
@@ -281,6 +283,10 @@ export function registerCommands(
 
     vscode.commands.registerCommand('veda.refreshKeywords', () => {
       keywordsProvider.refresh();
+    }),
+
+    vscode.commands.registerCommand('veda.refreshSerpObservatory', () => {
+      serpObservatoryProvider.refresh();
     }),
 
     // Fired when an alert item is clicked in the tree view.

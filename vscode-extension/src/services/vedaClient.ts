@@ -97,6 +97,14 @@ export class VedaClient {
   }
 
   /**
+   * Fetch the full SERP Observatory packet (SIL-16 through SIL-24).
+   * Uses include=hints which auto-resolves all dependency layers.
+   */
+  async getSerpDisturbances(): Promise<unknown> {
+    return this.get('/api/seo/serp-disturbances?include=hints');
+  }
+
+  /**
    * Fetch the Page Command Center packet from the backend.
    * The backend owns observatory synthesis; the extension supplies editor context only.
    */

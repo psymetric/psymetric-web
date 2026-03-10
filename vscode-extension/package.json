@@ -28,7 +28,9 @@
     "onView:veda.keywords",
     "onView:veda.recentPageWorkflow",
     "onCommand:veda.replayWorkflowEntry",
-    "onCommand:veda.summaryKeywordDiagnostic"
+    "onCommand:veda.summaryKeywordDiagnostic",
+    "onView:veda.serpObservatory",
+    "onCommand:veda.refreshSerpObservatory"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -101,6 +103,11 @@
       {
         "command": "veda.summaryKeywordDiagnostic",
         "title": "VEDA: Summary Keyword Diagnostic"
+      },
+      {
+        "command": "veda.refreshSerpObservatory",
+        "title": "VEDA: Refresh SERP Observatory",
+        "icon": "$(refresh)"
       }
     ],
     "viewsContainers": {
@@ -139,6 +146,11 @@
         {
           "id": "veda.recentPageWorkflow",
           "name": "Recent Page Workflow"
+        },
+        {
+          "id": "veda.serpObservatory",
+          "name": "SERP Observatory",
+          "type": "webview"
         }
       ]
     },
@@ -191,6 +203,11 @@
         {
           "command": "veda.refreshKeywords",
           "when": "view == veda.keywords",
+          "group": "navigation"
+        },
+        {
+          "command": "veda.refreshSerpObservatory",
+          "when": "view == veda.serpObservatory",
           "group": "navigation"
         }
       ]

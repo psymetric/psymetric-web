@@ -13,6 +13,7 @@ import { InvestigationSummaryProvider } from './providers/investigationSummaryPr
 import { AlertsProvider, AlertTreeItem } from './providers/alertsProvider';
 import { KeywordsProvider, KeywordTreeItem } from './providers/keywordsProvider';
 import { RecentPageWorkflowProvider, RecentWorkflowTreeItem } from './providers/recentPageWorkflowProvider';
+import { SerpObservatoryProvider } from './providers/serpObservatoryProvider';
 import { PageWorkflowMemory } from './services/pageWorkflowMemory';
 import { ResultsPanel } from './views/resultsPanel';
 import { registerCommands } from './registerCommands';
@@ -134,6 +135,17 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
+  // ── SERP Observatory sidebar view ──────────────────────────────────────────
+  const serpObservatoryProvider = new SerpObservatoryProvider(client, state);
+  context.subscriptions.push(
+    serpObservatoryProvider,
+    vscode.window.registerWebviewViewProvider(
+      SerpObservatoryProvider.VIEW_ID,
+      serpObservatoryProvider,
+      { webviewOptions: { retainContextWhenHidden: true } }
+    )
+  );
+
   // ── Commands ──────────────────────────────────────────────────────────────
   registerCommands(
     context,
@@ -148,7 +160,8 @@ export function activate(context: vscode.ExtensionContext): void {
     resultsPanel,
     statusBarItem,
     workflowMemory,
-    workflowProvider
+    workflowProvider,
+    serpObservatoryProvider
   );
 
   // ── Config change watcher ─────────────────────────────────────────────────
