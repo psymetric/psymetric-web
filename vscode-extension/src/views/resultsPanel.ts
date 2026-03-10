@@ -557,6 +557,91 @@ ${body}
     }
     const routeMatchSection = _collapsible('Possible Route-Text Keyword Matches', routeBody, false);
 
+    // ── SERP Observatory section ──────────────────────────────────────────
+    const so = packet.serpObservatory;
+    const serpObsRows = [
+      `<tr><td class="key">Volatility</td><td class="val so-vol-${escapeHtml(so.volatilityLevel)}">${escapeHtml(_capitaliseFirst(so.volatilityLevel))}</td></tr>`,
+      `<tr><td class="key">Rank Turbulence</td><td class="val">${so.recentRankTurbulence ? '<span class="so-turbulence">Detected</span>' : '<span class="so-ok">None detected</span>'}</td></tr>`,
+      `<tr><td class="key">AI Overview Activity</td><td class="val">${escapeHtml(_capitaliseFirst(so.aiOverviewActivity))}</td></tr>`,
+      so.dominantSerpFeatures.length > 0
+        ? `<tr><td class="key">Dominant Features</td><td class="val">${escapeHtml(so.dominantSerpFeatures.map(_formatFeature).join(', '))}</td></tr>`
+        : `<tr><td class="key">Dominant Features</td><td class="val so-muted">None observed</td></tr>`,
+      so.recentEvents.length > 0
+        ? `<tr><td class="key">Recent Event</td><td class="val">${escapeHtml(_formatClassification(so.recentEvents[0].classification))}</td></tr>`
+        : `<tr><td class="key">Recent Event</td><td class="val so-muted">None</td></tr>`,
+    ].join('');
+    const serpObsSection = _collapsible('SERP Observatory', `<table>${serpObsRows}</table>`, false);
+
+    // ── SERP Disturbance Signals section ─────────────────────────────────────────
+    let disturbanceSection = '';
+    const sd = packet.serpDisturbance;
+    if (sd) {
+      const vcLabel  = sd.volatilityCluster  ? '<span class="sd-active">Detected</span>'  : '<span class="sd-none">None</span>';
+      const rtLabel  = sd.rankingTurbulence   ? '<span class="sd-active">Active</span>'    : '<span class="sd-none">None</span>';
+      const fsLabel  = sd.featureShiftDetected
+        ? (sd.dominantNewFeatures.length > 0
+            ? `<span class="sd-active">${escapeHtml(sd.dominantNewFeatures.map(_formatFeature).join(', '))}</span>`
+            : '<span class="sd-active">Detected</span>')
+        : '<span class="sd-none">None</span>';
+      const sdRows = [
+        `<tr><td class="key">Volatility Cluster</td><td class="val">${vcLabel}</td></tr>`,
+        `<tr><td class="key">Ranking Turbulence</td><td class="val">${rtLabel}${
+          sd.rankingTurbulence ? ` <span class="sd-count">(${sd.affectedKeywordCount} kw)</span>` : ''
+        }</td></tr>`,
+        `<tr><td class="key">Feature Shift</td><td class="val">${fsLabel}</td></tr>`,
+      ].join('');
+
+      // ── Event Attribution block (appended inside disturbance section) ──
+      let eaHtml = '';
+      const ea = sd.eventAttribution;
+      if (ea && ea.cause !== 'unknown') {
+        const causeLabel = ea.cause
+          .split('_')
+          .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ');
+        const confPct = `${ea.confidence}%`;
+        const sigItems = (ea.supportingSignals as string[])
+          .map((s: string) => `<li>${escapeHtml(s.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' '))}</li>`)
+          .join('');
+        eaHtml = `
+<div class="ea-block">
+  <div class="ea-header">SERP Event Attribution</div>
+  <table>
+    <tr><td class="key">Likely Cause</td><td class="val ea-cause">${escapeHtml(causeLabel)}</td></tr>
+    <tr><td class="key">Confidence</td><td class="val ea-conf">${escapeHtml(confPct)}</td></tr>
+  </table>
+  ${sigItems ? `<div class="ea-signals-label">Signals</div><ul class="ea-signals">${sigItems}</ul>` : ''}
+</div>`;
+      } else if (ea && ea.cause === 'unknown') {
+        eaHtml = `<div class="ea-block ea-unknown"><span class="ea-header">SERP Event Attribution</span> <span class="sd-none">Insufficient signals</span></div>`;
+      }
+
+      // ── Weather block ──────────────────────────────────────────
+      let weatherHtml = '';
+      const sw = sd.weather;
+      if (sw) {
+        const stateLabel = sw.state.charAt(0).toUpperCase() + sw.state.slice(1);
+        const driverLabel = sw.driver.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        const stabilityLabel = sw.stability.charAt(0).toUpperCase() + sw.stability.slice(1);
+        const climateLabel = sw.featureClimate.split('_').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        const stateClass = `sw-state--${escapeHtml(sw.state)}`;
+        weatherHtml = `
+<div class="sw-block">
+  <div class="sw-header">SERP Weather</div>
+  <table>
+    <tr><td class="key">State</td><td class="val ${stateClass}">${escapeHtml(stateLabel)}</td></tr>
+    <tr><td class="key">Driver</td><td class="val">${escapeHtml(driverLabel)}</td></tr>
+    <tr><td class="key">Confidence</td><td class="val sw-conf">${escapeHtml(String(sw.confidence))}%</td></tr>
+    <tr><td class="key">Stability</td><td class="val">${escapeHtml(stabilityLabel)}</td></tr>
+    <tr><td class="key">Feature Climate</td><td class="val">${escapeHtml(climateLabel)}</td></tr>
+  </table>
+  <div class="sw-summary">${escapeHtml(sw.summary)}</div>
+</div>`;
+      }
+
+      disturbanceSection = _collapsible('SERP Disturbance Signals', `<table>${sdRows}</table>${eaHtml}${weatherHtml}`, false);
+    }
+
     // ── Honesty notes ─────────────────────────────────────────────────────
     let notesBody = '';
     if (packet.notes && packet.notes.length > 0) {
@@ -595,6 +680,8 @@ ${body}
       + statusSection
       + riskSection
       + routeMatchSection
+      + serpObsSection
+      + disturbanceSection
       + notesSection
       + recentSection
       + actionsStrip;
@@ -777,6 +864,28 @@ function _collapsible(heading: string, bodyHtml: string, startClosed: boolean): 
   <summary>${escapeHtml(heading)}</summary>
   <div class="section-body">${bodyHtml}</div>
 </details>`;
+}
+
+/** Capitalise first letter of a string. */
+function _capitaliseFirst(s: string): string {
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** Format a SERP feature family slug into a readable label. */
+function _formatFeature(family: string): string {
+  return family
+    .split('_')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+/** Format a change classification slug into a readable label. */
+function _formatClassification(cls: string): string {
+  return cls
+    .split('_')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
 }
 
 /**
@@ -969,5 +1078,81 @@ function _pageStyles(): string {
     font-size: 0.82em;
   }
   .action-btn--refresh:hover { opacity: 1; }
+
+  /* ── SERP Disturbance Signals ───────────────────────────── */
+  .sd-active { color: var(--warn); font-weight: 600; }
+  .sd-none   { color: var(--muted); }
+  .sd-count  { font-size: 0.82em; color: var(--muted); margin-left: 4px; }
+  /* Observatory table rows (also used in so-* classes above) */
+  .so-vol-stable   { color: var(--vscode-terminal-ansiGreen); }
+  .so-vol-moderate { color: var(--fg); }
+  .so-vol-elevated { color: var(--warn); }
+  .so-vol-high     { color: var(--vscode-editorError-foreground); font-weight: 600; }
+  .so-turbulence   { color: var(--warn); font-weight: 600; }
+  .so-ok           { color: var(--vscode-terminal-ansiGreen); }
+  .so-muted        { color: var(--muted); }
+
+  /* ── Event Attribution block ───────────────────────────── */
+  .ea-block {
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+  }
+  .ea-header {
+    font-size: 0.78em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--accent);
+    margin-bottom: 6px;
+    display: block;
+  }
+  .ea-cause { font-weight: 600; color: var(--fg); }
+  .ea-conf  { color: var(--accent); font-weight: 600; }
+  .ea-signals-label {
+    font-size: 0.78em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin-top: 8px;
+    margin-bottom: 4px;
+  }
+  .ea-signals { list-style: none; padding: 0; margin: 0; }
+  .ea-signals li {
+    font-size: 0.83em;
+    color: var(--fg);
+    padding: 1px 0;
+    border-bottom: none;
+  }
+  .ea-signals li::before { content: "• "; color: var(--accent); }
+  .ea-unknown { color: var(--muted); font-style: italic; font-size: 0.85em; }
+
+  /* ── SERP Weather block ──────────────────────────── */
+  .sw-block {
+    margin-top: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+  }
+  .sw-header {
+    font-size: 0.78em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--accent);
+    margin-bottom: 6px;
+    display: block;
+  }
+  .sw-conf { color: var(--accent); font-weight: 600; }
+  .sw-state--calm     { color: var(--vscode-terminal-ansiGreen); font-weight: 600; }
+  .sw-state--shifting { color: var(--fg); font-weight: 600; }
+  .sw-state--turbulent { color: var(--warn); font-weight: 600; }
+  .sw-state--unstable  { color: var(--vscode-editorError-foreground); font-weight: 700; }
+  .sw-summary {
+    margin-top: 8px;
+    font-size: 0.83em;
+    color: var(--muted);
+    font-style: italic;
+  }
 </style>`;
 }

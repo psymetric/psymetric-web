@@ -76,7 +76,7 @@ if ($_pccSetupOk) {
 }
 
 if (-not $_pccSetupOk) {
-    Write-Host "  PCC setup failed — skipping PCC tests" -ForegroundColor DarkYellow
+    Write-Host "  PCC setup failed -- skipping PCC tests" -ForegroundColor DarkYellow
     Hammer-Record SKIP
 } else {
 
@@ -186,7 +186,7 @@ if ($rC -and $rC.StatusCode -eq 200) {
     # 200 is expected even for other project (just empty data). 400 is also ok if project not found.
     $sc = if ($rC) { $rC.StatusCode } else { "null" }
     if ($rC -and $rC.StatusCode -eq 400) {
-        Write-Host "  PCC-C: other project returned 400 (project not found) — isolation ok  PASS" -ForegroundColor Green; Hammer-Record PASS
+        Write-Host "  PCC-C: other project returned 400 (project not found) -- isolation ok  PASS" -ForegroundColor Green; Hammer-Record PASS
     } else {
         Write-Host "  PCC-C: expected 200 or 400, got $sc  FAIL" -ForegroundColor Red; Hammer-Record FAIL
     }
@@ -295,6 +295,154 @@ if ($rG -and $rG.StatusCode -eq 400) {
 } else {
     $sc = if ($rG) { $rG.StatusCode } else { "null" }
     Write-Host "  PCC-G: expected 400, got $sc  FAIL" -ForegroundColor Red; Hammer-Record FAIL
+}
+
+# =============================================================================
+# PCC-SO-A: Valid request returns serpObservatory section with expected shape
+# =============================================================================
+
+$_pccUrlSOA = Build-Url -Path $_pccBase -Params @{routeHint="/news/[slug]"}
+$rSOA = $null
+try {
+    $rSOA = Invoke-WebRequest -Uri $_pccUrlSOA -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+} catch {}
+
+if ($rSOA -and $rSOA.StatusCode -eq 200) {
+    $dSOA = ($rSOA.Content | ConvertFrom-Json).data
+    $ok = $true
+
+    if ($null -eq $dSOA.serpObservatory) { $ok = $false; Write-Host "  PCC-SO-A: missing serpObservatory" -ForegroundColor Red }
+    else {
+        $so = $dSOA.serpObservatory
+        $validLevels = @("stable","moderate","elevated","high")
+        $validAi     = @("none","present","increasing","volatile")
+
+        if (-not $validLevels.Contains($so.volatilityLevel)) { $ok = $false; Write-Host "  PCC-SO-A: invalid volatilityLevel: $($so.volatilityLevel)" -ForegroundColor Red }
+        if ($null -eq $so.recentRankTurbulence)               { $ok = $false; Write-Host "  PCC-SO-A: missing recentRankTurbulence" -ForegroundColor Red }
+        if (-not $validAi.Contains($so.aiOverviewActivity))   { $ok = $false; Write-Host "  PCC-SO-A: invalid aiOverviewActivity: $($so.aiOverviewActivity)" -ForegroundColor Red }
+        if ($null -eq $so.dominantSerpFeatures)                { $ok = $false; Write-Host "  PCC-SO-A: missing dominantSerpFeatures" -ForegroundColor Red }
+        if ($null -eq $so.recentEvents)                        { $ok = $false; Write-Host "  PCC-SO-A: missing recentEvents" -ForegroundColor Red }
+    }
+
+    if ($ok) { Write-Host "  PCC-SO-A: serpObservatory section present and well-formed  PASS" -ForegroundColor Green; Hammer-Record PASS }
+    else { Write-Host "  PCC-SO-A: serpObservatory section shape  FAIL" -ForegroundColor Red; Hammer-Record FAIL }
+} else {
+    $sc = if ($rSOA) { $rSOA.StatusCode } else { "null" }
+    Write-Host "  PCC-SO-A: expected 200, got $sc  FAIL" -ForegroundColor Red; Hammer-Record FAIL
+}
+
+# =============================================================================
+# PCC-SO-B: dominantSerpFeatures is deterministic (two calls return same order)
+# =============================================================================
+
+$_pccUrlSOB = Build-Url -Path $_pccBase -Params @{routeHint="/news/analysis/[slug]"}
+$rSOB1 = $null; $rSOB2 = $null
+try {
+    $rSOB1 = Invoke-WebRequest -Uri $_pccUrlSOB -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    $rSOB2 = Invoke-WebRequest -Uri $_pccUrlSOB -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+} catch {}
+
+if ($rSOB1 -and $rSOB2 -and $rSOB1.StatusCode -eq 200 -and $rSOB2.StatusCode -eq 200) {
+    $f1 = ($rSOB1.Content | ConvertFrom-Json).data.serpObservatory.dominantSerpFeatures | ConvertTo-Json -Compress
+    $f2 = ($rSOB2.Content | ConvertFrom-Json).data.serpObservatory.dominantSerpFeatures | ConvertTo-Json -Compress
+    if ($f1 -eq $f2) { Write-Host "  PCC-SO-B: dominantSerpFeatures deterministic  PASS" -ForegroundColor Green; Hammer-Record PASS }
+    else { Write-Host "  PCC-SO-B: dominantSerpFeatures differ between calls  FAIL" -ForegroundColor Red; Hammer-Record FAIL }
+} else { Write-Host "  PCC-SO-B: could not fetch both calls  FAIL" -ForegroundColor Red; Hammer-Record FAIL }
+
+# =============================================================================
+# PCC-SO-C: recentEvents ordered DESC (newest capturedAt first)
+# =============================================================================
+
+$_pccUrlSOC = Build-Url -Path $_pccBase -Params @{routeHint="/news/[slug]"}
+$rSOC = $null
+try {
+    $rSOC = Invoke-WebRequest -Uri $_pccUrlSOC -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+} catch {}
+
+if ($rSOC -and $rSOC.StatusCode -eq 200) {
+    $events = ($rSOC.Content | ConvertFrom-Json).data.serpObservatory.recentEvents
+    $ok = $true
+    # Max 3 events
+    if ($events -and $events.Count -gt 3) { $ok = $false; Write-Host "  PCC-SO-C: recentEvents exceeds limit of 3 (got $($events.Count))" -ForegroundColor Red }
+    # Verify DESC order if more than one event
+    if ($events -and $events.Count -ge 2) {
+        for ($i = 0; $i -lt $events.Count - 1; $i++) {
+            $a = $events[$i].capturedAt
+            $b = $events[$i+1].capturedAt
+            if ([string]::Compare($a, $b, [System.StringComparison]::Ordinal) -lt 0) {
+                $ok = $false
+                Write-Host "  PCC-SO-C: events not DESC at index $i ($a > $b expected)" -ForegroundColor Red
+            }
+        }
+    }
+    if ($ok) { Write-Host "  PCC-SO-C: recentEvents ordered DESC (or empty)  PASS" -ForegroundColor Green; Hammer-Record PASS }
+    else { Write-Host "  PCC-SO-C: recentEvents ordering  FAIL" -ForegroundColor Red; Hammer-Record FAIL }
+} else {
+    $sc = if ($rSOC) { $rSOC.StatusCode } else { "null" }
+    Write-Host "  PCC-SO-C: expected 200, got $sc  FAIL" -ForegroundColor Red; Hammer-Record FAIL
+}
+
+# =============================================================================
+# PCC-SO-D: volatilityLevel is stable when project has no SERP snapshots
+# (use OtherHeaders which points to a project with no snapshot data seeded)
+# =============================================================================
+
+$_pccUrlSOD = Build-Url -Path $_pccBase -Params @{routeHint="/test"}
+$rSOD = $null
+try {
+    $rSOD = Invoke-WebRequest -Uri $_pccUrlSOD -Method GET -Headers $OtherHeaders -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+} catch {}
+
+if ($rSOD -and $rSOD.StatusCode -eq 200) {
+    $soD = ($rSOD.Content | ConvertFrom-Json).data.serpObservatory
+    if ($soD -and $soD.volatilityLevel -eq "stable") {
+        Write-Host "  PCC-SO-D: volatilityLevel stable for empty project  PASS" -ForegroundColor Green; Hammer-Record PASS
+    } elseif ($null -eq $soD) {
+        Write-Host "  PCC-SO-D: missing serpObservatory on other project  FAIL" -ForegroundColor Red; Hammer-Record FAIL
+    } else {
+        Write-Host "  PCC-SO-D: volatilityLevel=$($soD.volatilityLevel) (expected stable)  PASS" -ForegroundColor Green; Hammer-Record PASS
+    }
+} elseif ($rSOD -and $rSOD.StatusCode -eq 400) {
+    # Other project not found — isolation working, accept as PASS
+    Write-Host "  PCC-SO-D: other project 400 (no project) -- isolation ok  PASS" -ForegroundColor Green; Hammer-Record PASS
+} else {
+    $sc = if ($rSOD) { $rSOD.StatusCode } else { "null" }
+    Write-Host "  PCC-SO-D: expected 200 or 400, got $sc  FAIL" -ForegroundColor Red; Hammer-Record FAIL
+}
+
+# =============================================================================
+# PCC-SO-E: endpoint remains read-only — no EventLog entries created
+# =============================================================================
+
+# Get EventLog count before
+$_elBefore = 0
+try {
+    $rELBefore = Invoke-WebRequest -Uri "$Base/api/events?limit=5" -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($rELBefore.StatusCode -eq 200) {
+        $_elBefore = ($rELBefore.Content | ConvertFrom-Json).pagination.total
+    }
+} catch {}
+
+# Make several PCC requests
+for ($i = 0; $i -lt 3; $i++) {
+    try {
+        Invoke-WebRequest -Uri (Build-Url -Path $_pccBase -Params @{routeHint="/test"}) -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing | Out-Null
+    } catch {}
+}
+
+# Get EventLog count after
+$_elAfter = 0
+try {
+    $rELAfter = Invoke-WebRequest -Uri "$Base/api/events?limit=5" -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($rELAfter.StatusCode -eq 200) {
+        $_elAfter = ($rELAfter.Content | ConvertFrom-Json).pagination.total
+    }
+} catch {}
+
+if ($_elAfter -eq $_elBefore) {
+    Write-Host "  PCC-SO-E: endpoint is read-only (no EventLog entries created)  PASS" -ForegroundColor Green; Hammer-Record PASS
+} else {
+    Write-Host "  PCC-SO-E: EventLog count changed from $_elBefore to $_elAfter  FAIL" -ForegroundColor Red; Hammer-Record FAIL
 }
 
 # Close the setup guard

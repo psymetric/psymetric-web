@@ -160,7 +160,7 @@ try {
                 Write-Host ("  FAIL (" + $leaked.Count + " keywordTargetIds leaked)") -ForegroundColor Red; Hammer-Record FAIL
             }
         } elseif ($respOther.StatusCode -eq 404) {
-            Write-Host "  PASS (other project 404 — isolation enforced)" -ForegroundColor Green; Hammer-Record PASS
+            Write-Host "  PASS (other project 404 -- isolation enforced)" -ForegroundColor Green; Hammer-Record PASS
         } else {
             Write-Host ("  FAIL (other=" + $respOther.StatusCode + " main=" + $respMain.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
         }
@@ -357,7 +357,7 @@ try {
                     if ($p1json -ne $p2json) {
                         Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
                     } else {
-                        Write-Host "  FAIL (page2 item[0] is identical to page1 item[0] — duplication)" -ForegroundColor Red; Hammer-Record FAIL
+                        Write-Host "  FAIL (page2 item[0] is identical to page1 item[0] -- duplication)" -ForegroundColor Red; Hammer-Record FAIL
                     }
                 }
             }
@@ -369,7 +369,7 @@ try {
 # SIL-9 T4: AI CHURN CLUSTER TESTS
 # =============================================================================
 
-Hammer-Section "SIL-9 T4 TESTS (AI CHURN CLUSTER — OPT-IN)"
+Hammer-Section "SIL-9 T4 TESTS (AI CHURN CLUSTER -- OPT-IN)"
 
 # ── SIL9-T4-A: triggerTypes=T4 without aiChurnMinFlips → 400 ───────────────
 try {
@@ -501,7 +501,7 @@ try {
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── SIL9-P3: determinism — same query + same cursor yields identical results ──
+# ── SIL9-P3: determinism -- same query + same cursor yields identical results ──
 try {
     Write-Host "Testing: SIL9-P3 /alerts same cursor yields identical results (determinism)" -NoNewline
     $url1 = "$Base$sil9Base`?windowDays=30&spikeThreshold=0&limit=1"
@@ -720,7 +720,7 @@ try {
         -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
     # Note: suppressionMode=none disables OTHER suppressions but t2Mode= is explicit,
     # so we test t2Mode directly with suppressionMode=none for t1/t3 neutrality.
-    # Actually t2Mode overrides the default — use suppressionMode=default to ensure t2Mode=maxPerKeyword path fires.
+    # Actually t2Mode overrides the default -- use suppressionMode=default to ensure t2Mode=maxPerKeyword path fires.
     $resp = Invoke-WebRequest -Uri "$Base$sil9Base`?windowDays=30&spikeThreshold=0&t2Mode=maxPerKeyword" `
         -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
     if ($resp.StatusCode -eq 200) {
@@ -790,7 +790,7 @@ try {
                     $p1json = ($items1[0] | ConvertTo-Json -Depth 10 -Compress)
                     $p2json = ($items2[0] | ConvertTo-Json -Depth 10 -Compress)
                     if ($p1json -ne $p2json) {
-                        Write-Host "  PASS (page2 item differs from page1 — no duplicate)" -ForegroundColor Green; Hammer-Record PASS
+                        Write-Host "  PASS (page2 item differs from page1 -- no duplicate)" -ForegroundColor Green; Hammer-Record PASS
                     } else {
                         Write-Host "  FAIL (page2 item[0] duplicates page1 item[0] under suppression)" -ForegroundColor Red; Hammer-Record FAIL
                     }
@@ -800,7 +800,7 @@ try {
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── SIL9-S6: t3Mode=deltaOnly — deterministic, no throw, respects delta rule ──
+# ── SIL9-S6: t3Mode=deltaOnly -- deterministic, no throw, respects delta rule ──
 # This test is data-dependent. It verifies:
 #   (a) the param is accepted (no 400)
 #   (b) the response is deterministic
@@ -894,7 +894,7 @@ try {
         if ($items.Count -eq 0) {
             Write-Host "  SKIP (no alerts returned; cannot verify severityRank range)" -ForegroundColor DarkYellow; Hammer-Record SKIP
         } else {
-            # severityRank is stripped from emitted response — it is an internal sort field.
+            # severityRank is stripped from emitted response -- it is an internal sort field.
             # We cannot inspect it directly. Instead verify the response is valid (200) and
             # all alerts have the required shape fields, which confirms severity was computed
             # without error. For T2 we can verify the formula is bounded via trigger-specific fields.
@@ -925,8 +925,8 @@ try {
 try {
     Write-Host "Testing: SIL9-SV2 /alerts T2 higher severity with lower spikeThreshold (formula check)" -NoNewline
     # Get T2 exceedanceMargins at threshold=0 vs threshold=75 for the same pair.
-    # At threshold=0: severity = clamp(60 + pairScore*2, 0, 100)  — higher
-    # At threshold=75: severity = clamp(60 + (pairScore-75)*2, 0, 100) — lower for same pair
+    # At threshold=0: severity = clamp(60 + pairScore*2, 0, 100)  -- higher
+    # At threshold=75: severity = clamp(60 + (pairScore-75)*2, 0, 100) -- lower for same pair
     # We verify: using minSeverityRank=80 + threshold=0 returns >= items than threshold=75
     $url0  = "$Base$sil9Base`?windowDays=30&spikeThreshold=0&suppressionMode=none&triggerTypes=T2&minSeverityRank=80"
     $url75 = "$Base$sil9Base`?windowDays=30&spikeThreshold=75&suppressionMode=none&triggerTypes=T2&minSeverityRank=80"
@@ -992,7 +992,7 @@ try {
                     $p1json = ($d1.alerts[0] | ConvertTo-Json -Depth 10 -Compress)
                     $p2json = ($items2[0]    | ConvertTo-Json -Depth 10 -Compress)
                     if ($p1json -ne $p2json) {
-                        Write-Host "  PASS (page2 item differs from page1 — no duplicate)" -ForegroundColor Green; Hammer-Record PASS
+                        Write-Host "  PASS (page2 item differs from page1 -- no duplicate)" -ForegroundColor Green; Hammer-Record PASS
                     } else {
                         Write-Host "  FAIL (page2 item[0] duplicates page1 item[0])" -ForegroundColor Red; Hammer-Record FAIL
                     }

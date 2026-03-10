@@ -1,4 +1,4 @@
-# hammer-sil5.ps1 — SIL-5 (Volatility Alerts)
+# hammer-sil5.ps1 -- SIL-5 (Volatility Alerts)
 # Dot-sourced by api-hammer.ps1. Inherits $Headers, $OtherHeaders, $Base, Hammer-Section, Hammer-Record.
 #
 # Setup dependency: SIL-3 already created KeywordTargets with snapshots and
@@ -31,7 +31,7 @@ try {
     } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── VA-2: item schema — each item has required fields ────────────────────────
+# ── VA-2: item schema -- each item has required fields ────────────────────────
 # Use alertThreshold=0 + minMaturity=preliminary to maximize visible items.
 try {
     Write-Host "Testing: GET volatility-alerts item schema fields present" -NoNewline
@@ -52,13 +52,13 @@ try {
                 Write-Host ("  FAIL (missing=" + ($missing -join ",") + " exceedsThreshold=" + $item.exceedsThreshold + ")") -ForegroundColor Red; Hammer-Record FAIL
             }
         } else {
-            # No items at threshold=0 means no active keywords — skip gracefully
+            # No items at threshold=0 means no active keywords -- skip gracefully
             Write-Host "  SKIP (no active keywords in project)" -ForegroundColor DarkYellow; Hammer-Record SKIP
         }
     } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── VA-3: determinism — two calls with same params return identical stable fields
+# ── VA-3: determinism -- two calls with same params return identical stable fields
 try {
     Write-Host "Testing: GET volatility-alerts deterministic (two calls match)" -NoNewline
     $r1 = Invoke-WebRequest -Uri "$($s5Url)?alertThreshold=0&minMaturity=preliminary" `
@@ -88,7 +88,7 @@ try {
     } else { Write-Host ("  FAIL (status=" + $r1.StatusCode + "/" + $r2.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── VA-4: sort order — scores are non-increasing ─────────────────────────────
+# ── VA-4: sort order -- scores are non-increasing ─────────────────────────────
 try {
     Write-Host "Testing: GET volatility-alerts scores non-increasing" -NoNewline
     $resp = Invoke-WebRequest -Uri "$($s5Url)?alertThreshold=0&minMaturity=preliminary&limit=50" `
@@ -139,7 +139,7 @@ Test-Endpoint "GET" "$($s5Url)?alertThreshold=101"  400 "GET volatility-alerts a
 Test-Endpoint "GET" "$($s5Url)?minMaturity=lol"     400 "GET volatility-alerts minMaturity=lol -> 400"    $Headers
 Test-Endpoint "GET" "$($s5Url)?limit=0"             400 "GET volatility-alerts limit=0 -> 400"            $Headers
 
-# ── VA-7: pagination — limit=1, nextCursor non-null if >1 alert exists ────────
+# ── VA-7: pagination -- limit=1, nextCursor non-null if >1 alert exists ────────
 # Setup: create 2 keywords with snapshots so we have >= 2 active scored keywords.
 # Use alertThreshold=0 + minMaturity=preliminary so both appear.
 $s5PagQuery1 = "sil5-pag-a $s5RunId"
@@ -195,7 +195,7 @@ try {
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── VA-8: pagination — cursor advances to different item ─────────────────────
+# ── VA-8: pagination -- cursor advances to different item ─────────────────────
 try {
     Write-Host "Testing: GET volatility-alerts cursor advances to next page" -NoNewline
     if (-not $s5PagOk) { Write-Host "  SKIP (setup failed)" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
@@ -205,7 +205,7 @@ try {
             $d1     = ($r1.Content | ConvertFrom-Json).data
             $cursor = $d1.nextCursor
             if ($null -eq $cursor) {
-                Write-Host "  SKIP (no nextCursor on page1 — fewer than 2 items exceed threshold)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+                Write-Host "  SKIP (no nextCursor on page1 -- fewer than 2 items exceed threshold)" -ForegroundColor DarkYellow; Hammer-Record SKIP
             } else {
                 $r2 = Invoke-WebRequest -Uri "$($s5Url)?alertThreshold=0&minMaturity=preliminary&limit=1&cursor=$cursor" `
                     -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 60 -UseBasicParsing
@@ -224,7 +224,7 @@ try {
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── VA-9: cursor stability — same page fetched twice with cursor gives same items
+# ── VA-9: cursor stability -- same page fetched twice with cursor gives same items
 try {
     Write-Host "Testing: GET volatility-alerts cursor page stable on repeat call" -NoNewline
     if (-not $s5PagOk) { Write-Host "  SKIP (setup failed)" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
@@ -272,13 +272,13 @@ try {
                 Write-Host "  FAIL (some items have maturity != stable)" -ForegroundColor Red; Hammer-Record FAIL
             }
         } else {
-            # No stable keywords yet — that's fine, response shape is still valid
+            # No stable keywords yet -- that's fine, response shape is still valid
             Write-Host "  PASS (0 stable items, shape is valid)" -ForegroundColor Green; Hammer-Record PASS
         }
     } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200)") -ForegroundColor Red; Hammer-Record FAIL }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── VA-11: cross-project isolation — OtherHeaders sees OtherProject's alerts ──
+# ── VA-11: cross-project isolation -- OtherHeaders sees OtherProject's alerts ──
 # volatility-alerts is a project-scoped LIST (not a single-resource lookup),
 # so it returns OtherProject's data under OtherHeaders, NOT a 404.
 # We verify: the call succeeds (200) and items[] is valid.

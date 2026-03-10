@@ -223,19 +223,19 @@ try {
             if ($mainPid -ne $otherPid) {
                 Write-Host ("  PASS (projectId differs: main=$mainPid other=$otherPid)") -ForegroundColor Green; Hammer-Record PASS
             } else {
-                Write-Host ("  FAIL (both calls returned same projectId=$mainPid — isolation may be broken)") -ForegroundColor Red; Hammer-Record FAIL
+                Write-Host ("  FAIL (both calls returned same projectId=$mainPid -- isolation may be broken)") -ForegroundColor Red; Hammer-Record FAIL
             }
         } elseif ($respOther.StatusCode -eq 404) {
-            Write-Host "  PASS (other project returns 404 — isolation enforced)" -ForegroundColor Green; Hammer-Record PASS
+            Write-Host "  PASS (other project returns 404 -- isolation enforced)" -ForegroundColor Green; Hammer-Record PASS
         } else {
             Write-Host ("  FAIL (main=" + $respMain.StatusCode + " other=" + $respOther.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL
         }
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# ── SIL11-J: stable project — no HIGH_VOLATILITY_KEYWORD observations ─────────
+# ── SIL11-J: stable project -- no HIGH_VOLATILITY_KEYWORD observations ─────────
 try {
-    Write-Host "Testing: SIL11-J stable project threshold — observations do not contain HIGH_VOLATILITY_KEYWORD when average volatility is low" -NoNewline
+    Write-Host "Testing: SIL11-J stable project threshold -- observations do not contain HIGH_VOLATILITY_KEYWORD when average volatility is low" -NoNewline
     $resp = Invoke-WebRequest -Uri "$Base$sil11Base`?windowDays=60&alertThreshold=60" `
         -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
     if ($resp.StatusCode -eq 200) {
@@ -246,7 +246,7 @@ try {
             # Low average volatility: no HIGH_VOLATILITY_KEYWORD observation expected
             $hvObs = $obs | Where-Object { $_.type -eq "HIGH_VOLATILITY_KEYWORD" }
             if ($hvObs.Count -eq 0) {
-                Write-Host ("  PASS (avgVol=$avgVol — no HIGH_VOLATILITY_KEYWORD observations)") -ForegroundColor Green; Hammer-Record PASS
+                Write-Host ("  PASS (avgVol=$avgVol -- no HIGH_VOLATILITY_KEYWORD observations)") -ForegroundColor Green; Hammer-Record PASS
             } else {
                 Write-Host ("  FAIL (avgVol=$avgVol but " + $hvObs.Count + " HIGH_VOLATILITY_KEYWORD observations found)") -ForegroundColor Red; Hammer-Record FAIL
             }
@@ -360,7 +360,7 @@ try {
     } else {
         # Next.js returns 405 for unimplemented methods; some versions may return 404
         if ($resp.StatusCode -eq 404) {
-            Write-Host "  PASS (POST returns 404 — method not implemented)" -ForegroundColor Green; Hammer-Record PASS
+            Write-Host "  PASS (POST returns 404 -- method not implemented)" -ForegroundColor Green; Hammer-Record PASS
         } else {
             Write-Host ("  FAIL (POST returned " + $resp.StatusCode + ", expected 405 or 404)") -ForegroundColor Red; Hammer-Record FAIL
         }

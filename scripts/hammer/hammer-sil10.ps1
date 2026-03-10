@@ -107,7 +107,7 @@ try {
         $b2 = ($r2.Content | ConvertFrom-Json).data.buckets | ConvertTo-Json -Depth 10 -Compress
         $d1 = ($r1.Content | ConvertFrom-Json).data
         $d2 = ($r2.Content | ConvertFrom-Json).data
-        # No computedAt fields allowed (spec: determinism — no timestamps in payload)
+        # No computedAt fields allowed (spec: determinism -- no timestamps in payload)
         $hasCAt = ($r1.Content -match '"computedAt"')
         if ($b1 -eq $b2 -and $d1.windowDays -eq $d2.windowDays -and -not $hasCAt) {
             Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
@@ -183,7 +183,7 @@ try {
         $respMain  = Invoke-WebRequest -Uri "$Base$sil10Base`?windowDays=30&bucketDays=7" `
             -Method GET -Headers $Headers -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
         if ($respOther.StatusCode -eq 404) {
-            Write-Host "  PASS (other project 404 — isolation enforced)" -ForegroundColor Green; Hammer-Record PASS
+            Write-Host "  PASS (other project 404 -- isolation enforced)" -ForegroundColor Green; Hammer-Record PASS
         } elseif ($respOther.StatusCode -eq 200 -and $respMain.StatusCode -eq 200) {
             # Both 200: verify the bucket data is independent (different totals or zero for other)
             $mainBuckets  = @(($respMain.Content  | ConvertFrom-Json).data.buckets)

@@ -122,13 +122,13 @@ try {
                     Write-Host ("  FAIL (missing ingest fields: " + ($missing -join ",") + ")") -ForegroundColor Red; Hammer-Record FAIL
                 }
             } elseif ($d.error) {
-                # 200 with { error: "credentials not configured..." } — 503 path
+                # 200 with { error: "credentials not configured..." } -- 503 path
                 Write-Host ("  SKIP (DataForSEO creds not configured: " + $d.error + ")") -ForegroundColor DarkYellow; Hammer-Record SKIP
             } else {
                 Write-Host ("  FAIL (unexpected response mode: " + $d.mode + ")") -ForegroundColor Red; Hammer-Record FAIL
             }
         } elseif ($resp.StatusCode -eq 503) {
-            Write-Host "  SKIP (503 — DataForSEO credentials not configured; test infra)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+            Write-Host "  SKIP (503 -- DataForSEO credentials not configured; test infra)" -ForegroundColor DarkYellow; Hammer-Record SKIP
         } else {
             Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 200 or 503)") -ForegroundColor Red; Hammer-Record FAIL
         }
@@ -159,7 +159,7 @@ try {
             if ($d1.error) {
                 Write-Host "  SKIP (DataForSEO creds not configured)" -ForegroundColor DarkYellow; Hammer-Record SKIP
             } else {
-                # Second call — same capturedAt will differ (new time) so this tests
+                # Second call -- same capturedAt will differ (new time) so this tests
                 # the code path runs cleanly, not a timestamp collision.
                 # For a strict idempotency test, we need same capturedAt.
                 # Since capturedAt is fixed per-run (new Date() once), two separate

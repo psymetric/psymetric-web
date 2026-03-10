@@ -35,6 +35,7 @@ import {
   isPageRelevant,
   type KeywordOverlapCandidate,
 } from "@/lib/seo/page-command-center";
+import { computeSerpObservatory } from "@/lib/seo/serp-observatory";
 
 // -----------------------------------------------------------------------------
 // Query param validation — .strict() rejects unknown params
@@ -125,6 +126,13 @@ export async function GET(request: NextRequest) {
           hasRiskSignals: false,
           topRiskKeywordCount: 0,
           routeTextOverlapCount: 0,
+        },
+        serpObservatory: {
+          volatilityLevel: "stable",
+          recentRankTurbulence: false,
+          aiOverviewActivity: "none",
+          dominantSerpFeatures: [],
+          recentEvents: [],
         },
         topRiskKeywords: [],
         routeTextKeywordMatches: [],
@@ -257,6 +265,9 @@ export async function GET(request: NextRequest) {
       limitOverlaps
     );
 
+    // ── SERP Observatory ─────────────────────────────────────────────────
+    const serpObservatory = computeSerpObservatory(snapshotMap);
+
     // ── Assemble response ─────────────────────────────────────────────────
     const hasRiskSignals =
       topRiskKeywords.length > 0 &&
@@ -290,6 +301,7 @@ export async function GET(request: NextRequest) {
         topRiskKeywordCount: topRiskKeywords.length,
         routeTextOverlapCount: routeTextKeywordMatches.length,
       },
+      serpObservatory,
       topRiskKeywords,
       routeTextKeywordMatches,
       availableActions: [...AVAILABLE_ACTIONS],

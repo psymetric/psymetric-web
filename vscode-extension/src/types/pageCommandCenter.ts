@@ -39,6 +39,38 @@ export interface PageCommandCenterPacket {
     matchTokens: string[];
   }[];
 
+  serpObservatory: {
+    volatilityLevel: "stable" | "moderate" | "elevated" | "high";
+    recentRankTurbulence: boolean;
+    aiOverviewActivity: "none" | "present" | "increasing" | "volatile";
+    dominantSerpFeatures: string[];
+    recentEvents: {
+      classification: string;
+      capturedAt: string;
+    }[];
+  };
+
+  serpDisturbance?: {
+    volatilityCluster: boolean;
+    featureShiftDetected: boolean;
+    dominantNewFeatures: string[];
+    rankingTurbulence: boolean;
+    affectedKeywordCount: number;
+    eventAttribution?: {
+      cause: string;
+      confidence: number;
+      supportingSignals: string[];
+    };
+    weather?: {
+      state: "calm" | "shifting" | "turbulent" | "unstable";
+      driver: string;
+      confidence: number;
+      stability: "high" | "moderate" | "low";
+      featureClimate: string;
+      summary: string;
+    };
+  };
+
   availableActions: {
     action: string;
     label: string;

@@ -7,7 +7,7 @@ $script:SeenSections = @{}
 function Hammer-Section {
     param([string]$Name)
     if ($script:SeenSections.ContainsKey($Name)) {
-        Write-Host ("DUPLICATE SECTION: " + $Name + " — aborting") -ForegroundColor Red
+        Write-Host ("DUPLICATE SECTION: " + $Name + " -- aborting") -ForegroundColor Red
         $script:FailCount++
         exit 1
     }
