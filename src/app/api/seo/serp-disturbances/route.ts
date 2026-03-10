@@ -1,15 +1,19 @@
 /**
- * GET /api/seo/serp-disturbances -- SIL-16 through SIL-21:
+ * GET /api/seo/serp-disturbances -- SIL-16 through SIL-24:
  * SERP Disturbance Detection, Event Attribution, Weather, Forecasting,
- * Forecast Momentum Enrichment, Weather Alerts, and Alert Briefing Packets.
+ * Forecast Momentum Enrichment, Weather Alerts, Alert Briefing Packets,
+ * Keyword Impact Ranking, Alert-Affected Keyword Set, and Operator Action Hints.
  *
  * Read-only compute-on-read observatory surface.
  *
  * Route Layer Gating:
  *   Optional `include` query param controls which layers are computed/returned.
- *   Supported values: disturbance, attribution, weather, forecast, alerts, briefing
+ *   Supported values: disturbance, attribution, weather, forecast, alerts,
+ *                     briefing, impact, affected, hints
  *   Default (omitted): all layers computed and returned.
- *   Dependencies auto-resolve: briefing→alerts→forecast→weather→attribution→disturbance.
+ *   Dependencies auto-resolve:
+ *     hints    → affected → impact → briefing → alerts → forecast
+ *              → weather → attribution → disturbance
  *
  * No writes. No EventLog. No mutations. No materialized tables.
  *
@@ -39,6 +43,13 @@ import { computeSerpWeather } from "@/lib/seo/serp-weather";
 import { computeSerpWeatherForecast } from "@/lib/seo/serp-weather-forecast";
 import { computeSerpWeatherAlerts } from "@/lib/seo/serp-weather-alerts";
 import { computeSerpAlertBriefing } from "@/lib/seo/serp-alert-briefing";
+import {
+  computeSerpKeywordImpactRanking,
+  selectAlertAffectedKeywords,
+  type KeywordImpactInput,
+} from "@/lib/seo/serp-keyword-impact";
+import { computeSerpOperatorActionHints } from "@/lib/seo/serp-operator-hints";
+import { computeVolatility } from "@/lib/seo/volatility-service";
 import { computeIntentDrift } from "@/lib/seo/intent-drift";
 import { computeDomainDominance } from "@/lib/seo/domain-dominance";
 import { extractFeatureSignals } from "@/lib/seo/serp-extraction";
@@ -48,7 +59,8 @@ import { extractFeatureSignals } from "@/lib/seo/serp-extraction";
 // -----------------------------------------------------------------------------
 
 const VALID_LAYERS = new Set([
-  "disturbance", "attribution", "weather", "forecast", "alerts", "briefing",
+  "disturbance", "attribution", "weather", "forecast", "alerts",
+  "briefing", "impact", "affected", "hints",
 ]);
 
 const QuerySchema = z
@@ -79,23 +91,25 @@ function resolveIncludeLayers(includeParam: string | undefined): Set<string> | n
 
   // Auto-resolve dependencies (higher layers require lower layers)
   const resolved = new Set(requested);
-  if (resolved.has("briefing"))    { resolved.add("alerts"); resolved.add("forecast"); resolved.add("weather"); resolved.add("attribution"); resolved.add("disturbance"); }
-  if (resolved.has("alerts"))      { resolved.add("forecast"); resolved.add("weather"); resolved.add("attribution"); resolved.add("disturbance"); }
-  if (resolved.has("forecast"))    { resolved.add("weather"); resolved.add("attribution"); resolved.add("disturbance"); }
-  if (resolved.has("weather"))     { resolved.add("attribution"); resolved.add("disturbance"); }
+  if (resolved.has("hints"))    { resolved.add("affected"); }
+  if (resolved.has("affected")) { resolved.add("impact"); }
+  if (resolved.has("impact"))   { resolved.add("briefing"); }
+  if (resolved.has("briefing")) { resolved.add("alerts"); resolved.add("forecast"); resolved.add("weather"); resolved.add("attribution"); resolved.add("disturbance"); }
+  if (resolved.has("alerts"))   { resolved.add("forecast"); resolved.add("weather"); resolved.add("attribution"); resolved.add("disturbance"); }
+  if (resolved.has("forecast")) { resolved.add("weather"); resolved.add("attribution"); resolved.add("disturbance"); }
+  if (resolved.has("weather"))  { resolved.add("attribution"); resolved.add("disturbance"); }
   if (resolved.has("attribution")) { resolved.add("disturbance"); }
 
   return resolved;
 }
 
 // -----------------------------------------------------------------------------
-// Dominance shift detection helper
+// Per-keyword signal helpers
 // -----------------------------------------------------------------------------
 
 /**
  * Returns true when the top domain's dominanceIndex changed by >= 0.20
  * between the first and last snapshot for this keyword.
- * Returns false when fewer than 2 snapshots exist or dominanceIndex is null.
  */
 function keywordHasDominanceShift(
   snapshots: { rawPayload: unknown }[]
@@ -145,6 +159,9 @@ export async function GET(request: NextRequest) {
     const needForecast     = layers === null || layers.has("forecast");
     const needAlerts       = layers === null || layers.has("alerts");
     const needBriefing     = layers === null || layers.has("briefing");
+    const needImpact       = layers === null || layers.has("impact");
+    const needAffected     = layers === null || layers.has("affected");
+    const needHints        = layers === null || layers.has("hints");
 
     // ── Load keyword targets (project-scoped, deterministic order) ────────
     const targets = await prisma.keywordTarget.findMany({
@@ -201,6 +218,9 @@ export async function GET(request: NextRequest) {
       if (needForecast)    result.forecast = zeroForecast;
       if (needAlerts)      result.alerts = [];
       if (needBriefing)    result.briefing = zeroBriefing;
+      if (needImpact)      result.keywordImpactRanking = [];
+      if (needAffected)    result.alertAffectedKeywords = [];
+      if (needHints)       result.operatorActionHints = [];
       return successResponse(result);
     }
 
@@ -265,7 +285,7 @@ export async function GET(request: NextRequest) {
     let firstHalfDisturbance = disturbance;
     let secondHalfDisturbance = disturbance;
 
-    if (needForecast || needAlerts || needBriefing) {
+    if (needForecast || needAlerts || needBriefing || needImpact || needAffected || needHints) {
       const firstHalfSnapshots: SnapshotSet[] = keywordSnapshots.map(({ keywordTargetId, snapshots }) => {
         const mid = Math.floor(snapshots.length / 2);
         return { keywordTargetId, snapshots: snapshots.slice(0, mid) };
@@ -290,23 +310,43 @@ export async function GET(request: NextRequest) {
     if (needAttribution) {
       const observatory = computeSerpObservatory(snapshotMap);
 
-      const keywordSignals: KeywordSignalSet[] = keywordSnapshots
-        .filter(({ snapshots }) => snapshots.length >= 1)
-        .map(({ keywordTargetId, snapshots }) => {
-          const driftInput = snapshots.map((s) => ({
-            snapshotId: s.id,
-            capturedAt: s.capturedAt,
-            signals: extractFeatureSignals(s.rawPayload),
-          }));
-          const drift = computeIntentDrift(driftInput);
-          const hasDominanceShift = keywordHasDominanceShift(snapshots);
+      // ── Per-keyword signal computation (shared by attribution + impact) ──
+      const keywordSignals: KeywordSignalSet[] = [];
+      const impactInputs: KeywordImpactInput[] = [];
 
-          return {
+      for (const { keywordTargetId, snapshots } of keywordSnapshots) {
+        if (snapshots.length < 1) continue;
+
+        const target = targets.find((t) => t.id === keywordTargetId);
+        if (!target) continue;
+
+        // Intent drift (for attribution)
+        const driftInput = snapshots.map((s) => ({
+          snapshotId: s.id,
+          capturedAt: s.capturedAt,
+          signals: extractFeatureSignals(s.rawPayload),
+        }));
+        const drift = computeIntentDrift(driftInput);
+        const hasIntentDrift = drift.transitions.length > 0;
+        const hasDominanceShift = keywordHasDominanceShift(snapshots);
+
+        keywordSignals.push({ keywordTargetId, hasIntentDrift, hasDominanceShift });
+
+        // Volatility profile (for impact ranking)
+        if (needImpact || needAffected || needHints) {
+          const profile = computeVolatility(snapshots);
+          impactInputs.push({
             keywordTargetId,
-            hasIntentDrift: drift.transitions.length > 0,
+            query: target.query,
+            volatilityScore: profile.volatilityScore,
+            averageRankShift: profile.averageRankShift,
+            aiOverviewChurn: profile.aiOverviewChurn,
+            featureVolatility: profile.featureVolatility,
+            hasIntentDrift,
             hasDominanceShift,
-          };
-        });
+          });
+        }
+      }
 
       eventAttribution = computeSerpEventAttribution(
         disturbance,
@@ -319,7 +359,7 @@ export async function GET(request: NextRequest) {
         const weather = computeSerpWeather(observatory, disturbance, eventAttribution);
         result.weather = weather;
 
-        if (needForecast || needAlerts || needBriefing) {
+        if (needForecast || needAlerts || needBriefing || needImpact || needAffected || needHints) {
           const forecast = computeSerpWeatherForecast(
             weather,
             disturbance,
@@ -330,7 +370,7 @@ export async function GET(request: NextRequest) {
           );
           if (needForecast) result.forecast = forecast;
 
-          if (needAlerts || needBriefing) {
+          if (needAlerts || needBriefing || needImpact || needAffected || needHints) {
             const alerts = computeSerpWeatherAlerts(
               disturbance,
               eventAttribution,
@@ -339,7 +379,7 @@ export async function GET(request: NextRequest) {
             );
             if (needAlerts) result.alerts = alerts;
 
-            if (needBriefing) {
+            if (needBriefing || needImpact || needAffected || needHints) {
               const briefing = computeSerpAlertBriefing(
                 disturbance,
                 eventAttribution,
@@ -348,7 +388,39 @@ export async function GET(request: NextRequest) {
                 alerts,
                 disturbance.affectedKeywordCount,
               );
-              result.briefing = briefing;
+              if (needBriefing) result.briefing = briefing;
+
+              // ── SIL-22: Keyword Impact Ranking ──────────────────────────
+              if (needImpact || needAffected || needHints) {
+                const impactRanking = computeSerpKeywordImpactRanking(
+                  impactInputs,
+                  eventAttribution,
+                );
+                if (needImpact) result.keywordImpactRanking = impactRanking;
+
+                // ── SIL-23: Alert-Affected Keyword Set ──────────────────
+                if (needAffected || needHints) {
+                  const affectedKeywords = selectAlertAffectedKeywords(
+                    impactRanking,
+                    alerts,
+                    eventAttribution,
+                  );
+                  if (needAffected) result.alertAffectedKeywords = affectedKeywords;
+
+                  // ── SIL-24: Operator Action Hints ─────────────────────
+                  if (needHints) {
+                    const hints = computeSerpOperatorActionHints(
+                      disturbance,
+                      eventAttribution,
+                      weather,
+                      forecast,
+                      alerts,
+                      affectedKeywords,
+                    );
+                    result.operatorActionHints = hints;
+                  }
+                }
+              }
             }
           }
         }
