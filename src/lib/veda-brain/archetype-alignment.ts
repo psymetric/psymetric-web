@@ -26,6 +26,7 @@ export interface SerpArchetypeSignal {
 export interface ArchetypeAlignmentEntry {
   query: string;
   mappedPageId: string | null;
+  mappedPageUrl: string | null;
   mappedPageArchetype: string | null;
   serpDominantArchetypes: SerpArchetypeSignal[];
   aligned: boolean;
@@ -230,6 +231,7 @@ export function computeArchetypeAlignment(
     entries.push({
       query: m.query,
       mappedPageId: m.bestMatch?.pageId ?? null,
+      mappedPageUrl: m.bestMatch?.pageUrl ?? null,
       mappedPageArchetype: mappedArchetypeKey,
       serpDominantArchetypes,
       aligned,

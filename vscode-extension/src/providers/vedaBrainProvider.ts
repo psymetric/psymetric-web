@@ -13,6 +13,9 @@
 //   Authority Opportunities (authorityOpportunity.opportunities where type !== 'none')
 //   Schema Opportunities    (schemaOpportunity.entries where missingSchemaTypes.length > 0)
 //
+// Interactive: scripts enabled for section nav + cross-panel linking
+// to Page Command Center.
+//
 // Read-only. No mutations. No recomputation. No caching.
 // The extension is a visualization surface only.
 
@@ -65,7 +68,15 @@ export class VedaBrainProvider implements vscode.WebviewViewProvider {
     _token: vscode.CancellationToken
   ): void {
     this._view = webviewView;
-    webviewView.webview.options = { enableScripts: false };
+    webviewView.webview.options = { enableScripts: true };
+
+    // Handle messages from webview
+    webviewView.webview.onDidReceiveMessage((msg: { command?: string; url?: string }) => {
+      if (msg.command === 'openPageCommandCenter' && msg.url) {
+        vscode.commands.executeCommand('veda.brainOpenPageCommandCenter', msg.url);
+      }
+    });
+
     this._render();
     if (this.state.activeProject && this._data === undefined) {
       this._load();
@@ -108,27 +119,81 @@ export class VedaBrainProvider implements vscode.WebviewViewProvider {
 
   private _buildHtml(): string {
     if (!this.state.activeProject) {
-      return _shell(_emptyState('Select a project to view VEDA Brain diagnostics.'));
+      return _shell(_emptyState('Select a project to view VEDA Brain diagnostics.'), false);
     }
     if (this._loading || this._data === undefined) {
-      return _shell(_emptyState('Loading Brain diagnostics…'));
+      return _shell(_emptyState('Loading Brain diagnostics…'), false);
     }
     if (this._data === null) {
-      return _shell(_errorState('Failed to load VEDA Brain diagnostics.'));
+      return _shell(_errorState('Failed to load VEDA Brain diagnostics.'), false);
     }
 
     const d: VedaBrainDiagnostics = this._data.diagnostics;
+
+    // Build section nav + sections
+    const navItems: { id: string; label: string; count: number | null }[] = [];
     const sections: string[] = [];
 
+    // Overview
+    navItems.push({ id: 'overview', label: 'Overview', count: null });
     sections.push(_renderOverview(d.readinessClassification));
-    sections.push(_renderArchetypeMismatches(d.archetypeAlignment));
-    sections.push(_renderEntityGaps(d.entityGapAnalysis));
-    sections.push(_renderTopicTerritoryGaps(d.topicTerritoryGaps));
-    sections.push(_renderAuthorityOpportunities(d.authorityOpportunity));
-    sections.push(_renderSchemaOpportunities(d.schemaOpportunity));
 
-    return _shell(sections.join('\n'));
+    // Archetype Mismatches
+    const archetypeMismatches = d.archetypeAlignment.entries.filter(e =>
+      !e.aligned &&
+      e.mismatchReason !== 'no_serp_archetype_signal' &&
+      e.mismatchReason !== 'no_mapped_page'
+    );
+    navItems.push({ id: 'archetypes', label: 'Archetypes', count: archetypeMismatches.length });
+    sections.push(_renderArchetypeMismatches(d.archetypeAlignment, archetypeMismatches));
+
+    // Entity Coverage Gaps
+    const entityGaps = d.entityGapAnalysis.entries.filter(e => e.missingFromProject.length > 0);
+    navItems.push({ id: 'entities', label: 'Entities', count: entityGaps.length });
+    sections.push(_renderEntityGaps(d.entityGapAnalysis, entityGaps));
+
+    // Topic Territory Gaps
+    const topicS = d.topicTerritoryGaps.summary;
+    const topicIssues = topicS.untrackedTopicCount + topicS.thinTopicCount + topicS.uncategorizedKeywordCount;
+    navItems.push({ id: 'topics', label: 'Topics', count: topicIssues > 0 ? topicIssues : 0 });
+    sections.push(_renderTopicTerritoryGaps(d.topicTerritoryGaps));
+
+    // Authority Opportunities
+    const authActionable = d.authorityOpportunity.opportunities.filter(o => o.opportunityType !== 'none');
+    navItems.push({ id: 'authority', label: 'Authority', count: authActionable.length });
+    sections.push(_renderAuthorityOpportunities(d.authorityOpportunity, authActionable));
+
+    // Schema Opportunities
+    const schemaGaps = d.schemaOpportunity.entries.filter(e => e.missingSchemaTypes.length > 0);
+    navItems.push({ id: 'schema', label: 'Schema', count: schemaGaps.length });
+    sections.push(_renderSchemaOpportunities(d.schemaOpportunity, schemaGaps));
+
+    const nav = _renderNav(navItems);
+    return _shell(nav + sections.join('\n'), true);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section nav
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _renderNav(items: { id: string; label: string; count: number | null }[]): string {
+  const pills = items.map(i => {
+    const badge = i.count !== null && i.count > 0
+      ? `<span class="nav-badge">${i.count}</span>`
+      : '';
+    return `<button class="nav-pill" data-target="${i.id}">${escapeHtml(i.label)}${badge}</button>`;
+  }).join('');
+  return `<div class="brain-nav">${pills}</div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Page link helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _pageLinkIcon(url: string | null): string {
+  if (!url) return '<span class="no-page muted" title="No mapped page">—</span>';
+  return `<button class="page-link-icon" data-url="${escapeHtml(url)}" title="Open in Page Command Center">↗</button>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -150,53 +215,57 @@ function _renderOverview(rc: ReadinessClassification): string {
     _statRow('Unmapped', String(c.unmapped), c.unmapped > 0 ? 'error' : 'good'),
   ].join('');
 
-  return _section('Brain Overview', `<div class="stat-grid">${rows}</div>`);
+  return _section('overview', 'Brain Overview', `<div class="stat-grid">${rows}</div>`);
 }
 
-function _renderArchetypeMismatches(aa: ArchetypeAlignment): string {
-  const mismatches = aa.entries.filter(e =>
-    !e.aligned &&
-    e.mismatchReason !== 'no_serp_archetype_signal' &&
-    e.mismatchReason !== 'no_mapped_page'
-  );
-
+function _renderArchetypeMismatches(
+  aa: ArchetypeAlignment,
+  mismatches: ArchetypeAlignment['entries']
+): string {
   if (mismatches.length === 0) {
     const msg = aa.entries.length === 0
       ? '<p class="muted">No keyword data available.</p>'
-      : '<p class="muted">No archetype mismatches detected.</p>';
-    return _section('Archetype Mismatches', msg);
+      : '<p class="muted all-clear">✓ No archetype mismatches detected.</p>';
+    return _section('archetypes', 'Archetype Mismatches', msg);
   }
 
   const items = mismatches.map(e => {
     const topSerp = e.serpDominantArchetypes[0]?.archetype ?? '—';
     const pageArch = e.mappedPageArchetype ?? '(none)';
     return `<div class="mismatch-item">
-  <div class="mismatch-query">${escapeHtml(e.query)}</div>
+  <div class="item-header">
+    <span class="item-query">${escapeHtml(e.query)}</span>
+    ${_pageLinkIcon(e.mappedPageUrl)}
+  </div>
   <div class="mismatch-detail">
     <span class="lbl">Page</span> <span class="arch-val arch-page">${escapeHtml(pageArch)}</span>
     <span class="arrow">→</span>
-    <span class="lbl">SERP expects</span> <span class="arch-val arch-serp">${escapeHtml(topSerp)}</span>
+    <span class="lbl">SERP</span> <span class="arch-val arch-serp">${escapeHtml(topSerp)}</span>
   </div>
 </div>`;
   }).join('');
 
-  return _section(`Archetype Mismatches (${mismatches.length})`, items);
+  return _section('archetypes', `Archetype Mismatches (${mismatches.length})`, items);
 }
 
-function _renderEntityGaps(eg: EntityGapAnalysis): string {
-  const withGaps = eg.entries.filter(e => e.missingFromProject.length > 0);
-
+function _renderEntityGaps(
+  eg: EntityGapAnalysis,
+  withGaps: EntityGapAnalysis['entries']
+): string {
   if (withGaps.length === 0) {
     const msg = eg.entries.length === 0
       ? '<p class="muted">No keyword data available.</p>'
-      : '<p class="muted">No entity gaps detected.</p>';
-    return _section('Entity Coverage Gaps', msg);
+      : '<p class="muted all-clear">✓ No entity gaps detected.</p>';
+    return _section('entities', 'Entity Coverage Gaps', msg);
   }
 
   const items = withGaps.slice(0, 20).map(e => {
     const missing = e.missingFromProject.map(m => `<span class="entity-tag entity-missing">${escapeHtml(m)}</span>`).join('');
     return `<div class="gap-item">
-  <div class="gap-query">${escapeHtml(e.query)}</div>
+  <div class="item-header">
+    <span class="item-query">${escapeHtml(e.query)}</span>
+    ${_pageLinkIcon(e.mappedPageUrl)}
+  </div>
   <div class="gap-missing">${missing}</div>
 </div>`;
   }).join('');
@@ -205,7 +274,7 @@ function _renderEntityGaps(eg: EntityGapAnalysis): string {
     ? `<p class="muted extra-note">…and ${withGaps.length - 20} more keywords with gaps.</p>`
     : '';
 
-  return _section(`Entity Coverage Gaps (${eg.keywordsWithGaps} keywords, ${eg.totalGaps} gaps)`, items + extra);
+  return _section('entities', `Entity Coverage Gaps (${eg.keywordsWithGaps} keywords, ${eg.totalGaps} gaps)`, items + extra);
 }
 
 function _renderTopicTerritoryGaps(ttg: TopicTerritoryGaps): string {
@@ -213,7 +282,7 @@ function _renderTopicTerritoryGaps(ttg: TopicTerritoryGaps): string {
   const hasIssues = s.untrackedTopicCount > 0 || s.uncategorizedKeywordCount > 0 || s.thinTopicCount > 0;
 
   if (!hasIssues) {
-    return _section('Topic Territory Gaps', '<p class="muted">No topic territory gaps detected.</p>');
+    return _section('topics', 'Topic Territory Gaps', '<p class="muted all-clear">✓ No topic territory gaps detected.</p>');
   }
 
   let body = '';
@@ -245,14 +314,15 @@ function _renderTopicTerritoryGaps(ttg: TopicTerritoryGaps): string {
     body += `<div class="sub-header" style="margin-top:8px">Uncategorized Keywords (${ttg.uncategorizedKeywords.length})</div>${items}${extra}`;
   }
 
-  return _section('Topic Territory Gaps', body);
+  return _section('topics', 'Topic Territory Gaps', body);
 }
 
-function _renderAuthorityOpportunities(ao: AuthorityOpportunity): string {
-  const actionable = ao.opportunities.filter(o => o.opportunityType !== 'none');
-
+function _renderAuthorityOpportunities(
+  ao: AuthorityOpportunity,
+  actionable: AuthorityOpportunity['opportunities']
+): string {
   if (actionable.length === 0) {
-    return _section('Authority Opportunities', '<p class="muted">No authority gaps detected.</p>');
+    return _section('authority', 'Authority Opportunities', '<p class="muted all-clear">✓ No authority gaps detected.</p>');
   }
 
   const TYPE_LABELS: Record<string, string> = {
@@ -269,13 +339,14 @@ function _renderAuthorityOpportunities(ao: AuthorityOpportunity): string {
   const items = actionable.slice(0, 20).map(o => {
     const label = TYPE_LABELS[o.opportunityType] ?? o.opportunityType;
     const cls = TYPE_CLS[o.opportunityType] ?? 'badge-muted';
-    const urlDisplay = o.mappedPageUrl.replace(/^https?:\/\/[^\/]+/, '') || '/';
     return `<div class="auth-item">
   <span class="auth-badge ${cls}">${escapeHtml(label)}</span>
   <div class="auth-body">
-    <div class="auth-query">${escapeHtml(o.query)}</div>
+    <div class="item-header">
+      <span class="item-query">${escapeHtml(o.query)}</span>
+      ${_pageLinkIcon(o.mappedPageUrl)}
+    </div>
     <div class="auth-meta">
-      <span class="muted">${escapeHtml(urlDisplay)}</span>
       <span class="auth-links">${o.inboundLinkCount} inbound</span>
     </div>
   </div>
@@ -293,17 +364,18 @@ function _renderAuthorityOpportunities(ao: AuthorityOpportunity): string {
   ${s.weaklySupported > 0 ? `<span>${s.weaklySupported} weak</span>` : ''}
 </div>`;
 
-  return _section(`Authority Opportunities (${actionable.length})`, summaryLine + items + extra);
+  return _section('authority', `Authority Opportunities (${actionable.length})`, summaryLine + items + extra);
 }
 
-function _renderSchemaOpportunities(so: SchemaOpportunity): string {
-  const withGaps = so.entries.filter(e => e.missingSchemaTypes.length > 0);
-
+function _renderSchemaOpportunities(
+  so: SchemaOpportunity,
+  withGaps: SchemaOpportunity['entries']
+): string {
   if (withGaps.length === 0) {
     const msg = so.entries.length === 0
       ? '<p class="muted">No keyword data available.</p>'
-      : '<p class="muted">No schema gaps detected.</p>';
-    return _section('Schema Opportunities', msg);
+      : '<p class="muted all-clear">✓ No schema gaps detected.</p>';
+    return _section('schema', 'Schema Opportunities', msg);
   }
 
   let freqBlock = '';
@@ -320,7 +392,10 @@ function _renderSchemaOpportunities(so: SchemaOpportunity): string {
       ? e.pageSchemaTypes.map(s => `<span class="entity-tag entity-present">${escapeHtml(s)}</span>`).join('')
       : '<span class="muted" style="font-size:0.78em">none</span>';
     return `<div class="gap-item">
-  <div class="gap-query">${escapeHtml(e.query)}</div>
+  <div class="item-header">
+    <span class="item-query">${escapeHtml(e.query)}</span>
+    ${_pageLinkIcon(e.mappedPageUrl)}
+  </div>
   <div class="schema-row">
     <span class="lbl">Has</span> ${pageSchemas}
     <span class="lbl" style="margin-left:6px">Missing</span> ${missing}
@@ -333,6 +408,7 @@ function _renderSchemaOpportunities(so: SchemaOpportunity): string {
     : '';
 
   return _section(
+    'schema',
     `Schema Opportunities (${so.totalMissingSchemaOpportunities} gaps, ${so.pagesWithoutSchema} pages no schema)`,
     freqBlock + items + extra
   );
@@ -353,10 +429,10 @@ function _statRow(label: string, value: string, emphasis?: 'good' | 'warn' | 'er
 </div>`;
 }
 
-function _section(heading: string, body: string): string {
-  return `<div class="brain-section">
-  <div class="brain-section-heading">${escapeHtml(heading)}</div>
-  <div class="brain-section-body">${body}</div>
+function _section(id: string, heading: string, body: string): string {
+  return `<div class="brain-section" id="section-${id}">
+  <div class="brain-section-heading" data-toggle="${id}">${escapeHtml(heading)}<span class="collapse-icon">▾</span></div>
+  <div class="brain-section-body" id="body-${id}">${body}</div>
 </div>`;
 }
 
@@ -368,7 +444,7 @@ function _errorState(msg: string): string {
   return `<div class="error-state">${escapeHtml(msg)}</div>`;
 }
 
-function _shell(body: string): string {
+function _shell(body: string, hasData: boolean): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -385,6 +461,8 @@ function _shell(body: string): string {
     --error:   var(--vscode-editorError-foreground);
     --green:   var(--vscode-terminal-ansiGreen);
     --section: var(--vscode-editor-background);
+    --btn-bg:  var(--vscode-button-secondaryBackground);
+    --btn-fg:  var(--vscode-button-secondaryForeground);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -392,13 +470,50 @@ function _shell(body: string): string {
     font-size: var(--vscode-font-size, 12px);
     color: var(--fg);
     background: var(--bg);
-    padding: 8px 10px 16px 10px;
+    padding: 0 0 16px 0;
     line-height: 1.5;
+  }
+
+  /* ── Section nav ──────────────────────────────────────────── */
+  .brain-nav {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    padding: 6px 10px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-pill {
+    background: var(--btn-bg);
+    color: var(--btn-fg);
+    border: none;
+    border-radius: 10px;
+    padding: 2px 8px;
+    font-size: 0.72em;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .nav-pill:hover { opacity: 0.85; }
+  .nav-badge {
+    background: var(--warn);
+    color: var(--bg);
+    border-radius: 7px;
+    padding: 0 4px;
+    font-size: 0.85em;
+    min-width: 14px;
+    text-align: center;
+    line-height: 1.4;
   }
 
   /* ── Sections ─────────────────────────────────────────────── */
   .brain-section {
-    margin-bottom: 10px;
+    margin: 6px 10px 0 10px;
     background: var(--section);
     border: 1px solid var(--border);
     border-radius: 3px;
@@ -413,8 +528,24 @@ function _shell(body: string): string {
     padding: 6px 10px;
     border-bottom: 1px solid var(--border);
     background: var(--bg);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+  }
+  .brain-section-heading:hover { color: var(--fg); }
+  .collapse-icon {
+    font-size: 0.9em;
+    transition: transform 0.15s;
   }
   .brain-section-body { padding: 8px 10px; }
+  .brain-section-body.collapsed {
+    display: none;
+  }
+  .brain-section-heading.is-collapsed .collapse-icon {
+    transform: rotate(-90deg);
+  }
 
   /* ── Sub-heading ──────────────────────────────────────────── */
   .sub-header {
@@ -443,13 +574,41 @@ function _shell(body: string): string {
   .stat-warn  { color: var(--warn); }
   .stat-error { color: var(--error); }
 
+  /* ── Item header (query + page link) ──────────────────────── */
+  .item-header {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 2px;
+  }
+  .item-query { font-size: 0.88em; font-weight: 600; flex: 1; min-width: 0; }
+
+  /* ── Page link buttons ────────────────────────────────────── */
+  .page-link-icon {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--accent);
+    border-radius: 2px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .page-link-icon:hover {
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+  .page-link-icon {
+    font-size: 0.82em;
+    padding: 0 3px;
+    line-height: 1.2;
+  }
+  .no-page { font-size: 0.78em; }
+
   /* ── Mismatch items ───────────────────────────────────────── */
   .mismatch-item {
     padding: 5px 0;
     border-bottom: 1px solid var(--border);
   }
   .mismatch-item:last-child { border-bottom: none; }
-  .mismatch-query { font-size: 0.88em; font-weight: 600; margin-bottom: 2px; }
   .mismatch-detail {
     display: flex;
     align-items: center;
@@ -474,7 +633,6 @@ function _shell(body: string): string {
     border-bottom: 1px solid var(--border);
   }
   .gap-item:last-child { border-bottom: none; }
-  .gap-query { font-size: 0.88em; font-weight: 600; margin-bottom: 3px; }
   .gap-missing { display: flex; flex-wrap: wrap; gap: 3px; }
   .schema-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: 0.82em; }
 
@@ -527,9 +685,11 @@ function _shell(body: string): string {
   .badge-warn  { background: var(--warn); color: var(--bg); }
   .badge-muted { color: var(--muted); border: 1px solid var(--border); }
   .auth-body { flex: 1; min-width: 0; }
-  .auth-query { font-size: 0.88em; font-weight: 600; }
   .auth-meta  { display: flex; align-items: center; gap: 8px; font-size: 0.78em; margin-top: 1px; }
   .auth-links { color: var(--accent); }
+
+  /* ── All-clear state ──────────────────────────────────────── */
+  .all-clear { color: var(--green); }
 
   /* ── Utility ──────────────────────────────────────────────── */
   .muted { color: var(--muted); font-size: 0.88em; }
@@ -538,18 +698,67 @@ function _shell(body: string): string {
     color: var(--muted);
     font-size: 0.88em;
     text-align: center;
-    padding: 24px 0;
+    padding: 24px 10px;
   }
   .error-state {
     color: var(--warn);
     font-size: 0.88em;
     text-align: center;
-    padding: 24px 0;
+    padding: 24px 10px;
   }
 </style>
 </head>
 <body>
 ${body}
+${hasData ? _script() : ''}
 </body>
 </html>`;
+}
+
+function _script(): string {
+  return `<script>
+(function() {
+  const vscode = acquireVsCodeApi();
+
+  // Section nav: scroll to section
+  document.querySelectorAll('.nav-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.getAttribute('data-target');
+      const el = document.getElementById('section-' + target);
+      if (el) {
+        // Expand if collapsed
+        const heading = el.querySelector('.brain-section-heading');
+        const body = el.querySelector('.brain-section-body');
+        if (heading && body && body.classList.contains('collapsed')) {
+          body.classList.remove('collapsed');
+          heading.classList.remove('is-collapsed');
+        }
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  });
+
+  // Section collapse/expand
+  document.querySelectorAll('.brain-section-heading').forEach(heading => {
+    heading.addEventListener('click', () => {
+      const toggle = heading.getAttribute('data-toggle');
+      if (!toggle) return;
+      const body = document.getElementById('body-' + toggle);
+      if (!body) return;
+      body.classList.toggle('collapsed');
+      heading.classList.toggle('is-collapsed');
+    });
+  });
+
+  // Page link buttons: send message to extension
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.page-link-icon');
+    if (!btn) return;
+    const url = btn.getAttribute('data-url');
+    if (url) {
+      vscode.postMessage({ command: 'openPageCommandCenter', url: url });
+    }
+  });
+})();
+</script>`;
 }

@@ -39,6 +39,7 @@ export interface SerpArchetypeSignal {
 export interface ArchetypeAlignmentEntry {
   query: string;
   mappedPageId: string | null;
+  mappedPageUrl: string | null;
   mappedPageArchetype: string | null;
   serpDominantArchetypes: SerpArchetypeSignal[];
   aligned: boolean;
@@ -57,6 +58,7 @@ export interface ArchetypeAlignment {
 export interface EntityGapEntry {
   query: string;
   mappedPageId: string | null;
+  mappedPageUrl: string | null;
   projectEntities: string[];
   serpMentionedTerms: string[];
   missingFromProject: string[];

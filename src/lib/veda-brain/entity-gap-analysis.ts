@@ -21,6 +21,7 @@ import type { KeywordPageMappingResult } from "./keyword-page-mapping";
 export interface EntityGapEntry {
   query: string;
   mappedPageId: string | null;
+  mappedPageUrl: string | null;
   projectEntities: string[];   // entity keys covered by mapped page
   serpMentionedTerms: string[]; // entity-like terms detected in SERP results
   missingFromProject: string[]; // serp terms not in project entities
@@ -188,6 +189,7 @@ export function computeEntityGapAnalysis(
     entries.push({
       query: m.query,
       mappedPageId,
+      mappedPageUrl: m.bestMatch?.pageUrl ?? null,
       projectEntities,
       serpMentionedTerms,
       missingFromProject,

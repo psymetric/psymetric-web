@@ -32,7 +32,8 @@
     "onView:veda.serpObservatory",
     "onCommand:veda.refreshSerpObservatory",
     "onView:veda.vedaBrain",
-    "onCommand:veda.refreshVedaBrain"
+    "onCommand:veda.refreshVedaBrain",
+    "onCommand:veda.brainOpenPageCommandCenter"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -115,6 +116,10 @@
         "command": "veda.refreshVedaBrain",
         "title": "VEDA: Refresh Brain Diagnostics",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "veda.brainOpenPageCommandCenter",
+        "title": "VEDA: Brain → Open Page Command Center"
       }
     ],
     "viewsContainers": {

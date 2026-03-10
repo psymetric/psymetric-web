@@ -344,6 +344,65 @@ export function registerCommands(
       );
       if (!data) return;
       resultsPanel.showKeywordDiagnostic(`Keyword: ${item.keyword.query}`, data);
-    })
+    }),
+
+    // ── Brain → Page Command Center cross-panel linking ──────────────────────
+
+    vscode.commands.registerCommand(
+      'veda.brainOpenPageCommandCenter',
+      async (pageUrl: string) => {
+        if (!state.activeProject) {
+          vscode.window.showInformationMessage('VEDA: Select a project first.');
+          return;
+        }
+
+        // Extract route path from full URL for routeHint
+        let routeHint: string;
+        try {
+          const parsed = new URL(pageUrl);
+          routeHint = parsed.pathname || '/';
+        } catch {
+          routeHint = pageUrl;
+        }
+
+        let packet: unknown;
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: `VEDA: Loading Page Command Center for ${routeHint}…`,
+            cancellable: false,
+          },
+          async () => {
+            try {
+              packet = await client.getPageCommandCenter({ routeHint });
+            } catch (err) {
+              showApiError('Brain → Page Command Center', err);
+              packet = null;
+            }
+          }
+        );
+
+        // Build a synthetic FileContext for the results panel
+        const syntheticCtx = {
+          fileName:       routeHint.split('/').pop() || 'index',
+          workspacePath:  null,
+          routeHint,
+          relevance:      'route-page' as const,
+          relevanceLabel: 'Route page (from Brain)',
+        };
+
+        const pkt = packet && typeof packet === 'object' && 'data' in (packet as Record<string, unknown>)
+          ? (packet as Record<string, unknown>).data as import('./types/pageCommandCenter').PageCommandCenterPacket
+          : packet === null ? null : undefined;
+
+        resultsPanel.showPageContext(
+          `Page: ${routeHint}`,
+          syntheticCtx,
+          pkt,
+          [],
+          false
+        );
+      }
+    )
   );
 }
