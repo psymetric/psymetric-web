@@ -75,12 +75,15 @@ export class ResultsPanel {
     ctx: FileContext,
     packet: PageCommandCenterPacket | null | undefined,
     recentEntries: RecentWorkflowEntry[] = [],
-    isReplayed = false
+    isReplayed = false,
+    openedFromBrain = false
   ): void {
     const meta = this._captureMeta(
       isReplayed
         ? 'VEDA: Replayed Page Context'
-        : 'VEDA: Investigate Current Page Context'
+        : openedFromBrain
+        ? 'VEDA: Brain → Page Command Center'
+        : 'VEDA: Open Page Command Center'
     );
     const panel = this._getOrCreatePagePanel(title);
     this.state.setPanelProjectId(this.state.activeProject?.id ?? null);
@@ -88,7 +91,7 @@ export class ResultsPanel {
       this._pagePanelFilePath = ctx.workspacePath ?? ctx.fileName;
     }
     panel.webview.html = this._renderPageContext(
-      title, ctx, meta, packet, recentEntries, isReplayed
+      title, ctx, meta, packet, recentEntries, isReplayed, openedFromBrain
     );
     panel.reveal();
   }
@@ -428,7 +431,8 @@ ${body}
     meta: RenderMeta,
     packet: PageCommandCenterPacket | null | undefined,
     recentEntries: RecentWorkflowEntry[] = [],
-    isReplayed = false
+    isReplayed = false,
+    openedFromBrain = false
   ): string {
     const isPageRelevant = ctx.relevance !== 'non-page';
     const project = this.state.activeProject;
@@ -473,12 +477,21 @@ ${body}
       summaryLines.push(`<li class="sum-line sum-muted">No recent page workflow yet.</li>`);
     }
 
-    const summaryBlock = `
+    const pccDescriptor = isReplayed
+      ? `<div class="pcc-descriptor">Viewing replayed page context from recent workflow history.</div>`
+      : packet === undefined
+      ? `<div class="pcc-descriptor">Page-level action surface. Select a project to load SERP signals and keyword diagnostics for this page.</div>`
+      : openedFromBrain
+      ? `<div class="pcc-descriptor">Page-level action surface, opened from VEDA Brain. Review SERP signals, run keyword diagnostics, and plan structural work for this page.</div>`
+      : `<div class="pcc-descriptor">Page-level action surface for the current file. Review SERP signals, run keyword diagnostics, and plan structural work for this page.</div>`;
+
+  const summaryBlock = `
 <div class="pcc-header">
   <div class="pcc-title-row">
     <span class="pcc-title">Page Command Center</span>
     ${isReplayed ? '<span class="pcc-replay-badge">Replayed from recent workflow</span>' : ''}
   </div>
+  ${pccDescriptor}
   <ul class="sum-list">${summaryLines.join('\n')}</ul>
 </div>`;
 
@@ -954,6 +967,12 @@ function _pageStyles(): string {
     background: var(--warn);
     color: var(--bg);
     font-weight: 600;
+  }
+  .pcc-descriptor {
+    font-size: 0.82em;
+    color: var(--muted);
+    margin-bottom: 8px;
+    line-height: 1.5;
   }
   .sum-list { list-style: none; padding: 0; margin: 0; }
   .sum-line { font-size: 0.85em; padding: 1px 0; }

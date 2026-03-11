@@ -34,7 +34,8 @@
     "onView:veda.vedaBrain",
     "onCommand:veda.refreshVedaBrain",
     "onCommand:veda.brainOpenPageCommandCenter",
-    "onCommand:veda.openProjectBlueprintWorkflow"
+    "onCommand:veda.openProjectBlueprintWorkflow",
+    "onCommand:veda.viewProposals"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -61,7 +62,7 @@
       },
       {
         "command": "veda.investigateCurrentPage",
-        "title": "VEDA: Investigate Current Page Context",
+        "title": "VEDA: Open Page Command Center",
         "icon": "$(search)"
       },
       {
@@ -120,11 +121,15 @@
       },
       {
         "command": "veda.brainOpenPageCommandCenter",
-        "title": "VEDA: Brain → Open Page Command Center"
+        "title": "VEDA: Brain → Page Command Center (page-level actions)"
       },
       {
         "command": "veda.openProjectBlueprintWorkflow",
         "title": "VEDA: Open Project Blueprint Workflow"
+      },
+      {
+        "command": "veda.viewProposals",
+        "title": "VEDA: View Proposals"
       }
     ],
     "viewsContainers": {

@@ -16,6 +16,9 @@
 // Interactive: scripts enabled for section nav + cross-panel linking
 // to Page Command Center.
 //
+// Phase 1.10: diagnostic-to-next-step continuity — Overview and section renderers
+// now surface explicit next-step directions when actionable issues are present.
+//
 // Read-only. No mutations. No recomputation. No caching.
 // The extension is a visualization surface only.
 
@@ -32,6 +35,9 @@ import {
   TopicTerritoryGaps,
   AuthorityOpportunity,
   SchemaOpportunity,
+  ProposalsResponse,
+  ArchetypeProposal,
+  SchemaProposal,
 } from '../types/vedaBrain';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -44,6 +50,8 @@ export class VedaBrainProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private _data: VedaBrainDiagnosticsResponse | null | undefined = undefined;
   // undefined = not yet loaded; null = load failed; object = loaded
+  private _proposals: ProposalsResponse | null | undefined = undefined;
+  // undefined = not yet loaded; null = load failed; object = loaded
   private _loading = false;
   private _stateDisposable: vscode.Disposable;
 
@@ -53,6 +61,7 @@ export class VedaBrainProvider implements vscode.WebviewViewProvider {
   ) {
     this._stateDisposable = state.onStateChange(() => {
       this._data = undefined;
+      this._proposals = undefined;
       this._load();
     });
   }
@@ -84,6 +93,7 @@ export class VedaBrainProvider implements vscode.WebviewViewProvider {
 
   refresh(): void {
     this._data = undefined;
+    this._proposals = undefined;
     this._load();
   }
 
@@ -98,11 +108,12 @@ export class VedaBrainProvider implements vscode.WebviewViewProvider {
     this._render();
 
     try {
-      const res = await this.client.getVedaBrainDiagnostics();
-      this._data = res.data;
-    } catch {
-      // Load failure is reported in-panel via _richEmptyState — no toast needed.
-      this._data = null;
+      const [diagRes, propRes] = await Promise.allSettled([
+        this.client.getVedaBrainDiagnostics(),
+        this.client.getProposals(),
+      ]);
+      this._data      = diagRes.status === 'fulfilled' ? diagRes.value.data : null;
+      this._proposals = propRes.status === 'fulfilled' ? propRes.value.data : null;
     } finally {
       this._loading = false;
       this._render();
@@ -129,11 +140,15 @@ export class VedaBrainProvider implements vscode.WebviewViewProvider {
       return _shell(_emptyState('Loading Brain diagnostics…'), false);
     }
     if (this._data === null) {
+      const { envLabel, baseUrl } = _readEnvContext();
+      const reachHint = baseUrl
+        ? `Could not reach ${envLabel} at ${baseUrl}.`
+        : `Could not load diagnostics — ${envLabel} may not be running or base URL is not configured.`;
       return _shell(_richEmptyState(
         'VEDA Brain',
         'Shows structural diagnostics: archetype alignment, entity gaps, topic territory, authority and schema opportunities for tracked keywords.',
-        'Could not load Brain diagnostics.',
-        'Check that the environment is reachable and the project has keyword targets and mapped pages. Use <em>VEDA: Investigate Project</em> to inspect project state.'
+        reachHint,
+        'Confirm the environment is running, then use <em>VEDA: Switch Environment</em> or ensure the project has keyword targets and mapped pages.'
       ), false);
     }
 
@@ -177,6 +192,12 @@ export class VedaBrainProvider implements vscode.WebviewViewProvider {
     navItems.push({ id: 'schema', label: 'Schema', count: schemaGaps.length });
     sections.push(_renderSchemaOpportunities(d.schemaOpportunity, schemaGaps));
 
+    // Proposals (Phase C1)
+    const proposals = this._proposals;
+    const proposalTotal = proposals?.summary.totalProposals ?? null;
+    navItems.push({ id: 'proposals', label: 'Proposals', count: proposalTotal });
+    sections.push(_renderProposals(proposals));
+
     const nav = _renderNav(navItems);
     return _shell(nav + sections.join('\n'), true);
   }
@@ -202,7 +223,7 @@ function _renderNav(items: { id: string; label: string; count: number | null }[]
 
 function _pageLinkIcon(url: string | null): string {
   if (!url) return '<span class="no-page muted" title="No mapped page">—</span>';
-  return `<button class="page-link-icon" data-url="${escapeHtml(url)}" title="Open in Page Command Center">↗</button>`;
+  return `<button class="page-link-icon" data-url="${escapeHtml(url)}" title="Open Page Command Center — page-level SERP actions for this URL">↗</button>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -224,7 +245,14 @@ function _renderOverview(rc: ReadinessClassification): string {
     _statRow('Unmapped', String(c.unmapped), c.unmapped > 0 ? 'error' : 'good'),
   ].join('');
 
-  return _section('overview', 'Brain Overview', `<div class="stat-grid">${rows}</div>`);
+  // Build a directional next-step note when actionable issues exist.
+  const hasIssues = c.archetype_misaligned > 0 || c.entity_incomplete > 0 ||
+    c.schema_underpowered > 0 || c.weak_authority_support > 0 || c.unmapped > 0;
+  const nextStepNote = hasIssues
+    ? `<div class="overview-next-step">Use the section nav above to drill into each issue type. Click <strong>\u2197</strong> on any keyword row to open its <strong>Page Command Center</strong> — the page-level action surface where you review SERP signals, run keyword diagnostics, and plan structural work for that specific page.</div>`
+    : '';
+
+  return _section('overview', 'Brain Overview', `<div class="stat-grid">${rows}</div>${nextStepNote}`);
 }
 
 function _renderArchetypeMismatches(
@@ -237,6 +265,9 @@ function _renderArchetypeMismatches(
       : '<p class="muted all-clear">✓ No archetype mismatches detected.</p>';
     return _section('archetypes', 'Archetype Mismatches', msg);
   }
+
+  // Next-step note: archetype mismatches → Page Command Center for structural work.
+  const nextStep = `<div class="section-next-step">\u2192 Click \u2197 on any row to open Page Command Center for that page. Review the page archetype against SERP-dominant signals and adjust accordingly.</div>`;
 
   const items = mismatches.map(e => {
     const topSerp = e.serpDominantArchetypes[0]?.archetype ?? '—';
@@ -254,7 +285,7 @@ function _renderArchetypeMismatches(
 </div>`;
   }).join('');
 
-  return _section('archetypes', `Archetype Mismatches (${mismatches.length})`, items);
+  return _section('archetypes', `Archetype Mismatches (${mismatches.length})`, items + nextStep);
 }
 
 function _renderEntityGaps(
@@ -283,7 +314,9 @@ function _renderEntityGaps(
     ? `<p class="muted extra-note">…and ${withGaps.length - 20} more keywords with gaps.</p>`
     : '';
 
-  return _section('entities', `Entity Coverage Gaps (${eg.keywordsWithGaps} keywords, ${eg.totalGaps} gaps)`, items + extra);
+  const nextStep = `<div class="section-next-step">\u2192 Click <strong>\u2197</strong> to open <strong>Page Command Center</strong> for that page — review SERP signals and add the missing entities to the page content or schema.</div>`;
+
+  return _section('entities', `Entity Coverage Gaps (${eg.keywordsWithGaps} keywords, ${eg.totalGaps} gaps)`, items + extra + nextStep);
 }
 
 function _renderTopicTerritoryGaps(ttg: TopicTerritoryGaps): string {
@@ -323,7 +356,8 @@ function _renderTopicTerritoryGaps(ttg: TopicTerritoryGaps): string {
     body += `<div class="sub-header" style="margin-top:8px">Uncategorized Keywords (${ttg.uncategorizedKeywords.length})</div>${items}${extra}`;
   }
 
-  return _section('topics', 'Topic Territory Gaps', body);
+  const nextStep = `<div class="section-next-step">\u2192 Assign untracked and thin topics to pages, then open <strong>Page Command Center</strong> via <strong>\u2197</strong> on related keyword rows to plan structural coverage work.</div>`;
+  return _section('topics', 'Topic Territory Gaps', body + nextStep);
 }
 
 function _renderAuthorityOpportunities(
@@ -373,7 +407,8 @@ function _renderAuthorityOpportunities(
   ${s.weaklySupported > 0 ? `<span>${s.weaklySupported} weak</span>` : ''}
 </div>`;
 
-  return _section('authority', `Authority Opportunities (${actionable.length})`, summaryLine + items + extra);
+  const nextStep = `<div class="section-next-step">\u2192 Click <strong>\u2197</strong> on any row to open <strong>Page Command Center</strong> for that page — review inbound link profile and plan internal linking or authority-support work.</div>`;
+  return _section('authority', `Authority Opportunities (${actionable.length})`, summaryLine + items + extra + nextStep);
 }
 
 function _renderSchemaOpportunities(
@@ -416,16 +451,115 @@ function _renderSchemaOpportunities(
     ? `<p class="muted extra-note">…and ${withGaps.length - 20} more keywords with schema gaps.</p>`
     : '';
 
+  const nextStep = `<div class="section-next-step">\u2192 Click \u2197 on any row to open Page Command Center for that page. Add or expand schema markup to match SERP-dominant schema signals above.</div>`;
+
   return _section(
     'schema',
     `Schema Opportunities (${so.totalMissingSchemaOpportunities} gaps, ${so.pagesWithoutSchema} pages no schema)`,
-    freqBlock + items + extra
+    freqBlock + items + extra + nextStep
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Proposals renderer (Phase C1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _renderProposals(proposals: ProposalsResponse | null | undefined): string {
+  // Load failure — proposals endpoint returned an error
+  if (proposals === null) {
+    const { envLabel, baseUrl } = _readEnvContext();
+    const msg = baseUrl
+      ? `Could not load proposals — could not reach ${envLabel} at ${baseUrl}.`
+      : `Could not load proposals — ${envLabel} base URL is not configured. Check Settings › veda.environments.`;
+    return _section('proposals', 'Proposals', `<p class="muted">${escapeHtml(msg)}</p>`);
+  }
+
+  // Not yet loaded (should not normally reach render in this state, but guard it)
+  if (proposals === undefined) {
+    return _section('proposals', 'Proposals', '<p class="muted">Loading proposals…</p>');
+  }
+
+  const { archetypeProposals, schemaProposals } = proposals.proposals;
+  const total = proposals.summary.totalProposals;
+
+  if (total === 0) {
+    return _section(
+      'proposals',
+      'Proposals',
+      `<p class="muted all-clear">✓ No structural proposals at this time.</p>
+       <p class="muted" style="font-size:0.8em;margin-top:5px">Proposals are generated when archetype or schema mismatches exist on mapped pages. Run <em>VEDA: Refresh Brain Diagnostics</em> after adding keyword targets and mapping pages.</p>`
+    );
+  }
+
+  let body = '';
+
+  // ── Archetype proposals block ─────────────────────────────────────────────────────────
+  if (archetypeProposals.length > 0) {
+    body += `<div class="sub-header">Archetype Proposals (${archetypeProposals.length})</div>`;
+    body += archetypeProposals.map((p: ArchetypeProposal) => {
+      const actionLabel = p.suggestedAction === 'consider_archetype_aligned_page'
+        ? 'Consider archetype-aligned page'
+        : 'Review archetype alignment';
+      const existingLabel = p.existingArchetype ?? '(none assigned)';
+      return `<div class="proposal-item">
+  <div class="item-header">
+    <span class="item-query">${escapeHtml(p.query)}</span>
+    ${_pageLinkIcon(p.existingPageUrl)}
+  </div>
+  <div class="proposal-detail">
+    <span class="lbl">Page</span> <span class="arch-val arch-page">${escapeHtml(existingLabel)}</span>
+    <span class="arrow">→</span>
+    <span class="lbl">SERP</span> <span class="arch-val arch-serp">${escapeHtml(p.serpDominantArchetype)}</span>
+    <span class="proposal-action-badge">${escapeHtml(actionLabel)}</span>
+  </div>
+  <div class="proposal-id muted">${escapeHtml(p.proposalId)}</div>
+</div>`;
+    }).join('');
+  }
+
+  // ── Schema proposals block ──────────────────────────────────────────────────────────────
+  if (schemaProposals.length > 0) {
+    if (archetypeProposals.length > 0) body += '<div style="margin-top:10px"></div>';
+    body += `<div class="sub-header">Schema Proposals (${schemaProposals.length})</div>`;
+    body += schemaProposals.map((p: SchemaProposal) => {
+      const missing = p.missingSchemaTypes
+        .map(s => `<span class="entity-tag entity-missing">${escapeHtml(s)}</span>`)
+        .join('');
+      const existing = p.existingSchemaTypes.length > 0
+        ? p.existingSchemaTypes.map(s => `<span class="entity-tag entity-present">${escapeHtml(s)}</span>`).join('')
+        : '<span class="muted" style="font-size:0.78em">none</span>';
+      return `<div class="proposal-item">
+  <div class="item-header">
+    <span class="item-query">${escapeHtml(p.query)}</span>
+    ${_pageLinkIcon(p.pageUrl)}
+  </div>
+  <div class="schema-row">
+    <span class="lbl">Has</span> ${existing}
+    <span class="lbl" style="margin-left:6px">Missing</span> ${missing}
+  </div>
+  <div class="proposal-id muted">${escapeHtml(p.proposalId)}</div>
+</div>`;
+    }).join('');
+  }
+
+  const proposalNextStep = `<div class="section-next-step">Review each proposal, then click <strong>↗</strong> to open the <strong>Page Command Center</strong> for that page.</div>`;
+  return _section('proposals', `Proposals (${total})`, body + proposalNextStep);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shell + section helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Read active environment name and base URL from VS Code workspace configuration.
+ */
+function _readEnvContext(): { envLabel: string; baseUrl: string | null } {
+  const cfg    = vscode.workspace.getConfiguration('veda');
+  const envKey = cfg.get<string>('activeEnvironment') ?? 'local';
+  const envs   = cfg.get<Record<string, { baseUrl?: string }>>('environments') ?? {};
+  const baseUrl = envs[envKey]?.baseUrl ?? null;
+  return { envLabel: envKey.toUpperCase(), baseUrl };
+}
 
 function _statRow(label: string, value: string, emphasis?: 'good' | 'warn' | 'error'): string {
   const cls = emphasis === 'good' ? 'stat-good'
@@ -723,12 +857,6 @@ function _shell(body: string, hasData: boolean): string {
     text-align: center;
     padding: 24px 10px;
   }
-  .error-state {
-    color: var(--warn);
-    font-size: 0.88em;
-    text-align: center;
-    padding: 24px 10px;
-  }
   .rich-empty {
     padding: 20px 12px;
   }
@@ -758,6 +886,50 @@ function _shell(body: string, hasData: boolean): string {
   .rich-empty-next em {
     color: var(--accent);
     font-style: normal;
+  }
+
+  /* ── Next-step continuity notes ────────────────────────────────────────── */
+  .overview-next-step, .section-next-step {
+    margin-top: 8px;
+    padding-top: 7px;
+    border-top: 1px solid var(--border);
+    font-size: 0.8em;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .overview-next-step strong, .section-next-step strong {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* ── Proposal items ───────────────────────────────────────────────────── */
+  .proposal-item {
+    padding: 5px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .proposal-item:last-child { border-bottom: none; }
+  .proposal-detail {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.82em;
+    flex-wrap: wrap;
+    margin-top: 2px;
+  }
+  .proposal-action-badge {
+    font-size: 0.78em;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent);
+    margin-left: 4px;
+  }
+  .proposal-id {
+    font-size: 0.7em;
+    font-family: var(--vscode-editor-font-family, monospace);
+    margin-top: 2px;
+    opacity: 0.6;
   }
 </style>
 </head>

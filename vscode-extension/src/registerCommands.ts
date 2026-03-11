@@ -45,7 +45,7 @@ export function registerCommands(
   serpObservatoryProvider: SerpObservatoryProvider,
   vedaBrainProvider: VedaBrainProvider
 ): void {
-  updateStatusBar(statusBarItem, config.getActiveEnvironmentName(), state.activeProject?.name ?? null);
+  updateStatusBar(statusBarItem, config.getActiveEnvironmentName(), state.activeProject?.name ?? null, config.getBaseUrl());
 
   context.subscriptions.push(
     vscode.commands.registerCommand('veda.switchEnvironment', () =>
@@ -323,6 +323,27 @@ export function registerCommands(
       vedaBrainProvider.refresh();
     }),
 
+    // ── Proposal discoverability ───────────────────────────────────────────────────────────
+    //
+    // Navigates the operator to the Proposals section in the VEDA Brain panel.
+    // Proposals are fetched alongside Brain diagnostics and displayed in the
+    // Brain panel's Proposals section. This command ensures palette discoverability.
+
+    vscode.commands.registerCommand('veda.viewProposals', async () => {
+      if (!state.activeProject) {
+        vscode.window.showInformationMessage(
+          'VEDA: Select a project first, then run VEDA: View Proposals.'
+        );
+        return;
+      }
+      // Reveal the Brain panel (which loads proposals alongside diagnostics)
+      // and hint the operator where to look.
+      await vscode.commands.executeCommand('veda.vedaBrain.focus');
+      vscode.window.showInformationMessage(
+        'VEDA: Proposals are in the Brain panel \u2014 scroll to the Proposals section or use the nav pill.'
+      );
+    }),
+
     // Fired when an alert item is clicked in the tree view.
     vscode.commands.registerCommand('veda.alertItemSelected', async (item: AlertTreeItem) => {
       if (!item.alert.keywordTargetId) return;
@@ -395,7 +416,7 @@ export function registerCommands(
         await vscode.window.withProgress(
           {
             location: vscode.ProgressLocation.Notification,
-            title: `VEDA: Loading Page Command Center for ${routeHint}…`,
+            title: `VEDA: Opening Page Command Center for ${routeHint}…`,
             cancellable: false,
           },
           async () => {
@@ -426,7 +447,8 @@ export function registerCommands(
           syntheticCtx,
           pkt,
           [],
-          false
+          false,
+          true  // openedFromBrain
         );
       }
     )
