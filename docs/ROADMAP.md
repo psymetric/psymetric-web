@@ -5,6 +5,7 @@ This roadmap is the **single source of truth for scope**.
 - If it is not in the current active phase, it is out of scope.
 - Any scope change requires an explicit roadmap edit.
 - Detailed behavior lives in `docs/specs/`. This document is the navigation map.
+- Linked documents in each section are the intended context trail for operators and LLMs. Follow them before proposing scope changes.
 
 ---
 
@@ -18,6 +19,11 @@ All system behavior is governed by five non-negotiable invariants:
 - **Compute-on-read analytics** — no materialized volatility state. All intelligence is derived at query time.
 - **LLMs propose, humans commit** — LLM assistants may draft and suggest. They may never mutate system state silently.
 
+Related documents:
+- `docs/SYSTEM-INVARIANTS.md`
+- `docs/specs/VEDA-MCP-TOOLS-SPEC.md`
+- `docs/specs/VEDA-OPERATOR-SURFACES.md`
+
 ---
 
 ## 2. VEDA System Model
@@ -30,9 +36,13 @@ Each project is a **brand ecosystem container**, not simply a website. A project
 - All queries scope to a project via `resolveProjectId()`.
 - Projects may use any combination of VEDA system capabilities: SERP observatory, content graph, social media surfaces, video platforms, authority signal tracking, and future surfaces as they are defined.
 - LLM systems interact with VEDA through MCP tools that expose the HTTP API surface. LLMs may read system state and propose actions but cannot mutate system state directly.
+- VEDA is intentionally **multi-surface**. Web UX, VS Code, and MCP-assisted operator flows are complementary surfaces over the same project-scoped system.
+- VEDA owns deterministic structural truth. LLMs may interpret, narrate, and draft against that truth, but they do not replace it.
 
 Specifications:
 - `docs/specs/VEDA-MCP-TOOLS-SPEC.md`
+- `docs/specs/VEDA-OPERATOR-SURFACES.md`
+- `docs/specs/VEDA-BRAND-SURFACE-REGISTRY.md`
 
 ---
 
@@ -51,6 +61,7 @@ Signals: pages, page types, internal links, anchor text, schema usage, topic and
 Specifications:
 - `docs/specs/CONTENT-GRAPH-DATA-MODEL.md`
 - `docs/specs/CONTENT-GRAPH-PHASES.md`
+- `docs/specs/VEDA-REPO-NATIVE-WORKFLOW.md`
 
 ### Competitor Content Observatory
 Observes structural patterns of competitor pages appearing in tracked SERPs. SERP snapshots act as the selection mechanism.
@@ -107,6 +118,9 @@ This workflow integrates existing system primitives:
 
 The system remains **human-in-the-loop**. VEDA never posts automatically.
 
+Related documents:
+- `docs/specs/VEDA-BRAND-SURFACE-REGISTRY.md`
+
 ---
 
 ## 4. Project Lifecycle
@@ -119,6 +133,7 @@ All lifecycle transitions follow the **Propose → Review → Apply** rule. LLMs
 
 Specification:
 - `docs/veda-project-lifecycle-workflow.md`
+- `docs/specs/VEDA-CREATE-PROJECT-WORKFLOW.md`
 
 ---
 
@@ -142,6 +157,7 @@ The blueprint acts as the architectural contract for all subsequent targeting an
 Specifications:
 - `docs/specs/PROJECT-BLUEPRINT-SPEC.md`
 - `docs/specs/VEDA-CREATE-PROJECT-WORKFLOW.md`
+- `docs/specs/VEDA-BRAND-SURFACE-REGISTRY.md`
 
 ---
 
@@ -158,6 +174,10 @@ Possible surfaces:
 - Future media surfaces
 
 Surface declarations are stored per-project and scope signal collection accordingly.
+A project may declare **multiple accounts or channels on the same platform** when needed. Project isolation is necessary but not sufficient; each declared surface must also have durable surface identity and platform-specific canonical identifiers.
+
+Specifications:
+- `docs/specs/VEDA-BRAND-SURFACE-REGISTRY.md`
 
 ---
 
@@ -166,7 +186,7 @@ Surface declarations are stored per-project and scope signal collection accordin
 ```
 ┌──────────────────────────────────────────────┐
 │         Operator Interfaces                  │
-│   VS Code Extension · MCP Bridge             │
+│   Web UX · VS Code Extension · MCP Bridge    │
 ├──────────────────────────────────────────────┤
 │         SEO Lab  (future)                    │
 │   Ranking hypothesis testing                 │
@@ -203,6 +223,8 @@ Surface declarations are stored per-project and scope signal collection accordin
 
 Specifications:
 - `docs/specs/SIL-1-OBSERVATION-LEDGER.md`
+- `docs/specs/VEDA-OPERATOR-SURFACES.md`
+- `docs/specs/VEDA-REPO-NATIVE-WORKFLOW.md`
 
 All analytics are compute-on-read. No materialized volatility state is permitted.
 
@@ -239,10 +261,33 @@ All analytics are compute-on-read. No materialized volatility state is permitted
 - Page Command Center expansion
 - MCP toolset for project creation and blueprint workflows
 - SERP-to-Content-Graph proposal helpers *(Phase C1: archetype + schema proposals only, read-only, compute-on-read)*
+- VS Code first-run operator continuity and onboarding polish
+- operator-surface alignment for repo-native execution
 
 SERP-to-Content-Graph helpers generate operator-reviewable proposals only. They do not mutate Content Graph state automatically.
 Phase C1 scope: `GET /api/veda-brain/proposals` returning archetypeProposals and schemaProposals derived from VEDA Brain diagnostics.
 Topic proposals (DQ-001), entity proposals (DQ-002), and authority-support proposals (DQ-003) are deferred to C2.
+
+VS Code operator polish should remain incremental and workflow-driven.
+Its purpose is to improve:
+- first-run project recovery when no projects exist
+- lifecycle-guided next-step clarity in Project Context
+- blueprint workflow discoverability
+- empty-state guidance
+- environment clarity
+- cross-panel continuity
+
+Repo-native execution alignment should preserve these rules:
+- VS Code is the primary repo-native execution surface
+- web UX remains important for onboarding, cross-project review, and non-repo workflows
+- LLMs may combine VEDA state with workspace context to draft proposals
+- repo edits and VEDA mutations remain distinct review/apply flows
+
+References:
+- `docs/specs/VEDA-VSCODE-OPERATOR-GAP-MAP.md`
+- `docs/First-run operator journey.md`
+- `docs/specs/VEDA-OPERATOR-SURFACES.md`
+- `docs/specs/VEDA-REPO-NATIVE-WORKFLOW.md`
 
 ---
 
@@ -258,3 +303,8 @@ The order of future phases reflects architectural dependencies. Structural obser
 - Execution planning layer
 - SEO Lab experimentation framework
 - SERP ecosystem simulation
+
+Future-only context documents:
+- `docs/specs/future-ideas/VEDA-BRAIN-MAGICAL-OPTIONS.md`
+- `docs/specs/future-ideas/VEDA-TACTICS-LLM-REASONING.md`
+- `docs/specs/future-ideas/VEDA-REMOTE-MCP-LLM-PROVIDERS.md`

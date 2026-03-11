@@ -12,6 +12,12 @@ All mutation follows the rule:
 
 Propose → Review → Apply
 
+Related documents:
+- `docs/ROADMAP.md`
+- `docs/specs/PROJECT-BLUEPRINT-SPEC.md`
+- `docs/specs/VEDA-BRAND-SURFACE-REGISTRY.md`
+- `docs/specs/VEDA-OPERATOR-SURFACES.md`
+
 ---
 
 ## Workflow Overview
@@ -99,6 +105,8 @@ Lifecycle remains:
 
 until keyword research begins.
 
+Declared surfaces may include website and non-website surfaces. A project may also declare multiple accounts or channels on the same platform when needed.
+
 ---
 
 ## Step 5 — Begin Keyword Research
@@ -165,6 +173,7 @@ This workflow connects several system specifications.
 Related documents:
 
 - `docs/specs/PROJECT-BLUEPRINT-SPEC.md`
+- `docs/specs/VEDA-BRAND-SURFACE-REGISTRY.md`
 - `docs/veda-project-lifecycle-workflow.md`
 - `docs/ROADMAP.md`
 

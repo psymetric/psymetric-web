@@ -12,6 +12,11 @@ Blueprints do not mutate system state automatically. All changes follow the rule
 
 Propose → Review → Apply
 
+Related documents:
+- `docs/ROADMAP.md`
+- `docs/specs/VEDA-CREATE-PROJECT-WORKFLOW.md`
+- `docs/specs/VEDA-BRAND-SURFACE-REGISTRY.md`
+
 ---
 
 ## Role In VEDA Architecture
@@ -60,6 +65,8 @@ Possible surfaces include:
 - future surfaces
 
 Surfaces declared here determine which observatories and signal collectors are active.
+
+A project may declare multiple accounts or channels on the same platform when needed. The blueprint should preserve intended surface identity clearly enough that later implementation does not collapse a platform into a single ambiguous slot.
 
 ---
 
@@ -167,6 +174,9 @@ Execution Planning Layer
 
 Observational Surfaces
 - Determines which surfaces are active for the project.
+
+Operator Surfaces
+- Provides project structure that may later be surfaced in web UX, VS Code, and MCP-assisted workflows.
 
 ---
 

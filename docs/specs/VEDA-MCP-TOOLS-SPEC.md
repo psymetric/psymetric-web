@@ -27,6 +27,35 @@ All project-scoped tools must resolve project scope using:
 
 resolveProjectId()
 
+Related documents:
+- `docs/ROADMAP.md`
+- `docs/specs/VEDA-OPERATOR-SURFACES.md`
+- `docs/specs/VEDA-REPO-NATIVE-WORKFLOW.md`
+
+---
+
+## Role Of MCP In Operator Workflows
+
+MCP is the safe bridge between LLM assistants and VEDA system state.
+
+It exists to support operator-facing workflows in surfaces such as:
+
+- web UX
+- VS Code
+- future operator clients
+
+MCP does **not** make the LLM the source of truth.
+
+Responsibility split:
+
+- **VEDA** owns deterministic structural truth and project-scoped state.
+- **MCP** exposes that truth through controlled API access.
+- **LLMs** interpret, narrate, draft, and propose.
+- **Workspace / repo tools** support local file execution workflows outside VEDA state mutation.
+- **Humans** review and apply both VEDA changes and repo changes.
+
+Repo edits and VEDA state changes are related but distinct flows. MCP does not justify silent repository mutation, silent VEDA mutation, or bypassing review discipline.
+
 ---
 
 ## Core MCP Tool Groups
@@ -138,6 +167,8 @@ VEDA System Layers
 ```
 
 This separation ensures assistants remain outside the core system.
+
+When used alongside VS Code or other repo-aware operator surfaces, MCP should be understood as the VEDA-state side of the workflow. Repository reads, diffs, edits, commits, and deployment remain separate concerns and must not be conflated with VEDA API mutation.
 
 ---
 
