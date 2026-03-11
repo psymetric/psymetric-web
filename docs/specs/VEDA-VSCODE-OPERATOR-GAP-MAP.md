@@ -85,6 +85,7 @@ The current VS Code Command Center includes these primary surfaces and commands.
 
 - `VEDA: Switch Environment`
 - `VEDA: Select Project`
+- `VEDA: Open Project Blueprint Workflow`
 - `VEDA: Refresh Context`
 - `VEDA: Investigate Project`
 - `VEDA: Investigate Current Page Context`
@@ -99,7 +100,6 @@ The current VS Code Command Center includes these primary surfaces and commands.
 ### Related but not yet fully surfaced in the extension operator loop
 
 - project creation workflow
-- blueprint workflow
 - proposal workflow (`GET /api/veda-brain/proposals`)
 - broader project lifecycle transitions
 - repo-native guidance linking VEDA state to local file execution
@@ -132,21 +132,17 @@ Secondary fit:
 
 ## Current status
 
-- partially covered
-- dead-end recovery missing
+- baseline implemented
+- no-project recovery path now exists
+- environment-unreachable vs zero-project state now distinguished
 
 ## Best fit for future improvement
 
-- add a recovery action when no projects exist
-- route to:
-  - `Create Project`
-  - or `Open Project Setup`
-  - or `Open Project Blueprint Workflow`
-  - or a lightweight guided setup surface
+- later, replace doc-guided recovery with direct create-project flow when that workflow is intentionally surfaced in the extension
 
 ## Priority
 
-- P1
+- completed baseline
 
 ## Scope classification
 
@@ -178,13 +174,14 @@ Secondary fit:
 
 - partially covered
 - selection exists
-- explanatory guidance weak
+- unreachable environment vs zero-project state is now clearer
+- explanatory guidance is still thinner than it should be
 
 ## Best fit for future improvement
 
 - show lightweight environment context after switching
 - clarify local base URL
-- surface reachability failure more explicitly
+- surface reachability failure more explicitly across more panels
 - distinguish:
   - unreachable environment
   - reachable but empty environment
@@ -216,22 +213,18 @@ Primary fit:
 
 ## Current status
 
-- partially covered
-- strong anchor already exists
-- lifecycle-to-next-step guidance not fully operationalized
+- baseline implemented
+- lifecycle-guided fallback guidance is now present
+- blueprint phase note is now surfaced for created/draft states
 
 ## Best fit for future improvement
 
-Add explicit lifecycle-based next-step guidance, for example:
-
-- `created` → draft blueprint
-- `draft` → review/apply blueprint
-- `researching` → define keyword targets
-- `targeting` → begin SERP observation
+- later, prefer stronger server-authored next-step guidance where available
+- keep fallback guidance concise and operational
 
 ## Priority
 
-- P1
+- completed baseline
 
 ## Scope classification
 
@@ -257,19 +250,18 @@ Secondary fit:
 
 ## Current status
 
-- weakly covered
-- architecturally important
-- operatorically ghostly
+- baseline implemented
+- explicit command now exists: `VEDA: Open Project Blueprint Workflow`
+- Project Context now points to blueprint more directly
 
 ## Best fit for future improvement
 
-- add `VEDA: Open Project Blueprint Workflow`
-- expose blueprint as the next-step action in relevant lifecycle states
-- optionally provide lightweight guidance surface rather than a full new subsystem immediately
+- later, add richer blueprint-specific operator flow only if intentionally brought into active scope
+- avoid turning blueprint discoverability into a new subsystem by accident
 
 ## Priority
 
-- P1
+- completed baseline
 
 ## Scope classification
 
@@ -300,17 +292,18 @@ Primary fit:
 
 ## Current status
 
-- partially covered
-- empty states exist
-- teaching value inconsistent
+- baseline implemented across core first-run surfaces
+- key panels now teach panel purpose, why empty, and next step more clearly
+- smaller message consistency refinements may still remain later
 
 ## Best fit for future improvement
 
-Add one-line purpose + why-empty + next-step guidance to key empty states.
+- continue tightening message consistency in non-core or lower-priority panels as needed
+- keep copy short and operational
 
 ## Priority
 
-- P1 / P2
+- completed baseline
 
 ## Scope classification
 
@@ -380,7 +373,7 @@ Primary fit:
 
 - partially covered
 - linked from Brain
-- not introduced clearly in first-run flow
+- not introduced clearly enough in the broader operator loop
 
 ## Best fit for future improvement
 
@@ -435,7 +428,7 @@ Primary fit:
 
 ## Priority Rollup
 
-### P1
+### Completed baseline
 - no-project recovery path
 - Project Context as lifecycle-guided next-step anchor
 - blueprint workflow discoverability
@@ -472,12 +465,14 @@ It should not be treated as authorization for redesign.
 
 The current VEDA extension is already a real command center.
 
-The main operator gap is not lack of intelligence.
+The initial first-run continuity baseline is now in place.
 
-The main operator gap is lack of first-run continuity:
-- how to begin
-- what to do next
-- which surface matters now
-- how lifecycle state translates into action
+The current operator gap is no longer basic onboarding survival.
+
+The current operator gap is clearer continuity across the live system:
+- environment clarity
+- what to do next from diagnostics
+- where proposals fit
+- how surfaces connect during real operator flow
 
 This map exists to connect those operator gaps to the VS Code surfaces where they naturally belong.

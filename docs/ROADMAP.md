@@ -250,6 +250,7 @@ All analytics are compute-on-read. No materialized volatility state is permitted
 - Operator investigation hints (SIL-24)
 - VS Code Command Center (multi-panel sidebar)
 - SERP Observatory panel
+- VS Code first-run continuity and blueprint discoverability baseline
 
 ---
 
@@ -261,21 +262,27 @@ All analytics are compute-on-read. No materialized volatility state is permitted
 - Page Command Center expansion
 - MCP toolset for project creation and blueprint workflows
 - SERP-to-Content-Graph proposal helpers *(Phase C1: archetype + schema proposals only, read-only, compute-on-read)*
-- VS Code first-run operator continuity and onboarding polish
-- operator-surface alignment for repo-native execution
+- proposal discoverability in the VS Code operator loop
+- environment clarity and failure-state wording
+- cross-panel continuity for repo-native execution
 
 SERP-to-Content-Graph helpers generate operator-reviewable proposals only. They do not mutate Content Graph state automatically.
 Phase C1 scope: `GET /api/veda-brain/proposals` returning archetypeProposals and schemaProposals derived from VEDA Brain diagnostics.
 Topic proposals (DQ-001), entity proposals (DQ-002), and authority-support proposals (DQ-003) are deferred to C2.
 
-VS Code operator polish should remain incremental and workflow-driven.
-Its purpose is to improve:
+The initial VS Code first-run continuity baseline is now in place.
+Completed continuity work includes:
 - first-run project recovery when no projects exist
 - lifecycle-guided next-step clarity in Project Context
 - blueprint workflow discoverability
-- empty-state guidance
-- environment clarity
-- cross-panel continuity
+- stronger empty-state guidance in key surfaces
+
+Current VS Code operator polish should remain incremental and workflow-driven.
+The current focus is:
+- environment clarity and reachability wording
+- diagnostic-to-next-step continuity
+- proposal visibility inside the operator loop
+- smaller command/panel discoverability refinements
 
 Repo-native execution alignment should preserve these rules:
 - VS Code is the primary repo-native execution surface
