@@ -168,3 +168,51 @@ export interface VedaBrainDiagnosticsResponse {
   projectId: string;
   diagnostics: VedaBrainDiagnostics;
 }
+
+// ── Proposals (Phase C1) ─────────────────────────────────────────────────────
+// Mirrors GET /api/veda-brain/proposals response contract.
+
+export interface ArchetypeProposal {
+  proposalId: string;
+  proposalType: 'archetype';
+  query: string;
+  existingPageId: string;
+  existingPageUrl: string;
+  existingArchetype: string | null;
+  serpDominantArchetype: string;
+  evidence: {
+    serpDominantCount: number;
+    mismatchReason: string;
+  };
+  suggestedAction: 'review_archetype_alignment' | 'consider_archetype_aligned_page';
+}
+
+export interface SchemaProposal {
+  proposalId: string;
+  proposalType: 'schema';
+  query: string;
+  pageId: string;
+  pageUrl: string;
+  missingSchemaTypes: string[];
+  existingSchemaTypes: string[];
+  evidence: {
+    serpSchemaSignals: string[];
+    hasNoSchemaAtAll: boolean;
+  };
+  suggestedAction: 'review_schema_gap';
+}
+
+export interface ProposalsSummary {
+  archetypeProposalCount: number;
+  schemaProposalCount: number;
+  totalProposals: number;
+}
+
+export interface ProposalsResponse {
+  projectId: string;
+  proposals: {
+    archetypeProposals: ArchetypeProposal[];
+    schemaProposals: SchemaProposal[];
+  };
+  summary: ProposalsSummary;
+}

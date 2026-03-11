@@ -582,4 +582,15 @@ export const toolDefinitions = [
       additionalProperties: false,
     },
   },
+  // ── Proposal surface tools ────────────────────────────────────────────────
+  {
+    name: "get_proposals",
+    description:
+      "Returns Phase C1 SERP-to-Content-Graph proposals for the active project: archetype alignment proposals and schema gap proposals. Each proposal is evidence-backed, deterministic, and read-only. Returns archetypeProposals, schemaProposals, and summary counts.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
 ] as const;

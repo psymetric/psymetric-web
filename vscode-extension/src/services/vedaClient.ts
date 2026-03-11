@@ -9,7 +9,7 @@ import { StateService } from './stateService';
 import { VedaError } from '../utils/errors';
 import { PageCommandCenterResponse } from '../types/pageCommandCenter';
 import { ApiEnvelope } from '../types/api';
-import { VedaBrainDiagnosticsResponse } from '../types/vedaBrain';
+import { VedaBrainDiagnosticsResponse, ProposalsResponse } from '../types/vedaBrain';
 
 export class VedaClient {
   constructor(
@@ -131,5 +131,15 @@ export class VedaClient {
    */
   async getVedaBrainDiagnostics(): Promise<ApiEnvelope<VedaBrainDiagnosticsResponse>> {
     return this.get<ApiEnvelope<VedaBrainDiagnosticsResponse>>('/api/veda-brain/project-diagnostics');
+  }
+
+  /**
+   * Fetch Phase C1 SERP-to-Content-Graph proposals.
+   * Returns compute-on-read archetypeProposals and schemaProposals
+   * derived from VEDA Brain diagnostics.
+   * Read-only. No persistence.
+   */
+  async getProposals(): Promise<ApiEnvelope<ProposalsResponse>> {
+    return this.get<ApiEnvelope<ProposalsResponse>>('/api/veda-brain/proposals');
   }
 }

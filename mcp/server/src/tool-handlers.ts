@@ -186,6 +186,9 @@ export async function handleToolCall(
       return handleCreateProject(args, apiClient);
     case "get_project":
       return handleGetProject(args, apiClient);
+    // ── Proposal surface tools ────────────────────────────────────────────
+    case "get_proposals":
+      return handleGetProposals(apiClient);
     default:
       throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${toolName}`);
   }
@@ -843,6 +846,26 @@ async function handleSpikeDelta(
     spike: topSpike,
     delta: deltaBody.data,
   });
+}
+
+/**
+ * get_proposals: GET /api/veda-brain/proposals
+ *
+ * Returns Phase C1 SERP-to-Content-Graph proposals for the active project.
+ * Project scoping is handled entirely by ApiClient headers.
+ * Read-only. No arguments required.
+ */
+async function handleGetProposals(
+  apiClient: ApiClient
+): Promise<unknown> {
+  const response = await apiClient.fetch("/api/veda-brain/proposals");
+
+  if (!response.ok) {
+    await handleApiError(response);
+  }
+
+  const data = await response.json();
+  return formatToolResult(data);
 }
 
 /**
