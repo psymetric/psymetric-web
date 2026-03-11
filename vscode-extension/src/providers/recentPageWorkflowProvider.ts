@@ -84,15 +84,15 @@ export class RecentPageWorkflowProvider
   getChildren(): vscode.ProviderResult<RecentWorkflowTreeItem[]> {
     if (!this.state.activeProject) {
       if (this._view) this._view.message =
-        'Recent Page Workflow — stores page and page-keyword investigations for quick return. Select a project first.';
+        'Recent Page Workflow — session history of page context and keyword diagnostic runs. Select a project first.';
       return [];
     }
 
     const entries = this.memory.getAll();
     if (entries.length === 0) {
       if (this._view) this._view.message =
-        'Recent Page Workflow — session history of page context and keyword diagnostic runs. '
-        + 'Open a file and run VEDA: Investigate Current Page Context or VEDA: Choose Project Keyword Diagnostic to populate this view.';
+        'Recent Page Workflow — no runs yet this session. '
+        + 'Open a file and run VEDA: Open Page Command Center or VEDA: Choose Project Keyword Diagnostic to populate this view.';
       return [];
     }
 

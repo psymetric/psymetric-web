@@ -19,14 +19,8 @@ import { AlertItem, AlertListResponse } from '../types/alert';
  */
 function alertsEmptyMessage(lifecycleState: string | undefined): string {
   const s = (lifecycleState ?? '').toLowerCase();
-  if (s === 'observing' || s === 'new') {
-    return 'No alerts yet — continue collecting snapshots.';
-  }
-  if (s === 'developing' || s === 'active') {
-    return 'No alerts in the last 7 days.';
-  }
-  if (s === 'seasoned' || s === 'mature') {
-    return 'No alerts in the last 7 days.';
+  if (s === 'targeting' || s === 'observing') {
+    return 'No alerts in the last 7 days — continue collecting snapshots to build volatility history.';
   }
   return 'No alerts in the last 7 days.';
 }
@@ -121,7 +115,7 @@ export class AlertsProvider implements vscode.TreeDataProvider<AlertTreeItem> {
     const lifecycle = this.state.activeProject?.lifecycleState;
 
     if (!this.state.activeProject) {
-      this._setMessage('Select a project to view alerts.');
+      this._setMessage('Top Alerts — shows volatile keyword alerts for the active project. Select a project first.');
       this._setBadge(undefined);
       return [];
     }
@@ -165,9 +159,17 @@ export class AlertsProvider implements vscode.TreeDataProvider<AlertTreeItem> {
       this._setBadge(this._items.length > 0 ? this._items.length : undefined);
     } catch {
       // Load failure reported in-view via message — no toast needed.
+      const cfg    = vscode.workspace.getConfiguration('veda');
+      const envKey = cfg.get<string>('activeEnvironment') ?? 'local';
+      const envs   = cfg.get<Record<string, { baseUrl?: string }>>('environments') ?? {};
+      const baseUrl = envs[envKey]?.baseUrl ?? null;
+      const envLabel = envKey.toUpperCase();
+      const failMsg = baseUrl
+        ? `Top Alerts — could not reach ${envLabel} at ${baseUrl}. Check the environment is running, then use VEDA: Refresh Alerts.`
+        : `Top Alerts — ${envLabel} base URL not configured. Check Settings › veda.environments, then use VEDA: Refresh Alerts.`;
       this._items = [];
       this._loaded = true;
-      this._setMessage('Top Alerts — could not load. Check that the VEDA environment is reachable and a project is active.');
+      this._setMessage(failMsg);
       this._setBadge(undefined);
     } finally {
       this._loading = false;

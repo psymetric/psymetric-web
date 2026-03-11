@@ -109,7 +109,7 @@ export class KeywordsProvider implements vscode.TreeDataProvider<KeywordTreeItem
     const lifecycle = this.state.activeProject?.lifecycleState;
 
     if (!this.state.activeProject) {
-      this._setMessage('Keywords — shows tracked keyword targets. Select a project first.');
+      this._setMessage('Keywords — tracks SERP keyword targets for the active project. Select a project first.');
       this._setBadge(undefined);
       return [];
     }
@@ -153,9 +153,17 @@ export class KeywordsProvider implements vscode.TreeDataProvider<KeywordTreeItem
       this._setBadge(this._items.length > 0 ? this._items.length : undefined);
     } catch {
       // Load failure reported in-view via message — no toast needed.
+      const cfg    = vscode.workspace.getConfiguration('veda');
+      const envKey = cfg.get<string>('activeEnvironment') ?? 'local';
+      const envs   = cfg.get<Record<string, { baseUrl?: string }>>('environments') ?? {};
+      const baseUrl = envs[envKey]?.baseUrl ?? null;
+      const envLabel = envKey.toUpperCase();
+      const failMsg = baseUrl
+        ? `Keywords — could not reach ${envLabel} at ${baseUrl}. Check the environment is running, then use VEDA: Refresh Keywords.`
+        : `Keywords — ${envLabel} base URL not configured. Check Settings › veda.environments, then use VEDA: Refresh Keywords.`;
       this._items = [];
       this._loaded = true;
-      this._setMessage('Keywords — could not load targets. Check that the VEDA environment is reachable and a project is active.');
+      this._setMessage(failMsg);
       this._setBadge(undefined);
     } finally {
       this._loading = false;
