@@ -238,6 +238,11 @@ All analytics are compute-on-read. No materialized volatility state is permitted
 - Brand Surface Registry
 - Page Command Center expansion
 - MCP toolset for project creation and blueprint workflows
+- SERP-to-Content-Graph proposal helpers *(Phase C1: archetype + schema proposals only, read-only, compute-on-read)*
+
+SERP-to-Content-Graph helpers generate operator-reviewable proposals only. They do not mutate Content Graph state automatically.
+Phase C1 scope: `GET /api/veda-brain/proposals` returning archetypeProposals and schemaProposals derived from VEDA Brain diagnostics.
+Topic proposals (DQ-001), entity proposals (DQ-002), and authority-support proposals (DQ-003) are deferred to C2.
 
 ---
 

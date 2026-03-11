@@ -127,6 +127,7 @@ if ($_seed -and $_seed.data -and $_seed.data.Count -gt 0) { $entityId = $_seed.d
 . "$PSScriptRoot\hammer\hammer-content-graph-intelligence.ps1"
 . "$PSScriptRoot\hammer\hammer-veda-brain-phase1.ps1"
 . "$PSScriptRoot\hammer\hammer-project-bootstrap.ps1"
+. "$PSScriptRoot\hammer\hammer-veda-brain-proposals.ps1"
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 Write-Host ""
