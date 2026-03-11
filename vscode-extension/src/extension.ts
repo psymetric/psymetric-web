@@ -101,7 +101,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(statusBarItem);
 
   // ── Initial status bar render ─────────────────────────────────────────────
-  updateStatusBar(statusBarItem, config.getActiveEnvironmentName(), null);
+  updateStatusBar(statusBarItem, config.getActiveEnvironmentName(), null, config.getBaseUrl());
 
   // ── Editor change → stale page-context panel detection ───────────────────
   context.subscriptions.push(
@@ -131,7 +131,7 @@ export function activate(context: vscode.ExtensionContext): void {
     state.onStateChange(() => {
       const envName = config.getActiveEnvironmentName();
       const projectName = state.activeProject?.name ?? null;
-      updateStatusBar(statusBarItem, envName, projectName);
+      updateStatusBar(statusBarItem, envName, projectName, config.getBaseUrl());
       resultsPanel.notifyProjectChanged();
     })
   );

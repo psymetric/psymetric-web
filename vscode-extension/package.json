@@ -35,6 +35,7 @@
     "onCommand:veda.refreshVedaBrain",
     "onCommand:veda.brainOpenPageCommandCenter",
     "onCommand:veda.openProjectBlueprintWorkflow",
+    "onCommand:veda.openProjectSetupWorkflow",
     "onCommand:veda.viewProposals"
   ],
   "main": "./out/extension.js",
@@ -126,6 +127,10 @@
       {
         "command": "veda.openProjectBlueprintWorkflow",
         "title": "VEDA: Open Project Blueprint Workflow"
+      },
+      {
+        "command": "veda.openProjectSetupWorkflow",
+        "title": "VEDA: Open Project Setup Workflow"
       },
       {
         "command": "veda.viewProposals",

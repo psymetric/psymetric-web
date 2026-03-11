@@ -19,8 +19,9 @@ import { switchEnvironment, updateStatusBar } from './commands/switchEnvironment
 import { selectProject } from './commands/selectProject';
 import { refreshContext } from './commands/refreshContext';
 
-// ── Blueprint doc path (relative to workspace root) ──────────────────────────
+// ── Local doc paths (relative to workspace root) ────────────────────────────
 const VEDA_BLUEPRINT_DOC_REL = 'docs/specs/PROJECT-BLUEPRINT-SPEC.md';
+const VEDA_SETUP_DOC_REL     = 'docs/specs/VEDA-CREATE-PROJECT-WORKFLOW.md';
 import { investigateProject } from './commands/investigateProject';
 import { investigateCurrentPage } from './commands/investigateCurrentPage';
 import { pageKeywordDiagnostic } from './commands/pageKeywordDiagnostic';
@@ -60,11 +61,33 @@ export function registerCommands(
       refreshContext(provider)
     ),
 
-    // ── Blueprint workflow discoverability ────────────────────────────────────
+    // ── Setup + Blueprint workflow discoverability ────────────────────────────
     //
-    // Opens PROJECT-BLUEPRINT-SPEC.md from the local workspace in VS Code.
-    // Intended as the explicit first-run entry point for blueprint work.
+    // Two paired commands open the two primary setup workflow docs from the
+    // local workspace. Both mirror the same open-doc pattern:
+    //   - veda.openProjectSetupWorkflow  → VEDA-CREATE-PROJECT-WORKFLOW.md
+    //   - veda.openProjectBlueprintWorkflow → PROJECT-BLUEPRINT-SPEC.md
     // Falls back to a clear pointer message if the workspace root cannot be resolved.
+
+    vscode.commands.registerCommand('veda.openProjectSetupWorkflow', async () => {
+      const folders = vscode.workspace.workspaceFolders;
+      if (folders && folders.length > 0) {
+        try {
+          const docUri = vscode.Uri.joinPath(folders[0].uri, VEDA_SETUP_DOC_REL);
+          const doc = await vscode.workspace.openTextDocument(docUri);
+          await vscode.window.showTextDocument(doc, { preview: false });
+          vscode.window.showInformationMessage(
+            'VEDA: Setup workflow is open — follow the steps to create a project container, then run VEDA: Open Project Blueprint Workflow to draft the blueprint.'
+          );
+          return;
+        } catch {
+          // Fall through to informational message below.
+        }
+      }
+      vscode.window.showInformationMessage(
+        `VEDA: Open ${VEDA_SETUP_DOC_REL} in this repo to begin the project setup workflow.`
+      );
+    }),
 
     vscode.commands.registerCommand('veda.openProjectBlueprintWorkflow', async () => {
       const folders = vscode.workspace.workspaceFolders;
@@ -73,6 +96,9 @@ export function registerCommands(
           const docUri = vscode.Uri.joinPath(folders[0].uri, VEDA_BLUEPRINT_DOC_REL);
           const doc = await vscode.workspace.openTextDocument(docUri);
           await vscode.window.showTextDocument(doc, { preview: false });
+          vscode.window.showInformationMessage(
+            'VEDA: Blueprint spec is open — if no project exists yet, start at Step 1 (Create Project Container). If a project is already created, proceed to Step 2 (Draft Blueprint).'
+          );
           return;
         } catch {
           // Fall through to informational message below.

@@ -4,6 +4,7 @@
 // lifecycle state, maturity summary, next valid action.
 // Phase 1.8: lifecycle badge with colour emphasis; nextValidAction prominently displayed.
 // Phase 1.9: lifecycle-guided fallback hints; blueprint discoverability for created/draft.
+// Phase 1.10: diagnostic-to-next-step continuity — fallback hints now name explicit destinations.
 
 import * as vscode from 'vscode';
 import { StateService } from '../services/stateService';
@@ -33,12 +34,13 @@ function lifecycleColor(state: string): string {
  */
 function lifecycleFallbackHint(state: string): string {
   switch (state.toLowerCase()) {
-    case 'created':     return 'Draft the project blueprint to define brand identity, surfaces, and keyword territory.';
-    case 'draft':       return 'Review and apply the project blueprint before beginning keyword research.';
-    case 'researching': return 'Define keyword targets from the discovery pool to begin SERP observation.';
-    case 'targeting':   return 'Begin SERP observation to start collecting snapshot and volatility data.';
-    case 'observing':   return 'Review SERP Observatory and VEDA Brain for active signals and diagnostics.';
-    default:            return 'Use SERP Observatory and VEDA Brain to review active project signals.';
+    case 'created':     return 'Draft the project blueprint to define brand identity, surfaces, and keyword territory. Run VEDA: Open Project Blueprint Workflow from the command palette to open the blueprint spec.';
+    case 'draft':       return 'Review and apply the project blueprint before beginning keyword research. Run VEDA: Open Project Blueprint Workflow from the command palette to open the blueprint spec.';
+    case 'researching': return 'Define keyword targets from the discovery pool to begin SERP observation. Run VEDA: Keyword Diagnostic to inspect candidate queries, then add confirmed targets via the VEDA API or MCP tools.';
+    case 'targeting':   return 'Begin SERP observation to collect snapshot and volatility data. Open SERP Observatory to check climate state, then use VEDA Brain to review structural gaps.';
+    case 'developing':  return 'Content work is in progress. Open VEDA Brain to track structural gaps and coverage quality. Use Page Command Center to manage per-page content actions. Return to SERP Observatory to monitor climate shifts as content lands.';
+    case 'observing':   return 'Open SERP Observatory to check active alerts and operator hints. Then review VEDA Brain diagnostics — use the ↗ icons to jump to Page Command Center for per-page action.';
+    default:            return 'Open SERP Observatory for climate state and alerts. Open VEDA Brain for structural diagnostics and Page Command Center links.';
   }
 }
 
@@ -94,9 +96,11 @@ export class ProjectContextProvider implements vscode.WebviewViewProvider {
 
   private _buildHtml(): string {
     const project = this.state.activeProject;
-    const envName = capitalise(
-      vscode.workspace.getConfiguration('veda').get<string>('activeEnvironment') ?? 'local'
-    );
+    const cfg = vscode.workspace.getConfiguration('veda');
+    const envName = capitalise(cfg.get<string>('activeEnvironment') ?? 'local');
+    const envKey  = (cfg.get<string>('activeEnvironment') ?? 'local');
+    const envs    = cfg.get<Record<string, { baseUrl?: string }>>('environments') ?? {};
+    const baseUrl = envs[envKey]?.baseUrl ?? null;
 
     const styles = `
 <style>
@@ -175,13 +179,17 @@ export class ProjectContextProvider implements vscode.WebviewViewProvider {
 </style>`;
 
     if (!project) {
+      const urlLine = baseUrl
+        ? `<span style="display:block;margin-top:4px;font-size:0.78em;color:var(--muted)">${escapeHtml(baseUrl)}</span>`
+        : `<span style="display:block;margin-top:4px;font-size:0.78em;color:var(--warn)">No base URL configured for this environment. Check Settings › veda.environments.</span>`;
       return `<!DOCTYPE html><html><head><meta charset="UTF-8">${styles}</head><body>
 <div class="env-pill">ENV: ${escapeHtml(envName.toUpperCase())}</div>
+${urlLine}
 <div class="empty">
   <strong>No project selected</strong>
   <span>Run <em>VEDA: Select Project</em> from the command palette to choose an active project.</span>
   <span style="display:block;margin-top:8px;font-size:0.82em;color:var(--warn)">
-    If no projects exist yet, use the project setup workflow to create one and draft its blueprint before using the observatory.
+    If no projects exist yet, run <em>VEDA: Open Project Setup Workflow</em> from the command palette to create one, then run <em>VEDA: Open Project Blueprint Workflow</em> to draft the blueprint.
   </span>
 </div>
 </body></html>`;
@@ -219,10 +227,11 @@ export class ProjectContextProvider implements vscode.WebviewViewProvider {
 
     // ── Blueprint discoverability note (created / draft only) ────────────
     //
-    // For states where blueprint is the immediate foundational workflow,
-    // surface a brief note below the next-action block so operators are
-    // not left guessing where blueprint work happens.
-    const blueprintNote = project.lifecycleState && isBlueprintPhase(project.lifecycleState)
+    // Shown only when the server supplies nextValidAction — in that case the
+    // fallback hint is not rendered, so the blueprint command pointer would
+    // otherwise be absent. When the fallback hint is active it already names
+    // the command directly, so the note would duplicate it.
+    const blueprintNote = project.lifecycleState && isBlueprintPhase(project.lifecycleState) && !!actionText
       ? `<div style="margin-top:8px;font-size:0.8em;color:var(--muted);border-top:1px solid var(--border);padding-top:7px">
            <span style="color:var(--warn);font-weight:600">Blueprint</span>
            &nbsp;— foundational workflow for this stage. Run
@@ -231,8 +240,13 @@ export class ProjectContextProvider implements vscode.WebviewViewProvider {
          </div>`
       : '';
 
+    const envUrlLine = baseUrl
+      ? `<div style="font-size:0.75em;color:var(--muted);margin-bottom:8px">${escapeHtml(baseUrl)}</div>`
+      : `<div style="font-size:0.75em;color:var(--warn);margin-bottom:8px">No base URL configured — check Settings › veda.environments.</div>`;
+
     return `<!DOCTYPE html><html><head><meta charset="UTF-8">${styles}</head><body>
 <div class="env-pill">ENV: ${escapeHtml(envName.toUpperCase())}</div>
+${envUrlLine}
 <h2>Active Project</h2>
 <div class="project-name">${escapeHtml(project.name)}</div>
 ${lifecycleBadge}

@@ -39,31 +39,38 @@ export async function switchEnvironment(
   // Clear stale project state when environment changes
   state.setActiveProject(null);
 
-  updateStatusBar(statusBarItem, selectedName, null);
+  const newBaseUrl = config.getBaseUrl();
+  updateStatusBar(statusBarItem, selectedName, null, newBaseUrl);
   provider.refresh();
 
-  vscode.window.showInformationMessage(`VEDA environment switched to: ${selectedName.toUpperCase()}`);
+  const urlDisplay = newBaseUrl ?? '(no base URL configured)';
+  vscode.window.showInformationMessage(
+    `VEDA environment switched to ${selectedName.toUpperCase()} — ${urlDisplay}`
+  );
 }
 
 /**
  * Update the status bar item text.
  * Format: "⟨telescope⟩ VEDA: ENV | Project Name" (project truncated at 24 chars).
  * If no project is active, shows env only.
+ * @param baseUrl Optional base URL shown in the tooltip for environment clarity.
  */
 export function updateStatusBar(
   item: vscode.StatusBarItem,
   envName: string,
-  projectName: string | null
+  projectName: string | null,
+  baseUrl?: string | null
 ): void {
   const env = envName.toUpperCase();
+  const urlSuffix = baseUrl ? ` (${baseUrl})` : '';
   if (projectName) {
     const truncated = projectName.length > 24
       ? projectName.slice(0, 22) + '…'
       : projectName;
     item.text = `$(telescope) VEDA: ${env} | ${truncated}`;
-    item.tooltip = `VEDA Observatory — ${env} · ${projectName}. Click to switch environment.`;
+    item.tooltip = `VEDA Observatory — ${env}${urlSuffix} · ${projectName}. Click to switch environment.`;
   } else {
     item.text = `$(telescope) VEDA: ${env}`;
-    item.tooltip = `VEDA Observatory — ${env} environment. Click to switch.`;
+    item.tooltip = `VEDA Observatory — ${env}${urlSuffix}. Click to switch environment.`;
   }
 }

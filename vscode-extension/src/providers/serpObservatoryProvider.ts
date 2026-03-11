@@ -12,6 +12,9 @@
 // Fetches: GET /api/seo/serp-disturbances?include=hints
 // This returns all dependency layers in one request.
 //
+// Phase 1.10: diagnostic-to-next-step continuity — alerts and hints sections
+// now surface explicit next-step destinations (Brain, Page Command Center).
+//
 // Read-only. No mutations. No recomputation. No caching.
 // The extension is a visualization surface only.
 
@@ -173,11 +176,15 @@ export class SerpObservatoryProvider implements vscode.WebviewViewProvider {
       return _shell(_emptyState('Loading SERP climate…'));
     }
     if (this._packet === null) {
+      const { envLabel, baseUrl } = _readEnvContext();
+      const reachHint = baseUrl
+        ? `Could not reach ${envLabel} at ${baseUrl}.`
+        : `Could not load data — ${envLabel} may not be running or base URL is not configured.`;
       return _shell(_richEmptyState(
         'SERP Observatory',
         'Tracks live search climate, active alerts, operator hints, and keyword impact for the active project.',
-        'Could not load SERP Observatory data.',
-        'Check that the VEDA environment is reachable and the project has keyword targets with SERP snapshots.'
+        reachHint,
+        'Check the environment is running and the project has keyword targets with SERP snapshots. Use <em>VEDA: Switch Environment</em> to change environment.'
       ));
     }
 
@@ -262,7 +269,9 @@ function _renderAlerts(alerts: AlertResult[]): string {
 </div>`;
   }).join('');
 
-  return _section('Active Alerts', items);
+  const nextStep = `<div class="next-step-hint">Next: open <strong>VEDA Brain</strong> to review structural gaps. From VEDA Brain, use the <strong>↗ icons</strong> to open Page Command Center for affected pages.</div>`;
+
+  return _section('Active Alerts', items + nextStep);
 }
 
 function _renderHints(hints: OperatorHint[]): string {
@@ -279,7 +288,9 @@ function _renderHints(hints: OperatorHint[]): string {
 </div>`;
   }).join('');
 
-  return _section('Operator Investigation Hints', items);
+  const nextStep = `<div class="next-step-hint">Next: take these hints to <strong>VEDA Brain</strong> for structural diagnostics. From VEDA Brain, use the <strong>↗ icons</strong> to open Page Command Center for specific pages.</div>`;
+
+  return _section('Operator Investigation Hints', items + nextStep);
 }
 
 function _renderImpactRanking(keywords: ImpactKeyword[]): string {
@@ -331,6 +342,18 @@ function _renderAffectedKeywords(keywords: AffectedKeyword[]): string {
 // ─────────────────────────────────────────────────────────────────────────────
 // Shell + section helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Read active environment name and base URL from VS Code workspace configuration.
+ * Pure utility — no side effects, no imports beyond vscode (already imported above).
+ */
+function _readEnvContext(): { envLabel: string; baseUrl: string | null } {
+  const cfg    = vscode.workspace.getConfiguration('veda');
+  const envKey = cfg.get<string>('activeEnvironment') ?? 'local';
+  const envs   = cfg.get<Record<string, { baseUrl?: string }>>('environments') ?? {};
+  const baseUrl = envs[envKey]?.baseUrl ?? null;
+  return { envLabel: envKey.toUpperCase(), baseUrl };
+}
 
 function _section(heading: string, body: string): string {
   return `<div class="obs-section">
@@ -575,6 +598,20 @@ function _shell(body: string): string {
   .rich-empty-next em {
     color: var(--accent);
     font-style: normal;
+  }
+
+  /* ── Next-step hints (diagnostic continuity) ─────────────────── */
+  .next-step-hint {
+    margin-top: 8px;
+    padding-top: 7px;
+    border-top: 1px solid var(--border);
+    font-size: 0.8em;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .next-step-hint strong {
+    color: var(--accent);
+    font-weight: 600;
   }
 </style>
 </head>
