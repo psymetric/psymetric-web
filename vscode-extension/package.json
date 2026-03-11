@@ -33,7 +33,8 @@
     "onCommand:veda.refreshSerpObservatory",
     "onView:veda.vedaBrain",
     "onCommand:veda.refreshVedaBrain",
-    "onCommand:veda.brainOpenPageCommandCenter"
+    "onCommand:veda.brainOpenPageCommandCenter",
+    "onCommand:veda.openProjectBlueprintWorkflow"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -120,6 +121,10 @@
       {
         "command": "veda.brainOpenPageCommandCenter",
         "title": "VEDA: Brain → Open Page Command Center"
+      },
+      {
+        "command": "veda.openProjectBlueprintWorkflow",
+        "title": "VEDA: Open Project Blueprint Workflow"
       }
     ],
     "viewsContainers": {

@@ -9,7 +9,6 @@ import * as vscode from 'vscode';
 import { VedaClient } from '../services/vedaClient';
 import { StateService } from '../services/stateService';
 import { AlertItem, AlertListResponse } from '../types/alert';
-import { showApiError } from '../utils/errors';
 
 // ── Lifecycle helper ──────────────────────────────────────────────────────────
 
@@ -164,11 +163,11 @@ export class AlertsProvider implements vscode.TreeDataProvider<AlertTreeItem> {
       this._items = raw.map(a => new AlertTreeItem(a));
       this._loaded = true;
       this._setBadge(this._items.length > 0 ? this._items.length : undefined);
-    } catch (err) {
-      showApiError('Top Alerts', err);
+    } catch {
+      // Load failure reported in-view via message — no toast needed.
       this._items = [];
       this._loaded = true;
-      this._setMessage('Failed to load alerts.');
+      this._setMessage('Top Alerts — could not load. Check that the VEDA environment is reachable and a project is active.');
       this._setBadge(undefined);
     } finally {
       this._loading = false;

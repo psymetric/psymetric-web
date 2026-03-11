@@ -18,6 +18,9 @@ import { ResultsPanel } from './views/resultsPanel';
 import { switchEnvironment, updateStatusBar } from './commands/switchEnvironment';
 import { selectProject } from './commands/selectProject';
 import { refreshContext } from './commands/refreshContext';
+
+// ── Blueprint doc path (relative to workspace root) ──────────────────────────
+const VEDA_BLUEPRINT_DOC_REL = 'docs/specs/PROJECT-BLUEPRINT-SPEC.md';
 import { investigateProject } from './commands/investigateProject';
 import { investigateCurrentPage } from './commands/investigateCurrentPage';
 import { pageKeywordDiagnostic } from './commands/pageKeywordDiagnostic';
@@ -56,6 +59,29 @@ export function registerCommands(
     vscode.commands.registerCommand('veda.refreshContext', () =>
       refreshContext(provider)
     ),
+
+    // ── Blueprint workflow discoverability ────────────────────────────────────
+    //
+    // Opens PROJECT-BLUEPRINT-SPEC.md from the local workspace in VS Code.
+    // Intended as the explicit first-run entry point for blueprint work.
+    // Falls back to a clear pointer message if the workspace root cannot be resolved.
+
+    vscode.commands.registerCommand('veda.openProjectBlueprintWorkflow', async () => {
+      const folders = vscode.workspace.workspaceFolders;
+      if (folders && folders.length > 0) {
+        try {
+          const docUri = vscode.Uri.joinPath(folders[0].uri, VEDA_BLUEPRINT_DOC_REL);
+          const doc = await vscode.workspace.openTextDocument(docUri);
+          await vscode.window.showTextDocument(doc, { preview: false });
+          return;
+        } catch {
+          // Fall through to informational message below.
+        }
+      }
+      vscode.window.showInformationMessage(
+        `VEDA: Open ${VEDA_BLUEPRINT_DOC_REL} in this repo to review the blueprint workflow spec.`
+      );
+    }),
 
     vscode.commands.registerCommand('veda.investigateProject', () =>
       investigateProject(client, state, resultsPanel)

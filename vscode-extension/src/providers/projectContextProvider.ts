@@ -3,6 +3,7 @@
 // Sidebar webview provider. Displays active project context: name, domain,
 // lifecycle state, maturity summary, next valid action.
 // Phase 1.8: lifecycle badge with colour emphasis; nextValidAction prominently displayed.
+// Phase 1.9: lifecycle-guided fallback hints; blueprint discoverability for created/draft.
 
 import * as vscode from 'vscode';
 import { StateService } from '../services/stateService';
@@ -16,10 +17,38 @@ import { escapeHtml, capitalise } from '../utils/formatting';
  */
 function lifecycleColor(state: string): string {
   const s = state.toLowerCase();
-  if (s === 'seasoned' || s === 'mature')    return 'var(--vscode-terminal-ansiGreen)';
-  if (s === 'developing' || s === 'active')  return 'var(--vscode-textLink-foreground)';
-  if (s === 'observing' || s === 'new')      return 'var(--vscode-editorWarning-foreground)';
+  if (s === 'seasoned' || s === 'mature')             return 'var(--vscode-terminal-ansiGreen)';
+  if (s === 'observing' || s === 'targeting')         return 'var(--vscode-terminal-ansiGreen)';
+  if (s === 'developing' || s === 'active')           return 'var(--vscode-textLink-foreground)';
+  if (s === 'researching')                            return 'var(--vscode-textLink-foreground)';
+  if (s === 'draft')                                  return 'var(--vscode-editorWarning-foreground)';
+  if (s === 'created' || s === 'new')                 return 'var(--vscode-editorWarning-foreground)';
   return 'var(--vscode-descriptionForeground)';
+}
+
+/**
+ * Return a short operational next-step hint for a lifecycle state.
+ * Used only as a fallback when the server does not supply nextValidAction.
+ * Hints are intentionally brief — one actionable clause, no prose.
+ */
+function lifecycleFallbackHint(state: string): string {
+  switch (state.toLowerCase()) {
+    case 'created':     return 'Draft the project blueprint to define brand identity, surfaces, and keyword territory.';
+    case 'draft':       return 'Review and apply the project blueprint before beginning keyword research.';
+    case 'researching': return 'Define keyword targets from the discovery pool to begin SERP observation.';
+    case 'targeting':   return 'Begin SERP observation to start collecting snapshot and volatility data.';
+    case 'observing':   return 'Review SERP Observatory and VEDA Brain for active signals and diagnostics.';
+    default:            return 'Use SERP Observatory and VEDA Brain to review active project signals.';
+  }
+}
+
+/**
+ * Return true for lifecycle states where blueprint work is the immediate priority.
+ * Used to render a blueprint discoverability note in Project Context.
+ */
+function isBlueprintPhase(state: string): boolean {
+  const s = state.toLowerCase();
+  return s === 'created' || s === 'draft';
 }
 
 /**
@@ -150,7 +179,10 @@ export class ProjectContextProvider implements vscode.WebviewViewProvider {
 <div class="env-pill">ENV: ${escapeHtml(envName.toUpperCase())}</div>
 <div class="empty">
   <strong>No project selected</strong>
-  Run <em>VEDA: Select Project</em> to begin.
+  <span>Run <em>VEDA: Select Project</em> from the command palette to choose an active project.</span>
+  <span style="display:block;margin-top:8px;font-size:0.82em;color:var(--warn)">
+    If no projects exist yet, use the project setup workflow to create one and draft its blueprint before using the observatory.
+  </span>
 </div>
 </body></html>`;
     }
@@ -169,11 +201,33 @@ export class ProjectContextProvider implements vscode.WebviewViewProvider {
       ? `<div class="row"><span class="lbl">Maturity</span><span class="val">${escapeHtml(project.maturitySummary)}</span></div>`
       : '';
 
-    // ── Next valid action — rendered as a left-accented guidance block ────
-    const nextActionBlock = project.nextValidAction
+    // ── Next valid action — server-provided or lifecycle fallback ────────
+    //
+    // If the server supplies nextValidAction, render it verbatim (existing behaviour).
+    // If absent, derive a short hint from the lifecycle state so the panel is never
+    // silent about what the operator should do next.
+    const actionText  = project.nextValidAction?.trim() || '';
+    const actionLabel = project.nextValidAction?.trim() ? 'Next Action' : 'Next Step';
+    const actionBody  = actionText || (project.lifecycleState ? lifecycleFallbackHint(project.lifecycleState) : '');
+
+    const nextActionBlock = actionBody
       ? `<div class="next-action">
-           <div class="label">Next Action</div>
-           <div class="text">${escapeHtml(project.nextValidAction)}</div>
+           <div class="label">${actionLabel}</div>
+           <div class="text">${escapeHtml(actionBody)}</div>
+         </div>`
+      : '';
+
+    // ── Blueprint discoverability note (created / draft only) ────────────
+    //
+    // For states where blueprint is the immediate foundational workflow,
+    // surface a brief note below the next-action block so operators are
+    // not left guessing where blueprint work happens.
+    const blueprintNote = project.lifecycleState && isBlueprintPhase(project.lifecycleState)
+      ? `<div style="margin-top:8px;font-size:0.8em;color:var(--muted);border-top:1px solid var(--border);padding-top:7px">
+           <span style="color:var(--warn);font-weight:600">Blueprint</span>
+           &nbsp;— foundational workflow for this stage. Run
+           <em>VEDA: Open Project Blueprint Workflow</em> from the command palette
+           to open the blueprint spec in the editor.
          </div>`
       : '';
 
@@ -186,6 +240,7 @@ ${lifecycleBadge}
 ${domainRow}
 ${maturityRow}
 ${nextActionBlock}
+${blueprintNote}
 </body></html>`;
   }
 }

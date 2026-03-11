@@ -19,7 +19,6 @@ import * as vscode from 'vscode';
 import { VedaClient } from '../services/vedaClient';
 import { StateService } from '../services/stateService';
 import { escapeHtml } from '../utils/formatting';
-import { showApiError } from '../utils/errors';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Response shape (mirrors SIL-16 through SIL-24 API contract)
@@ -145,8 +144,8 @@ export class SerpObservatoryProvider implements vscode.WebviewViewProvider {
     try {
       const res = await this.client.getSerpDisturbances() as { data?: SerpDisturbancesPacket };
       this._packet = res?.data ?? null;
-    } catch (err) {
-      showApiError('SERP Observatory', err);
+    } catch {
+      // Load failure is reported in-panel via _richEmptyState — no toast needed.
       this._packet = null;
     } finally {
       this._loading = false;
@@ -163,13 +162,23 @@ export class SerpObservatoryProvider implements vscode.WebviewViewProvider {
 
   private _buildHtml(): string {
     if (!this.state.activeProject) {
-      return _shell(_emptyState('Select a project to view the SERP Observatory.'));
+      return _shell(_richEmptyState(
+        'SERP Observatory',
+        'Tracks live search climate, active alerts, operator hints, and keyword impact for the active project.',
+        'No project selected.',
+        'Run <em>VEDA: Select Project</em> to activate a project.'
+      ));
     }
     if (this._loading || this._packet === undefined) {
       return _shell(_emptyState('Loading SERP climate…'));
     }
     if (this._packet === null) {
-      return _shell(_errorState('Failed to load SERP Observatory data.'));
+      return _shell(_richEmptyState(
+        'SERP Observatory',
+        'Tracks live search climate, active alerts, operator hints, and keyword impact for the active project.',
+        'Could not load SERP Observatory data.',
+        'Check that the VEDA environment is reachable and the project has keyword targets with SERP snapshots.'
+      ));
     }
 
     const p = this._packet;
@@ -334,8 +343,22 @@ function _emptyState(msg: string): string {
   return `<div class="empty-state">${escapeHtml(msg)}</div>`;
 }
 
-function _errorState(msg: string): string {
-  return `<div class="error-state">${escapeHtml(msg)}</div>`;
+/**
+ * Richer empty/error state: panel purpose + current reason + next step.
+ * `nextHtml` is trusted HTML (no user data) — keep to static strings only.
+ */
+function _richEmptyState(
+  panelName: string,
+  purpose: string,
+  reason: string,
+  nextHtml: string
+): string {
+  return `<div class="rich-empty">
+  <div class="rich-empty-name">${escapeHtml(panelName)}</div>
+  <div class="rich-empty-purpose">${escapeHtml(purpose)}</div>
+  <div class="rich-empty-reason">${escapeHtml(reason)}</div>
+  <div class="rich-empty-next">${nextHtml}</div>
+</div>`;
 }
 
 function _shell(body: string): string {
@@ -523,11 +546,35 @@ function _shell(body: string): string {
     text-align: center;
     padding: 24px 0;
   }
-  .error-state {
+  .rich-empty {
+    padding: 20px 12px;
+  }
+  .rich-empty-name {
+    font-size: 0.72em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .rich-empty-purpose {
+    font-size: 0.84em;
+    color: var(--fg);
+    margin-bottom: 10px;
+    line-height: 1.5;
+  }
+  .rich-empty-reason {
+    font-size: 0.82em;
     color: var(--warn);
-    font-size: 0.88em;
-    text-align: center;
-    padding: 24px 0;
+    margin-bottom: 6px;
+  }
+  .rich-empty-next {
+    font-size: 0.82em;
+    color: var(--muted);
+  }
+  .rich-empty-next em {
+    color: var(--accent);
+    font-style: normal;
   }
 </style>
 </head>

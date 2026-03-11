@@ -23,7 +23,6 @@ import * as vscode from 'vscode';
 import { VedaClient } from '../services/vedaClient';
 import { StateService } from '../services/stateService';
 import { escapeHtml } from '../utils/formatting';
-import { showApiError } from '../utils/errors';
 import {
   VedaBrainDiagnosticsResponse,
   VedaBrainDiagnostics,
@@ -101,8 +100,8 @@ export class VedaBrainProvider implements vscode.WebviewViewProvider {
     try {
       const res = await this.client.getVedaBrainDiagnostics();
       this._data = res.data;
-    } catch (err) {
-      showApiError('VEDA Brain', err);
+    } catch {
+      // Load failure is reported in-panel via _richEmptyState — no toast needed.
       this._data = null;
     } finally {
       this._loading = false;
@@ -119,13 +118,23 @@ export class VedaBrainProvider implements vscode.WebviewViewProvider {
 
   private _buildHtml(): string {
     if (!this.state.activeProject) {
-      return _shell(_emptyState('Select a project to view VEDA Brain diagnostics.'), false);
+      return _shell(_richEmptyState(
+        'VEDA Brain',
+        'Shows structural diagnostics: archetype alignment, entity gaps, topic territory, authority and schema opportunities for tracked keywords.',
+        'No project selected.',
+        'Run <em>VEDA: Select Project</em> to activate a project.'
+      ), false);
     }
     if (this._loading || this._data === undefined) {
       return _shell(_emptyState('Loading Brain diagnostics…'), false);
     }
     if (this._data === null) {
-      return _shell(_errorState('Failed to load VEDA Brain diagnostics.'), false);
+      return _shell(_richEmptyState(
+        'VEDA Brain',
+        'Shows structural diagnostics: archetype alignment, entity gaps, topic territory, authority and schema opportunities for tracked keywords.',
+        'Could not load Brain diagnostics.',
+        'Check that the environment is reachable and the project has keyword targets and mapped pages. Use <em>VEDA: Investigate Project</em> to inspect project state.'
+      ), false);
     }
 
     const d: VedaBrainDiagnostics = this._data.diagnostics;
@@ -440,8 +449,22 @@ function _emptyState(msg: string): string {
   return `<div class="empty-state">${escapeHtml(msg)}</div>`;
 }
 
-function _errorState(msg: string): string {
-  return `<div class="error-state">${escapeHtml(msg)}</div>`;
+/**
+ * Richer empty/error state: panel purpose + current reason + next step.
+ * `nextHtml` is trusted HTML (no user data) — keep to static strings only.
+ */
+function _richEmptyState(
+  panelName: string,
+  purpose: string,
+  reason: string,
+  nextHtml: string
+): string {
+  return `<div class="rich-empty">
+  <div class="rich-empty-name">${escapeHtml(panelName)}</div>
+  <div class="rich-empty-purpose">${escapeHtml(purpose)}</div>
+  <div class="rich-empty-reason">${escapeHtml(reason)}</div>
+  <div class="rich-empty-next">${nextHtml}</div>
+</div>`;
 }
 
 function _shell(body: string, hasData: boolean): string {
@@ -705,6 +728,36 @@ function _shell(body: string, hasData: boolean): string {
     font-size: 0.88em;
     text-align: center;
     padding: 24px 10px;
+  }
+  .rich-empty {
+    padding: 20px 12px;
+  }
+  .rich-empty-name {
+    font-size: 0.72em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .rich-empty-purpose {
+    font-size: 0.84em;
+    color: var(--fg);
+    margin-bottom: 10px;
+    line-height: 1.5;
+  }
+  .rich-empty-reason {
+    font-size: 0.82em;
+    color: var(--warn);
+    margin-bottom: 6px;
+  }
+  .rich-empty-next {
+    font-size: 0.82em;
+    color: var(--muted);
+  }
+  .rich-empty-next em {
+    color: var(--accent);
+    font-style: normal;
   }
 </style>
 </head>

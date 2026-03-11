@@ -4,12 +4,12 @@
 // Fetches GET /api/seo/keyword-targets?limit=100 and renders a flat list.
 // Clicking a keyword item fires the keyword diagnostic flow.
 // Phase 1.8: lifecycle-aware empty-state copy.
+// Phase 1.9: richer empty-state guidance (purpose + why empty + next step).
 
 import * as vscode from 'vscode';
 import { VedaClient } from '../services/vedaClient';
 import { StateService } from '../services/stateService';
 import { KeywordTarget, KeywordTargetListResponse } from '../types/keyword';
-import { showApiError } from '../utils/errors';
 
 // ── Lifecycle helper ──────────────────────────────────────────────────────────
 
@@ -19,10 +19,16 @@ import { showApiError } from '../utils/errors';
  */
 function keywordsEmptyMessage(lifecycleState: string | undefined): string {
   const s = (lifecycleState ?? '').toLowerCase();
-  if (s === 'observing' || s === 'new' || s === 'researching' || s === 'targeting') {
-    return 'Add keyword targets to begin observation.';
+  if (s === 'created' || s === 'draft') {
+    return 'Keywords — tracks keyword targets for this project. Complete the blueprint workflow before adding keyword targets.';
   }
-  return 'No keyword targets yet.';
+  if (s === 'researching') {
+    return 'Keywords — no targets defined yet. Run keyword research and define targets to begin SERP observation.';
+  }
+  if (s === 'targeting' || s === 'observing') {
+    return 'Keywords — no targets found. Add keyword targets via the VEDA API or run VEDA: Keyword Diagnostic to inspect individual queries.';
+  }
+  return 'Keywords — tracks keyword targets for the active project. No targets defined yet.';
 }
 
 // ── Tree item ─────────────────────────────────────────────────────────────────
@@ -103,7 +109,7 @@ export class KeywordsProvider implements vscode.TreeDataProvider<KeywordTreeItem
     const lifecycle = this.state.activeProject?.lifecycleState;
 
     if (!this.state.activeProject) {
-      this._setMessage('Select a project to view keywords.');
+      this._setMessage('Keywords — shows tracked keyword targets. Select a project first.');
       this._setBadge(undefined);
       return [];
     }
@@ -145,11 +151,11 @@ export class KeywordsProvider implements vscode.TreeDataProvider<KeywordTreeItem
       this._items = raw.map(k => new KeywordTreeItem(k));
       this._loaded = true;
       this._setBadge(this._items.length > 0 ? this._items.length : undefined);
-    } catch (err) {
-      showApiError('Keywords', err);
+    } catch {
+      // Load failure reported in-view via message — no toast needed.
       this._items = [];
       this._loaded = true;
-      this._setMessage('Failed to load keywords.');
+      this._setMessage('Keywords — could not load targets. Check that the VEDA environment is reachable and a project is active.');
       this._setBadge(undefined);
     } finally {
       this._loading = false;
