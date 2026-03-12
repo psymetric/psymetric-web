@@ -581,6 +581,52 @@ if ($OtherHeaders.Count -gt 0) {
     Write-Host "Testing: CG-PT7 PageTopic not visible to other project  SKIP (no OtherProject configured)" -ForegroundColor DarkYellow; Hammer-Record SKIP
 }
 
+# CG-PT8: Cross-project topicId returns 404 (DB-level project enforcement)
+# Defends the new CgPageTopic project FK + trigger added in Batch 2.
+# Scenario: use OtherProject's own page + a topic from the primary project.
+if ($OtherHeaders.Count -gt 0) {
+    try {
+        Write-Host "Testing: CG-PT8 POST /content-graph/page-topics returns 404 for cross-project topicId" -NoNewline
+        if ([string]::IsNullOrWhiteSpace($cgTopicId)) {
+            Write-Host "  SKIP (cgTopicId not available)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+        } else {
+            # Create a page in OtherProject to use as the pageId
+            $otherSurfResp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $OtherHeaders `
+                -Body (@{ type = "website"; key = "cgpt8s-$cgRun" } | ConvertTo-Json -Compress) `
+                -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+            $otherSurfId = $null
+            if ($otherSurfResp.StatusCode -eq 201) { try { $otherSurfId = ($otherSurfResp.Content | ConvertFrom-Json).data.id } catch {} }
+            $otherSiteResp = $null
+            $otherSiteId = $null
+            if (-not [string]::IsNullOrWhiteSpace($otherSurfId)) {
+                $otherSiteResp = Invoke-WebRequest -Uri "$Base/api/content-graph/sites" -Method POST -Headers $OtherHeaders `
+                    -Body (@{ surfaceId = $otherSurfId; domain = "pt8-$cgRun.example.com" } | ConvertTo-Json -Compress) `
+                    -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+                if ($otherSiteResp.StatusCode -eq 201) { try { $otherSiteId = ($otherSiteResp.Content | ConvertFrom-Json).data.id } catch {} }
+            }
+            $otherPageId = $null
+            if (-not [string]::IsNullOrWhiteSpace($otherSiteId)) {
+                $otherPageResp = Invoke-WebRequest -Uri "$Base/api/content-graph/pages" -Method POST -Headers $OtherHeaders `
+                    -Body (@{ siteId = $otherSiteId; url = "https://pt8-$cgRun.example.com/page"; title = "PT8 Page" } | ConvertTo-Json -Compress) `
+                    -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+                if ($otherPageResp.StatusCode -eq 201) { try { $otherPageId = ($otherPageResp.Content | ConvertFrom-Json).data.id } catch {} }
+            }
+            if ([string]::IsNullOrWhiteSpace($otherPageId)) {
+                Write-Host "  SKIP (could not create page in other project for PT8)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+            } else {
+                # Post with OtherProject's page but primary project's topicId — should 404
+                $body = @{ pageId = $otherPageId; topicId = $cgTopicId }
+                $json = $body | ConvertTo-Json -Compress
+                $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/page-topics" -Method POST -Headers $OtherHeaders -Body $json -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+                if ($resp.StatusCode -eq 404) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+                else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 404)") -ForegroundColor Red; Hammer-Record FAIL }
+            }
+        }
+    } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+} else {
+    Write-Host "Testing: CG-PT8 POST /content-graph/page-topics returns 404 for cross-project topicId  SKIP (no OtherProject configured)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+}
+
 Hammer-Section "CONTENT GRAPH PHASE 1 — PAGE ENTITIES"
 
 # CG-PE1: Register an entity on a page
@@ -683,6 +729,55 @@ if ($OtherHeaders.Count -gt 0) {
     } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 } else {
     Write-Host "Testing: CG-PE7 PageEntity not visible to other project  SKIP (no OtherProject configured)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+}
+
+# CG-PE8: Cross-project entityId returns 404 (DB-level project enforcement)
+# Defends the new CgPageEntity project FK + trigger added in Batch 2.
+# Scenario: use OtherProject's own page + an entity from the primary project.
+if ($OtherHeaders.Count -gt 0) {
+    try {
+        Write-Host "Testing: CG-PE8 POST /content-graph/page-entities returns 404 for cross-project entityId" -NoNewline
+        if ([string]::IsNullOrWhiteSpace($cgEntityId)) {
+            Write-Host "  SKIP (cgEntityId not available)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+        } else {
+            # Re-use infrastructure created by CG-PT8 if available; otherwise create fresh
+            $pe8PageId = $null
+            if (-not [string]::IsNullOrWhiteSpace($otherPageId)) {
+                $pe8PageId = $otherPageId
+            } else {
+                $pe8SurfResp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $OtherHeaders `
+                    -Body (@{ type = "website"; key = "cgpe8s-$cgRun" } | ConvertTo-Json -Compress) `
+                    -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+                $pe8SurfId = $null
+                if ($pe8SurfResp.StatusCode -eq 201) { try { $pe8SurfId = ($pe8SurfResp.Content | ConvertFrom-Json).data.id } catch {} }
+                if (-not [string]::IsNullOrWhiteSpace($pe8SurfId)) {
+                    $pe8SiteResp = Invoke-WebRequest -Uri "$Base/api/content-graph/sites" -Method POST -Headers $OtherHeaders `
+                        -Body (@{ surfaceId = $pe8SurfId; domain = "pe8-$cgRun.example.com" } | ConvertTo-Json -Compress) `
+                        -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+                    $pe8SiteId = $null
+                    if ($pe8SiteResp.StatusCode -eq 201) { try { $pe8SiteId = ($pe8SiteResp.Content | ConvertFrom-Json).data.id } catch {} }
+                    if (-not [string]::IsNullOrWhiteSpace($pe8SiteId)) {
+                        $pe8PageResp = Invoke-WebRequest -Uri "$Base/api/content-graph/pages" -Method POST -Headers $OtherHeaders `
+                            -Body (@{ siteId = $pe8SiteId; url = "https://pe8-$cgRun.example.com/page"; title = "PE8 Page" } | ConvertTo-Json -Compress) `
+                            -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+                        if ($pe8PageResp.StatusCode -eq 201) { try { $pe8PageId = ($pe8PageResp.Content | ConvertFrom-Json).data.id } catch {} }
+                    }
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace($pe8PageId)) {
+                Write-Host "  SKIP (could not create page in other project for PE8)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+            } else {
+                # Post with OtherProject's page but primary project's entityId — should 404
+                $body = @{ pageId = $pe8PageId; entityId = $cgEntityId }
+                $json = $body | ConvertTo-Json -Compress
+                $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/page-entities" -Method POST -Headers $OtherHeaders -Body $json -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+                if ($resp.StatusCode -eq 404) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+                else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 404)") -ForegroundColor Red; Hammer-Record FAIL }
+            }
+        }
+    } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+} else {
+    Write-Host "Testing: CG-PE8 POST /content-graph/page-entities returns 404 for cross-project entityId  SKIP (no OtherProject configured)" -ForegroundColor DarkYellow; Hammer-Record SKIP
 }
 
 Hammer-Section "CONTENT GRAPH PHASE 1 — INTERNAL LINKS"
