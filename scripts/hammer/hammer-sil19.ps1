@@ -105,7 +105,7 @@ if ($_sfKtIds.Count -eq 4) {
 }
 
 if (-not $_sfSetupOk) {
-    Write-Host "  SIL-19 setup failed — skipping forecast-specific tests" -ForegroundColor DarkYellow
+    Write-Host "  SIL-19 setup failed -- skipping forecast-specific tests" -ForegroundColor DarkYellow
 }
 
 # =============================================================================
@@ -119,8 +119,7 @@ try {
         $d = ($r.Content | ConvertFrom-Json).data
         $failures = @()
 
-        if ($null -eq $d.forecast) { $failures += "forecast field missing" }
-        else {
+        if ($null -eq $d.forecast) { $failures += "forecast field missing" } else {
             $f = $d.forecast
             $fProps = $f | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
             $required = @("trend","expectedState","confidence","driverMomentum","forecastSummary")
@@ -158,8 +157,7 @@ try {
             }
         }
 
-        if ($failures.Count -eq 0) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
-        else { Write-Host ("  FAIL: " + ($failures -join "; ")) -ForegroundColor Red; Hammer-Record FAIL }
+        if ($failures.Count -eq 0) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS } else { Write-Host ("  FAIL: " + ($failures -join "; ")) -ForegroundColor Red; Hammer-Record FAIL }
     } else { Write-Host ("  FAIL (got $($r.StatusCode))") -ForegroundColor Red; Hammer-Record FAIL }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
@@ -168,13 +166,12 @@ try {
 # =============================================================================
 try {
     Write-Host "Testing: SF-B trend is worsening or volatile with strong disturbance signals" -NoNewline
-    if (-not $_sfSetupOk) { Write-Host "  SKIP (setup failed)" -ForegroundColor DarkYellow; Hammer-Record SKIP }
-    else {
+    if (-not $_sfSetupOk) { Write-Host "  SKIP (setup failed)" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
         $r = Invoke-WebRequest -Uri "$Base$_sfBase" -Method GET -Headers $Headers `
             -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
         if ($r.StatusCode -eq 200) {
             $d = ($r.Content | ConvertFrom-Json).data
-            # With high-volatility seeded data (rank shifts 1→18+, feature changes,
+            # With high-volatility seeded data (rank shifts 1->18+, feature changes,
             # AI churn) the disturbance signals should be strong.
             # Forecast trend should NOT be "stable" when disturbance dimensions are active.
             $activeDims = 0
@@ -249,8 +246,7 @@ try {
     if ($r1.StatusCode -eq 200 -and $r2.StatusCode -eq 200) {
         $f1 = ($r1.Content | ConvertFrom-Json).data.forecast | ConvertTo-Json -Depth 5 -Compress
         $f2 = ($r2.Content | ConvertFrom-Json).data.forecast | ConvertTo-Json -Depth 5 -Compress
-        if ($f1 -eq $f2) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
-        else { Write-Host "  FAIL (forecast differs between calls)" -ForegroundColor Red; Hammer-Record FAIL }
+        if ($f1 -eq $f2) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS } else { Write-Host "  FAIL (forecast differs between calls)" -ForegroundColor Red; Hammer-Record FAIL }
     } else { Write-Host ("  FAIL ($($r1.StatusCode)/$($r2.StatusCode))") -ForegroundColor Red; Hammer-Record FAIL }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
@@ -293,8 +289,7 @@ try {
             }
         }
 
-        if ($ok) { Write-Host "  PASS (weather=$ws, trend=$ft, expected=$es)" -ForegroundColor Green; Hammer-Record PASS }
-        else { Hammer-Record FAIL }
+        if ($ok) { Write-Host "  PASS (weather=$ws, trend=$ft, expected=$es)" -ForegroundColor Green; Hammer-Record PASS } else { Write-Host "  FAIL (expectedState/trend mismatch)" -ForegroundColor Red; Hammer-Record FAIL }
     } else { Write-Host ("  FAIL (got $($r.StatusCode))") -ForegroundColor Red; Hammer-Record FAIL }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
@@ -329,6 +324,5 @@ try {
         }
     } catch {}
 
-    if ($elAfter -eq $elBefore) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
-    else { Write-Host ("  FAIL (EventLog grew from $elBefore to $elAfter)") -ForegroundColor Red; Hammer-Record FAIL }
+    if ($elAfter -eq $elBefore) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS } else { Write-Host ("  FAIL (EventLog grew from $elBefore to $elAfter)") -ForegroundColor Red; Hammer-Record FAIL }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
