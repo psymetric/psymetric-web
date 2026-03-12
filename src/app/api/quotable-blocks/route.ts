@@ -21,7 +21,7 @@ import {
   serverError,
   parsePagination,
 } from "@/lib/api-response";
-import { resolveProjectId } from "@/lib/project";
+import { resolveProjectId, resolveProjectIdStrict } from "@/lib/project";
 import { ClaimType, EventType, EntityType, ActorType } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import { CreateQuotableBlockSchema } from "@/lib/schemas/quotable-block";
@@ -162,7 +162,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { projectId, error } = await resolveProjectId(request);
+    const { projectId, error } = await resolveProjectIdStrict(request);
     if (error) {
       return badRequest(error);
     }

@@ -20,7 +20,7 @@ import {
   VALID_ENTITY_STATUSES,
   VALID_CONCEPT_KINDS,
 } from "@/lib/validation";
-import { resolveProjectId } from "@/lib/project";
+import { resolveProjectId, resolveProjectIdStrict } from "@/lib/project";
 import { CreateEntitySchema } from "@/lib/schemas/entity";
 import { formatZodErrors } from "@/lib/zod-helpers";
 import type { Prisma } from "@prisma/client";
@@ -98,7 +98,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { projectId, error } = await resolveProjectId(request);
+    const { projectId, error } = await resolveProjectIdStrict(request);
     if (error) {
       return badRequest(error);
     }

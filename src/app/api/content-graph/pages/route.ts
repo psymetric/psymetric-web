@@ -14,7 +14,7 @@ import {
   serverError,
   parsePagination,
 } from "@/lib/api-response";
-import { resolveProjectId } from "@/lib/project";
+import { resolveProjectId, resolveProjectIdStrict } from "@/lib/project";
 import { CreateCgPageSchema } from "@/lib/schemas/content-graph";
 import { formatZodErrors } from "@/lib/zod-helpers";
 
@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { projectId, error } = await resolveProjectId(request);
+    const { projectId, error } = await resolveProjectIdStrict(request);
     if (error) return badRequest(error);
 
     let body: unknown;

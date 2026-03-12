@@ -15,7 +15,7 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { successResponse, badRequest, notFound, serverError } from "@/lib/api-response";
-import { resolveProjectId } from "@/lib/project";
+import { resolveProjectId, resolveProjectIdStrict } from "@/lib/project";
 import { EventType, EntityType, ActorType } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
 import {

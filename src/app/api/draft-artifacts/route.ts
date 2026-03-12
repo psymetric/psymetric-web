@@ -20,7 +20,7 @@ import {
   notFound,
   serverError,
 } from "@/lib/api-response";
-import { resolveProjectId } from "@/lib/project";
+import { resolveProjectId, resolveProjectIdStrict } from "@/lib/project";
 import {
   DraftArtifactKind,
   DraftArtifactStatus,
@@ -172,7 +172,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { projectId, error } = await resolveProjectId(request);
+    const { projectId, error } = await resolveProjectIdStrict(request);
     if (error) {
       return badRequest(error);
     }

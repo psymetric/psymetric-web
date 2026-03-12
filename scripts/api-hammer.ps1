@@ -82,6 +82,56 @@ $script:SkipCount = 0
 $Headers      = Get-ProjectHeaders -ProjectIdValue $ProjectId      -ProjectSlugValue $ProjectSlug
 $OtherHeaders = Get-ProjectHeaders -ProjectIdValue $OtherProjectId -ProjectSlugValue $OtherProjectSlug
 
+# ── Auto-bootstrap: if no project context supplied, create a hammer project ────
+# Mutation endpoints require explicit project context (X-Project-Id or X-Project-Slug).
+# When the operator omits -ProjectId/-ProjectSlug, the coordinator creates a
+# disposable project so all mutation suites have valid headers.
+if ($Headers.Count -eq 0) {
+    Write-Host "No project context supplied — auto-bootstrapping hammer project..." -ForegroundColor Cyan
+    $_autoSlug = "hammer-auto-$(Get-Date -Format 'yyyyMMddHHmmss')"
+    try {
+        $_autoBody = @{ name = "Hammer Auto Project"; slug = $_autoSlug; description = "Auto-created by api-hammer coordinator" } | ConvertTo-Json
+        $_autoResp = Invoke-WebRequest -Uri "$Base/api/projects" -Method POST `
+            -Headers @{ "Content-Type" = "application/json" } `
+            -Body $_autoBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($_autoResp.StatusCode -eq 201) {
+            $_autoProject = ($_autoResp.Content | ConvertFrom-Json).data
+            $ProjectId = $_autoProject.id
+            $Headers = Get-ProjectHeaders -ProjectIdValue $ProjectId
+            Write-Host ("  Auto-bootstrapped project: id=" + $ProjectId + " slug=" + $_autoSlug) -ForegroundColor Cyan
+        } else {
+            Write-Host ("  FATAL: auto-bootstrap failed (status=" + $_autoResp.StatusCode + ") body=" + $_autoResp.Content) -ForegroundColor Red
+            exit 1
+        }
+    } catch {
+        Write-Host ("  FATAL: auto-bootstrap exception: " + $_.Exception.Message) -ForegroundColor Red
+        exit 1
+    }
+}
+
+# ── Auto-bootstrap OtherProject for cross-project isolation tests ──────────────
+if ($OtherHeaders.Count -eq 0) {
+    Write-Host "No other-project context supplied — auto-bootstrapping second project..." -ForegroundColor Cyan
+    $_otherSlug = "hammer-other-$(Get-Date -Format 'yyyyMMddHHmmss')"
+    try {
+        $_otherBody = @{ name = "Hammer Other Project"; slug = $_otherSlug; description = "Cross-project isolation target" } | ConvertTo-Json
+        $_otherResp = Invoke-WebRequest -Uri "$Base/api/projects" -Method POST `
+            -Headers @{ "Content-Type" = "application/json" } `
+            -Body $_otherBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($_otherResp.StatusCode -eq 201) {
+            $_otherProject = ($_otherResp.Content | ConvertFrom-Json).data
+            $OtherProjectId = $_otherProject.id
+            $OtherHeaders = Get-ProjectHeaders -ProjectIdValue $OtherProjectId
+            Write-Host ("  Auto-bootstrapped other project: id=" + $OtherProjectId + " slug=" + $_otherSlug) -ForegroundColor Cyan
+        } else {
+            Write-Host ("  WARNING: other-project auto-bootstrap failed (status=" + $_otherResp.StatusCode + "); cross-project tests will SKIP") -ForegroundColor DarkYellow
+            # Non-fatal: cross-project tests are gated on ($OtherHeaders.Count -gt 0)
+        }
+    } catch {
+        Write-Host ("  WARNING: other-project auto-bootstrap exception: " + $_.Exception.Message + "; cross-project tests will SKIP") -ForegroundColor DarkYellow
+    }
+}
+
 $_seed = Try-GetJson -Url "$Base/api/entities?limit=1" -RequestHeaders $Headers
 $entityId = $null
 if ($_seed -and $_seed.data -and $_seed.data.Count -gt 0) { $entityId = $_seed.data[0].id }

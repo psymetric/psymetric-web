@@ -27,7 +27,7 @@ import {
   badRequest,
   serverError,
 } from "@/lib/api-response";
-import { resolveProjectId } from "@/lib/project";
+import { resolveProjectIdStrict } from "@/lib/project";
 import { normalizeQuery } from "@/lib/validation";
 import { SERPSnapshotIngestSchema } from "@/lib/schemas/serp-snapshot-ingest";
 import { formatZodErrors } from "@/lib/zod-helpers";
@@ -43,7 +43,7 @@ const ESTIMATED_COST_USD = 0.0012;
 
 export async function POST(request: NextRequest) {
   try {
-    const { projectId, error } = await resolveProjectId(request);
+    const { projectId, error } = await resolveProjectIdStrict(request);
     if (error) {
       return badRequest(error);
     }

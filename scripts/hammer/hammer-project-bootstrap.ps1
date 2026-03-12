@@ -384,3 +384,80 @@ try {
         Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
     } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# ── Project resolution strict-mode coverage ───────────────────────────────────
+# These tests defend the Batch 3 hardening: mutation endpoints must reject
+# requests that supply no explicit project context (no header, no cookie).
+# Before hardening: such requests silently mutated into DEFAULT_PROJECT_ID.
+# After hardening:  such requests return 400 with a clear error message.
+
+# PB-25: POST to mutation endpoint without any project context returns 400
+# Uses /api/content-graph/surfaces as the representative mutation endpoint.
+try {
+    Write-Host "Testing: PB-25 POST mutation without project context returns 400" -NoNewline
+    $surfaceBody = @{ type = "website"; key = "test-no-project"; label = "Test" } | ConvertTo-Json
+    # Deliberately send NO X-Project-Id or X-Project-Slug header
+    $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST `
+        -Headers @{ "Content-Type" = "application/json" } `
+        -Body $surfaceBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 400) {
+        $body = $resp.Content | ConvertFrom-Json
+        # Verify the error is about missing project context (not some other validation failure)
+        $errorMsg = $body.error
+        if ($null -eq $errorMsg) { $errorMsg = ($body | ConvertTo-Json) }
+        if ($errorMsg -match "Project context required" -or $errorMsg -match "project" -or $errorMsg -match "Project") {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (got 400 but wrong error: " + $errorMsg + ")") -ForegroundColor Red; Hammer-Record FAIL
+        }
+    } else {
+        Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 400 — silent default-project fallback may still be active)") -ForegroundColor Red
+        Hammer-Record FAIL
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-26: POST to mutation endpoint with X-Project-Id succeeds (explicit context respected)
+try {
+    Write-Host "Testing: PB-26 POST mutation with explicit X-Project-Id succeeds" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP (no testProjectId)" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $ts = Get-Date -Format 'yyyyMMddHHmmss'
+        $surfaceBody = @{ type = "website"; key = "pb26-surface-$ts"; label = "PB26 Test" } | ConvertTo-Json
+        $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST `
+            -Headers @{ "Content-Type" = "application/json"; "X-Project-Id" = $testProjectId } `
+            -Body $surfaceBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 201) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (got " + $resp.StatusCode + ") body=" + $resp.Content) -ForegroundColor Red; Hammer-Record FAIL
+        }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-27: POST to mutation endpoint with X-Project-Slug succeeds (slug-based context respected)
+try {
+    Write-Host "Testing: PB-27 POST mutation with explicit X-Project-Slug succeeds" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP (no testProjectId)" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $ts = Get-Date -Format 'yyyyMMddHHmmss'
+        $surfaceBody = @{ type = "wiki"; key = "pb27-surface-$ts"; label = "PB27 Test" } | ConvertTo-Json
+        $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST `
+            -Headers @{ "Content-Type" = "application/json"; "X-Project-Slug" = $testSlug } `
+            -Body $surfaceBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 201) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else {
+            Write-Host ("  FAIL (got " + $resp.StatusCode + ") body=" + $resp.Content) -ForegroundColor Red; Hammer-Record FAIL
+        }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-28: GET to read endpoint without project context succeeds (fallback still allowed for reads)
+# Verifies that the strict-mode change did NOT break GET endpoints that use resolveProjectId.
+try {
+    Write-Host "Testing: PB-28 GET read endpoint without project context succeeds (fallback allowed)" -NoNewline
+    $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method GET -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 200) {
+        Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+    } else {
+        Write-Host ("  FAIL (got " + $resp.StatusCode + ", GET should still succeed without project context)") -ForegroundColor Red; Hammer-Record FAIL
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }

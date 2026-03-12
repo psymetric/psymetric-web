@@ -88,7 +88,7 @@ import { NextRequest } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { badRequest, serverError, successResponse } from "@/lib/api-response";
-import { resolveProjectId } from "@/lib/project";
+import { resolveProjectIdStrict } from "@/lib/project";
 import { normalizeQuery } from "@/lib/validation";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -280,7 +280,7 @@ function extractAiOverview(result: DataForSEOResult): AiOverviewExtraction {
 
 export async function POST(request: NextRequest) {
   try {
-    const { projectId, error: projectError } = await resolveProjectId(request);
+    const { projectId, error: projectError } = await resolveProjectIdStrict(request);
     if (projectError) return badRequest(projectError);
 
     // ── Parse body ─────────────────────────────────────────────────────────────

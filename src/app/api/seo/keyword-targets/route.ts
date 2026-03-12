@@ -25,7 +25,7 @@ import {
   serverError,
   parsePagination,
 } from "@/lib/api-response";
-import { resolveProjectId } from "@/lib/project";
+import { resolveProjectId, resolveProjectIdStrict } from "@/lib/project";
 import { normalizeQuery } from "@/lib/validation";
 import { CreateKeywordTargetSchema } from "@/lib/schemas/keyword-target";
 import { formatZodErrors } from "@/lib/zod-helpers";
@@ -119,7 +119,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { projectId, error } = await resolveProjectId(request);
+    const { projectId, error } = await resolveProjectIdStrict(request);
     if (error) {
       return badRequest(error);
     }

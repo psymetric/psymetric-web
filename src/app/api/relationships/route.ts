@@ -18,7 +18,7 @@ import {
 } from "@/lib/api-response";
 import { RelationType, ContentEntityType, EntityType } from "@prisma/client";
 import type { Prisma } from "@prisma/client";
-import { resolveProjectId, assertSameProject } from "@/lib/project";
+import { resolveProjectId, resolveProjectIdStrict, assertSameProject } from "@/lib/project";
 import { CreateRelationshipSchema } from "@/lib/schemas/relationship";
 import { formatZodErrors } from "@/lib/zod-helpers";
 import { UUID_RE } from "@/lib/constants";
@@ -121,7 +121,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { projectId, error } = await resolveProjectId(request);
+    const { projectId, error } = await resolveProjectIdStrict(request);
     if (error) {
       return badRequest(error);
     }
@@ -254,7 +254,7 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const { projectId, error } = await resolveProjectId(request);
+    const { projectId, error } = await resolveProjectIdStrict(request);
     if (error) {
       return badRequest(error);
     }
