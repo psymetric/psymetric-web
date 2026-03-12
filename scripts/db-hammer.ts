@@ -810,6 +810,201 @@ async function runCrossProjectViolationProbe(
   }
 }
 
+async function runCrossProjectCgJunctionProbes(
+  projectAId: string,
+  projectBId: string,
+  seed: number
+) {
+  // Probes the DB-level trigger enforcement for CgPageTopic and CgPageEntity.
+  // These triggers were added in migration 20260312000000_cg_junction_project_integrity.
+  // The probe verifies that writing a row with mismatched projectIds is blocked at the DB layer.
+
+  // ── Prerequisites: ensure a CgSurface, CgSite, CgPage, CgTopic, CgEntity exist in each project ──
+  const surfaceKey = `db-hammer-cg-${seed}`;
+  const siteKey = `db-hammer-cg-site-${seed}.example.com`;
+  const pageUrl = `https://db-hammer-cg-${seed}.example.com/page`;
+  const topicKey = `db-hammer-topic-${seed}`;
+  const entityKey = `db-hammer-entity-${seed}`;
+
+  async function ensureCgFixtures(projectId: string) {
+    const surface = await prisma.cgSurface.upsert({
+      where: { projectId_key: { projectId, key: surfaceKey } },
+      create: { projectId, type: "website", key: surfaceKey, label: "DB Hammer CG" },
+      update: {},
+    });
+    const site = await prisma.cgSite.upsert({
+      where: { projectId_domain: { projectId, domain: siteKey } },
+      create: { projectId, surfaceId: surface.id, domain: siteKey, isCanonical: true },
+      update: {},
+    });
+    const page = await prisma.cgPage.upsert({
+      where: { projectId_url: { projectId, url: pageUrl } },
+      create: { projectId, siteId: site.id, url: pageUrl, title: "DB Hammer Page" },
+      update: {},
+    });
+    const topic = await prisma.cgTopic.upsert({
+      where: { projectId_key: { projectId, key: topicKey } },
+      create: { projectId, key: topicKey, label: "DB Hammer Topic" },
+      update: {},
+    });
+    const entity = await prisma.cgEntity.upsert({
+      where: { projectId_key: { projectId, key: entityKey } },
+      create: { projectId, key: entityKey, label: "DB Hammer Entity", entityType: "concept" },
+      update: {},
+    });
+    return { surface, site, page, topic, entity };
+  }
+
+  const fixturesA = await ensureCgFixtures(projectAId);
+  const fixturesB = await ensureCgFixtures(projectBId);
+
+  // ── Probe 1: CgPageTopic — row.projectId != page.projectId ──────────────────
+  // Attempt: write CgPageTopic under projectA, with pageId from projectB.
+  // The trigger must block this.
+  const ptCrossProbeId = deterministicUuid(seed, "cross-project|cgPageTopic");
+  await prisma.cgPageTopic.deleteMany({ where: { id: ptCrossProbeId } });
+
+  try {
+    await prisma.$executeRaw`
+      INSERT INTO "CgPageTopic" ("id", "projectId", "pageId", "topicId", "role", "createdAt")
+      VALUES (
+        ${ptCrossProbeId}::uuid,
+        ${projectAId}::uuid,
+        ${fixturesB.page.id}::uuid,
+        ${fixturesA.topic.id}::uuid,
+        'supporting'::\"CgPageRole\",
+        NOW()
+      )
+    `;
+    // If we reach here, the trigger did not fire — invariant violated.
+    await prisma.cgPageTopic.deleteMany({ where: { id: ptCrossProbeId } });
+    throw new Error(
+      "CG junction probe failed: CgPageTopic cross-project insert succeeded (trigger not enforcing)"
+    );
+  } catch (e) {
+    if (
+      e instanceof Error &&
+      e.message.includes("CG junction probe failed")
+    ) {
+      throw e;
+    }
+    const code = getPrismaKnownErrorCode(e);
+    if (code) {
+      console.log(`CgPageTopic cross-project probe blocked as expected (Prisma code: ${code}).`);
+    } else {
+      console.log("CgPageTopic cross-project probe blocked as expected.");
+    }
+  }
+
+  // ── Probe 2: CgPageEntity — row.projectId != entity.projectId ───────────────
+  // Attempt: write CgPageEntity under projectA, with entityId from projectB.
+  const peCrossProbeId = deterministicUuid(seed, "cross-project|cgPageEntity");
+  await prisma.cgPageEntity.deleteMany({ where: { id: peCrossProbeId } });
+
+  try {
+    await prisma.$executeRaw`
+      INSERT INTO "CgPageEntity" ("id", "projectId", "pageId", "entityId", "role", "createdAt")
+      VALUES (
+        ${peCrossProbeId}::uuid,
+        ${projectAId}::uuid,
+        ${fixturesA.page.id}::uuid,
+        ${fixturesB.entity.id}::uuid,
+        'supporting'::\"CgPageRole\",
+        NOW()
+      )
+    `;
+    await prisma.cgPageEntity.deleteMany({ where: { id: peCrossProbeId } });
+    throw new Error(
+      "CG junction probe failed: CgPageEntity cross-project insert succeeded (trigger not enforcing)"
+    );
+  } catch (e) {
+    if (
+      e instanceof Error &&
+      e.message.includes("CG junction probe failed")
+    ) {
+      throw e;
+    }
+    const code = getPrismaKnownErrorCode(e);
+    if (code) {
+      console.log(`CgPageEntity cross-project probe blocked as expected (Prisma code: ${code}).`);
+    } else {
+      console.log("CgPageEntity cross-project probe blocked as expected.");
+    }
+  }
+
+  // ── Probe 3: CgPageTopic — row.projectId != topic.projectId ─────────────────
+  // Attempt: write CgPageTopic under projectA, with topicId from projectB.
+  const ptCrossTopicProbeId = deterministicUuid(seed, "cross-project|cgPageTopic|topic");
+  await prisma.cgPageTopic.deleteMany({ where: { id: ptCrossTopicProbeId } });
+
+  try {
+    await prisma.$executeRaw`
+      INSERT INTO "CgPageTopic" ("id", "projectId", "pageId", "topicId", "role", "createdAt")
+      VALUES (
+        ${ptCrossTopicProbeId}::uuid,
+        ${projectAId}::uuid,
+        ${fixturesA.page.id}::uuid,
+        ${fixturesB.topic.id}::uuid,
+        'supporting'::\"CgPageRole\",
+        NOW()
+      )
+    `;
+    await prisma.cgPageTopic.deleteMany({ where: { id: ptCrossTopicProbeId } });
+    throw new Error(
+      "CG junction probe failed: CgPageTopic cross-project topic insert succeeded (trigger not enforcing)"
+    );
+  } catch (e) {
+    if (
+      e instanceof Error &&
+      e.message.includes("CG junction probe failed")
+    ) {
+      throw e;
+    }
+    const code = getPrismaKnownErrorCode(e);
+    if (code) {
+      console.log(`CgPageTopic cross-project topic probe blocked as expected (Prisma code: ${code}).`);
+    } else {
+      console.log("CgPageTopic cross-project topic probe blocked as expected.");
+    }
+  }
+}
+
+async function runLifecycleStateConstraintProbe(projectId: string) {
+  // Verifies the DB CHECK constraint on Project.lifecycleState.
+  // Added in migration 20260312010000_project_lifecycle_state_constraint.
+  // An invalid state must be rejected at the DB layer.
+  try {
+    await prisma.$executeRaw`
+      UPDATE "Project"
+      SET "lifecycleState" = 'invalid_state_probe'
+      WHERE "id" = ${projectId}::uuid
+    `;
+    // If we reach here, the constraint did not fire — invariant violated.
+    // Restore the value to avoid leaving the row in a bad state.
+    await prisma.$executeRaw`
+      UPDATE "Project"
+      SET "lifecycleState" = 'created'
+      WHERE "id" = ${projectId}::uuid
+    `;
+    throw new Error(
+      "lifecycleState constraint probe failed: invalid state was accepted (CHECK constraint not enforcing)"
+    );
+  } catch (e) {
+    if (
+      e instanceof Error &&
+      e.message.includes("lifecycleState constraint probe failed")
+    ) {
+      throw e;
+    }
+    const code = getPrismaKnownErrorCode(e);
+    if (code) {
+      console.log(`lifecycleState CHECK constraint blocked as expected (Prisma code: ${code}).`);
+    } else {
+      console.log("lifecycleState CHECK constraint blocked as expected.");
+    }
+  }
+}
+
 async function runCrossProjectSeoViolationProbes(
   projectAId: string,
   projectBId: string,
@@ -1101,7 +1296,13 @@ async function runChecks(projectAId: string, projectBId: string, seed: number) {
   // 9) Cross-project violation probes: SEO tables must not be able to cross-link entities across projects.
   await runCrossProjectSeoViolationProbes(projectAId, projectBId, seed);
 
-  // 10) MetricSnapshot Float sanity: ensure float values persist.
+  // 10) CG junction cross-project integrity probes.
+  await runCrossProjectCgJunctionProbes(projectAId, projectBId, seed);
+
+  // 11) lifecycleState CHECK constraint probe.
+  await runLifecycleStateConstraintProbe(projectAId);
+
+  // 12) MetricSnapshot Float sanity: ensure float values persist.
   const floatMetricId = deterministicUuid(seed, `float-metric|${projectAId}`);
   await prisma.metricSnapshot.deleteMany({ where: { id: floatMetricId } });
 
@@ -1133,6 +1334,7 @@ async function runChecks(projectAId: string, projectBId: string, seed: number) {
 
 async function cleanupProjects(projectIds: string[]) {
   // Delete in FK-safe order, strictly bounded by projectId.
+  // CG junctions must be deleted before their parent tables.
   await prisma.$transaction(async (tx) => {
     await tx.eventLog.deleteMany({ where: { projectId: { in: projectIds } } });
     await tx.searchPerformance.deleteMany({
@@ -1157,6 +1359,17 @@ async function cleanupProjects(projectIds: string[]) {
     await tx.sourceItem.deleteMany({ where: { projectId: { in: projectIds } } });
     await tx.sourceFeed.deleteMany({ where: { projectId: { in: projectIds } } });
     await tx.entity.deleteMany({ where: { projectId: { in: projectIds } } });
+    // Content Graph: junctions before parents
+    await tx.cgPageTopic.deleteMany({ where: { projectId: { in: projectIds } } });
+    await tx.cgPageEntity.deleteMany({ where: { projectId: { in: projectIds } } });
+    await tx.cgInternalLink.deleteMany({ where: { projectId: { in: projectIds } } });
+    await tx.cgSchemaUsage.deleteMany({ where: { projectId: { in: projectIds } } });
+    await tx.cgPage.deleteMany({ where: { projectId: { in: projectIds } } });
+    await tx.cgSite.deleteMany({ where: { projectId: { in: projectIds } } });
+    await tx.cgSurface.deleteMany({ where: { projectId: { in: projectIds } } });
+    await tx.cgContentArchetype.deleteMany({ where: { projectId: { in: projectIds } } });
+    await tx.cgTopic.deleteMany({ where: { projectId: { in: projectIds } } });
+    await tx.cgEntity.deleteMany({ where: { projectId: { in: projectIds } } });
     await tx.project.deleteMany({ where: { id: { in: projectIds } } });
   });
 }

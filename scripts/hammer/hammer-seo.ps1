@@ -303,7 +303,19 @@ if ($OtherHeaders.Count -gt 0) {
             Write-Host "  SKIP (DataForSEO credentials not configured; provider writes unavailable)" -ForegroundColor DarkYellow; Hammer-Record SKIP
         } else {
             $resp = Invoke-WebRequest -Uri "$Base/api/seo/serp-snapshot" -Method POST -Headers $OtherHeaders -Body ($w5Base + @{confirm=$true} | ConvertTo-Json -Depth 5 -Compress) -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
-            if ($resp.StatusCode -eq 201) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 201)") -ForegroundColor Red; Hammer-Record FAIL }
+            if ($resp.StatusCode -eq 201) {
+                Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+            } elseif ($resp.StatusCode -eq 502) {
+                # Provider may rate-limit or quota-exhaust on repeated calls within the same run.
+                # 200 (recent-window replay) would mean the cross-project isolation leaked -- that
+                # is a genuine FAIL. 502 from the provider on a third call is a structural SKIP.
+                $errBody = try { ($resp.Content | ConvertFrom-Json) } catch { $null }
+                $isProviderError = $errBody -and ($errBody.error -eq "provider_error" -or $errBody.message -like "*credentials missing*")
+                if ($isProviderError) { Write-Host "  SKIP (provider error on cross-project call; likely rate limit or quota)" -ForegroundColor DarkYellow; Hammer-Record SKIP }
+                else { Write-Host ("  FAIL (got 502, expected 201; body: " + $resp.Content.Substring(0, [Math]::Min(120, $resp.Content.Length)) + ")") -ForegroundColor Red; Hammer-Record FAIL }
+            } else {
+                Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 201)") -ForegroundColor Red; Hammer-Record FAIL
+            }
         }
     } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 }

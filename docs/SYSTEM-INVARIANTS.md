@@ -12,6 +12,20 @@ If a proposed change violates any invariant in this document, the change is inco
 
 ## 1. Project Isolation Invariants
 
+### 1.0 Project Context Required for Mutations
+
+All mutation endpoints (POST, PUT, DELETE, PATCH) must receive explicit project
+context via `X-Project-Id` header (UUID), `X-Project-Slug` header, or a valid
+`projectId` cookie before any write is permitted.
+
+Mutation endpoints use `resolveProjectIdStrict()`, which returns a 400 error
+if no explicit project context is provided. Silent fallback to `DEFAULT_PROJECT_ID`
+is not permitted for mutations.
+
+Read-only endpoints (GET) may use `resolveProjectId()`, which retains the
+`DEFAULT_PROJECT_ID` fallback as a first-run convenience. This is intentional:
+read operations on the wrong project are inconvenient but not a data integrity risk.
+
 ### 1.1 All Domain Rows Are Project-Scoped
 
 Every domain entity must belong to exactly one Project.

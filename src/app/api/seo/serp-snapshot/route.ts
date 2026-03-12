@@ -37,6 +37,7 @@ import {
   DataForSeoError,
 } from "@/lib/integrations/dataforseo/client";
 import { normalizeDataForSeoSerp } from "@/lib/integrations/dataforseo/normalize-serp";
+import { persistSerpSnapshot } from "@/lib/seo/persist-serp-snapshot";
 
 // Fixed cost per ingest task (DataForSEO live/advanced unit price).
 const ESTIMATED_COST_USD = 0.0012;
@@ -84,6 +85,37 @@ export async function POST(request: NextRequest) {
 
     // capturedAt is server-assigned once and used for idempotency key
     const capturedAt = new Date();
+
+    // -- Recent-window idempotency check (before provider call) --------------
+    // If a snapshot for this (projectId, query, locale, device) was captured
+    // within the last 60 seconds, return it without re-calling the provider.
+    // This handles realistic operator double-submits (replay test, UI retry).
+    const recentWindowMs = 60_000;
+    const recentCutoff = new Date(capturedAt.getTime() - recentWindowMs);
+    const recentSnapshot = await prisma.sERPSnapshot.findFirst({
+      where: {
+        projectId,
+        query: normalizedQuery,
+        locale: data.locale,
+        device: data.device,
+        capturedAt: { gte: recentCutoff },
+      },
+      orderBy: [{ capturedAt: "desc" }, { id: "desc" }],
+    });
+    if (recentSnapshot) {
+      return successResponse({
+        id: recentSnapshot.id,
+        query: recentSnapshot.query,
+        locale: recentSnapshot.locale,
+        device: recentSnapshot.device,
+        capturedAt: recentSnapshot.capturedAt.toISOString(),
+        validAt: recentSnapshot.validAt?.toISOString() ?? null,
+        aiOverviewStatus: recentSnapshot.aiOverviewStatus,
+        source: recentSnapshot.source,
+        batchRef: recentSnapshot.batchRef,
+        createdAt: recentSnapshot.createdAt.toISOString(),
+      });
+    }
 
     // -- Call DataForSEO provider --------------------------------------------
     let providerResponse: unknown;
@@ -148,47 +180,24 @@ export async function POST(request: NextRequest) {
     const rawPayload = normalized.rawPayload as Prisma.InputJsonValue;
 
     // -- Write snapshot + event log atomically --------------------------------
-    try {
-      const snapshot = await prisma.$transaction(async (tx) => {
-        const created = await tx.sERPSnapshot.create({
-          data: {
-            projectId,
-            query: normalizedQuery,
-            locale: data.locale,
-            device: data.device,
-            capturedAt,
-            validAt,
-            rawPayload,
-            payloadSchemaVersion: null,
-            aiOverviewStatus: normalized.aiOverviewStatus,
-            aiOverviewText: normalized.aiOverviewText,
-            source: "dataforseo",
-            batchRef: null,
-          },
-        });
+    const result = await persistSerpSnapshot({
+      projectId,
+      normalizedQuery,
+      locale: data.locale,
+      device: data.device,
+      capturedAt,
+      validAt,
+      rawPayload,
+      aiOverviewStatus: normalized.aiOverviewStatus,
+      aiOverviewText: normalized.aiOverviewText,
+      organicResultCount: normalized.organicResults.length,
+      aiOverviewPresent: normalized.aiOverviewPresent,
+      features: normalized.features,
+    });
 
-        await tx.eventLog.create({
-          data: {
-            eventType: "SERP_SNAPSHOT_RECORDED",
-            entityType: "serpSnapshot",
-            entityId: created.id,
-            actor: "human",
-            projectId,
-            details: {
-              query: normalizedQuery,
-              locale: data.locale,
-              device: data.device,
-              source: "dataforseo",
-              organicResultCount: normalized.organicResults.length,
-              aiOverviewPresent: normalized.aiOverviewPresent,
-              features: normalized.features,
-            },
-          },
-        });
+    const { snapshot } = result;
 
-        return created;
-      });
-
+    if (result.created) {
       return createdResponse({
         id: snapshot.id,
         query: snapshot.query,
@@ -205,47 +214,21 @@ export async function POST(request: NextRequest) {
         features: normalized.features,
         createdAt: snapshot.createdAt.toISOString(),
       });
-    } catch (err) {
-      // Idempotent replay: unique constraint on (projectId, query, locale, device, capturedAt).
-      // capturedAt is server-assigned to now(), so collision within the same millisecond
-      // is the only realistic replay path (double-submit). No EventLog on replay.
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      ) {
-        const existing = await prisma.sERPSnapshot.findUnique({
-          where: {
-            projectId_query_locale_device_capturedAt: {
-              projectId,
-              query: normalizedQuery,
-              locale: data.locale,
-              device: data.device,
-              capturedAt,
-            },
-          },
-        });
-
-        if (existing) {
-          return successResponse({
-            id: existing.id,
-            query: existing.query,
-            locale: existing.locale,
-            device: existing.device,
-            capturedAt: existing.capturedAt.toISOString(),
-            validAt: existing.validAt?.toISOString() ?? null,
-            aiOverviewStatus: existing.aiOverviewStatus,
-            source: existing.source,
-            batchRef: existing.batchRef,
-            createdAt: existing.createdAt.toISOString(),
-          });
-        }
-
-        // Constraint fired but lookup found nothing -- race condition or partial state.
-        return serverError();
-      }
-
-      throw err;
     }
+
+    // P2002 idempotent replay — no EventLog on replay
+    return successResponse({
+      id: snapshot.id,
+      query: snapshot.query,
+      locale: snapshot.locale,
+      device: snapshot.device,
+      capturedAt: snapshot.capturedAt.toISOString(),
+      validAt: snapshot.validAt?.toISOString() ?? null,
+      aiOverviewStatus: snapshot.aiOverviewStatus,
+      source: snapshot.source,
+      batchRef: snapshot.batchRef,
+      createdAt: snapshot.createdAt.toISOString(),
+    });
   } catch (err) {
     console.error("POST /api/seo/serp-snapshot error:", err);
     return serverError();
