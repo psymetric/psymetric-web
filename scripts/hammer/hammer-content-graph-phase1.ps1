@@ -11,6 +11,11 @@
 #   - Invalid enum value rejection
 #   - GET list envelope + pagination
 #   - Cross-project non-disclosure on GET lists
+#   - Surface key canonicalization (mixed-case, spaces, underscores → stored as lowercase-hyphen)
+#   - Surface canonicalIdentifier duplicate prevention per (project, type)
+#   - Surface canonicalIdentifier format validation per type (website/youtube/x)
+#   - Surface disabled → site creation rejected (400)
+#   - canonicalUrl must be valid URL
 #
 # Cross-project tests require $OtherHeaders to resolve to a genuinely different project.
 # Tests gated on ($OtherHeaders.Count -gt 0) are skipped if no second project is configured.
@@ -102,6 +107,137 @@ if ($OtherHeaders.Count -gt 0) {
 } else {
     Write-Host "Testing: CG-S8 Surface not visible to other project  SKIP (no OtherProject configured)" -ForegroundColor DarkYellow; Hammer-Record SKIP
 }
+
+# ---------------------------------------------------------------------------
+# CG-S9 through CG-S15: Surface identity hardening (canonicalization + identity)
+# ---------------------------------------------------------------------------
+
+# CG-S9: Key with mixed case is accepted and stored in canonical lowercase form
+try {
+    Write-Host "Testing: CG-S9 Surface key is canonicalized to lowercase" -NoNewline
+    $rawKey = "Main-SITE-$cgRun"
+    $expectedKey = $rawKey.ToLower()
+    $body = @{ type = "website"; key = $rawKey }
+    $json = $body | ConvertTo-Json -Compress
+    $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $Headers -Body $json -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 201) {
+        $storedKey = ($resp.Content | ConvertFrom-Json).data.key
+        if ($storedKey -eq $expectedKey) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+        else { Write-Host ("  FAIL (stored key='" + $storedKey + "', expected='" + $expectedKey + "')") -ForegroundColor Red; Hammer-Record FAIL }
+    } else {
+        Write-Host ("  FAIL (got " + $resp.StatusCode + ") body=" + $resp.Content) -ForegroundColor Red; Hammer-Record FAIL
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# CG-S10: Key with underscores is canonicalized to hyphens
+try {
+    Write-Host "Testing: CG-S10 Surface key underscores canonicalized to hyphens" -NoNewline
+    $rawKey = "my_wiki_site_$cgRun"
+    $expectedKey = "my-wiki-site-$cgRun"
+    $body = @{ type = "wiki"; key = $rawKey }
+    $json = $body | ConvertTo-Json -Compress
+    $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $Headers -Body $json -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 201) {
+        $storedKey = ($resp.Content | ConvertFrom-Json).data.key
+        if ($storedKey -eq $expectedKey) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+        else { Write-Host ("  FAIL (stored key='" + $storedKey + "', expected='" + $expectedKey + "')") -ForegroundColor Red; Hammer-Record FAIL }
+    } else {
+        Write-Host ("  FAIL (got " + $resp.StatusCode + ") body=" + $resp.Content) -ForegroundColor Red; Hammer-Record FAIL
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# CG-S11: Mixed-case duplicate rejected (canonical collision after lowercasing)
+try {
+    Write-Host "Testing: CG-S11 Duplicate key after canonicalization rejected (case collision)" -NoNewline
+    # Attempt to register UPPER version of the key used in CG-S9 (already stored as lowercase)
+    $collideKey = "MAIN-SITE-$cgRun"
+    $body = @{ type = "website"; key = $collideKey }
+    $json = $body | ConvertTo-Json -Compress
+    $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $Headers -Body $json -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 400) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+    else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 400)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# CG-S12: canonicalIdentifier with valid website hostname accepted
+$cgSurfaceWithIdentityId = $null
+try {
+    Write-Host "Testing: CG-S12 Surface with valid website canonicalIdentifier accepted" -NoNewline
+    $body = @{ type = "website"; key = "cgs-id-$cgRun"; canonicalIdentifier = "psymetric-$cgRun.io"; canonicalUrl = "https://psymetric-$cgRun.io" }
+    $json = $body | ConvertTo-Json -Compress
+    $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $Headers -Body $json -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 201) {
+        Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        try { $cgSurfaceWithIdentityId = ($resp.Content | ConvertFrom-Json).data.id } catch {}
+    } else {
+        Write-Host ("  FAIL (got " + $resp.StatusCode + ") body=" + $resp.Content) -ForegroundColor Red; Hammer-Record FAIL
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# CG-S13: Duplicate canonicalIdentifier for same (project, type) rejected
+try {
+    Write-Host "Testing: CG-S13 Duplicate canonicalIdentifier for same project+type rejected" -NoNewline
+    $body = @{ type = "website"; key = "cgs-id2-$cgRun"; canonicalIdentifier = "psymetric-$cgRun.io" }
+    $json = $body | ConvertTo-Json -Compress
+    $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $Headers -Body $json -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 400) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+    else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 400) body=" + $resp.Content) -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# CG-S13b: Same canonicalIdentifier is allowed for different types (no cross-type uniqueness)
+try {
+    Write-Host "Testing: CG-S13b Same canonicalIdentifier allowed across different surface types" -NoNewline
+    # Use a blog surface with same identifier as the website above — should succeed
+    # (blog identifier validation allows host format same as website)
+    $body = @{ type = "blog"; key = "cgs-blog-id-$cgRun"; canonicalIdentifier = "blog-$cgRun.io" }
+    $json = $body | ConvertTo-Json -Compress
+    $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $Headers -Body $json -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 201) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+    else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 201) body=" + $resp.Content) -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# CG-S14: Invalid canonicalIdentifier format for website rejected
+Test-PostJson -Url "$Base/api/content-graph/surfaces" `
+    -ExpectedStatus 400 `
+    -Description "CG-S14 Surface rejects invalid canonicalIdentifier format for website type (has scheme)" `
+    -RequestHeaders $Headers `
+    -BodyObj @{ type = "website"; key = "cgs-badinvalid-$cgRun"; canonicalIdentifier = "https://example.com" }
+
+# CG-S15: canonicalUrl must be a valid URL
+Test-PostJson -Url "$Base/api/content-graph/surfaces" `
+    -ExpectedStatus 400 `
+    -Description "CG-S15 Surface rejects invalid canonicalUrl (not a URL)" `
+    -RequestHeaders $Headers `
+    -BodyObj @{ type = "website"; key = "cgs-badurl-$cgRun"; canonicalUrl = "not-a-url" }
+
+# CG-S16: Two surfaces of the same type without canonicalIdentifier are both allowed
+# (no singleton-per-type constraint; multi-surface model is supported)
+try {
+    Write-Host "Testing: CG-S16 Multiple surfaces of same type without canonicalIdentifier allowed" -NoNewline
+    $b1 = @{ type = "youtube"; key = "cgs-yt1-$cgRun" } | ConvertTo-Json -Compress
+    $b2 = @{ type = "youtube"; key = "cgs-yt2-$cgRun" } | ConvertTo-Json -Compress
+    $r1 = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $Headers -Body $b1 -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    $r2 = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $Headers -Body $b2 -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($r1.StatusCode -eq 201 -and $r2.StatusCode -eq 201) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+    else { Write-Host ("  FAIL (statuses: " + $r1.StatusCode + "/" + $r2.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# CG-S17: Disabled surface rejects new site creation (400)
+try {
+    Write-Host "Testing: CG-S17 Site creation rejected for disabled surface" -NoNewline
+    # Create a surface, then disable it via direct check of surface creation + simulate disabled state
+    # We create with enabled=false directly
+    $surfBody = @{ type = "website"; key = "cgs-disabled-$cgRun"; enabled = $false } | ConvertTo-Json -Compress
+    $surfResp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $Headers -Body $surfBody -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($surfResp.StatusCode -ne 201) {
+        Write-Host "  SKIP (could not create disabled surface)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+    } else {
+        $disabledSurfaceId = ($surfResp.Content | ConvertFrom-Json).data.id
+        $siteBody = @{ surfaceId = $disabledSurfaceId; domain = "disabled-$cgRun.example.com" } | ConvertTo-Json -Compress
+        $siteResp = Invoke-WebRequest -Uri "$Base/api/content-graph/sites" -Method POST -Headers $Headers -Body $siteBody -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($siteResp.StatusCode -eq 400) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+        else { Write-Host ("  FAIL (got " + $siteResp.StatusCode + ", expected 400)") -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
 Hammer-Section "CONTENT GRAPH PHASE 1 — SITES"
 

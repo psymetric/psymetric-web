@@ -684,21 +684,35 @@ model SystemConfig {
 // =============================================================================
 
 // CgSurface — A brand surface where content exists (website, wiki, blog, X, YouTube)
+// key: canonicalized operator/admin identifier (lowercase, hyphens only)
+// canonicalIdentifier: durable machine-readable platform identity
+//   website  → normalized host, e.g. "psymetric.io"
+//   youtube  → channel ID or normalized slug, e.g. "UCxxxxxx" or "@psymetric"
+//   x        → normalized handle without @, e.g. "psymetric"
+//   wiki/blog → normalized host or slug
+// canonicalUrl: optional human-facing reference URL (presentation layer)
+// Uniqueness: (projectId, key) for operator identity;
+//             (projectId, type, canonicalIdentifier) for platform identity
+//             — enforced via partial unique index in migration (canonicalIdentifier IS NOT NULL)
 model CgSurface {
-  id         String        @id @default(uuid()) @db.Uuid
-  projectId  String        @db.Uuid
-  project    Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  type       CgSurfaceType
-  key        String        // Stable short identifier, e.g. "main-site", "wiki"
-  label      String?
-  enabled    Boolean       @default(true)
-  createdAt  DateTime      @default(now())
-  updatedAt  DateTime      @updatedAt
+  id                  String        @id @default(uuid()) @db.Uuid
+  projectId           String        @db.Uuid
+  project             Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  type                CgSurfaceType
+  key                 String        // Canonicalized operator identifier: lowercase a-z0-9 + hyphens
+  label               String?
+  canonicalIdentifier String?       // Durable machine-readable platform identity (see comments above)
+  canonicalUrl        String?       // Optional presentation/reference URL
+  enabled             Boolean       @default(true)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
 
-  sites      CgSite[]
+  sites               CgSite[]
 
   @@unique([projectId, key])
   @@index([projectId, type])
+  // Note: partial unique index on (projectId, type, canonicalIdentifier) WHERE canonicalIdentifier IS NOT NULL
+  // is enforced via raw migration SQL — not expressible as Prisma @@unique with partial filter.
 }
 
 // CgSite — A web property within a surface

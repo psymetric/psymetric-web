@@ -57,12 +57,16 @@ export async function POST(request: NextRequest) {
     const { surfaceId, domain, framework, isCanonical, notes } = parsed.data;
 
     // Non-disclosure: cross-project surfaceId returns 404
+    // Disabled surface: returns 400 (surface exists but is not accepting new sites)
     const surface = await prisma.cgSurface.findUnique({
       where: { id: surfaceId },
-      select: { projectId: true },
+      select: { projectId: true, enabled: true },
     });
     if (!surface || surface.projectId !== projectId) {
       return notFound("Surface not found");
+    }
+    if (!surface.enabled) {
+      return badRequest("Surface is disabled and cannot accept new sites");
     }
 
     const existing = await prisma.cgSite.findUnique({

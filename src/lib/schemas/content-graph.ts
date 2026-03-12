@@ -8,14 +8,87 @@ export const CG_PUBLISHING_STATES = ["draft", "published", "archived"] as const;
 export const CG_PAGE_ROLES = ["primary", "supporting", "reviewed", "compared", "navigation"] as const;
 export const CG_LINK_ROLES = ["hub", "support", "navigation"] as const;
 
+// ---------------------------------------------------------------------------
+// canonicalIdentifier validation helpers
+// ---------------------------------------------------------------------------
+
+// Shared: no whitespace, non-empty (enforced separately from nullable check)
+const CANONICAL_ID_BASE = z
+  .string()
+  .min(1)
+  .max(500)
+  .regex(/^\S+$/, "canonicalIdentifier must not contain whitespace");
+
+/**
+ * Returns a type-specific canonical identifier validator, or the shared base
+ * if the type doesn't have stronger rules yet.
+ *
+ * website / wiki / blog  → normalized host (no scheme, no trailing slash)
+ *   e.g. "psymetric.io", "docs.psymetric.io"
+ * youtube                → channel ID (UCxxxx) or handle (@handle form)
+ *   both forms are allowed; observatories will normalize on read
+ * x                      → handle without @, lowercase alphanumeric + underscores
+ */
+function canonicalIdentifierForType(
+  type: (typeof CG_SURFACE_TYPES)[number]
+): z.ZodString {
+  switch (type) {
+    case "website":
+    case "wiki":
+    case "blog":
+      // Must look like a hostname: no scheme, no path, no whitespace
+      return CANONICAL_ID_BASE.regex(
+        /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/,
+        "canonicalIdentifier for website/wiki/blog must be a normalized hostname (e.g. \"psymetric.io\")"
+      );
+    case "youtube":
+      // Accept channel ID (UCxxxxxxxx, 24 chars) or @handle form
+      return CANONICAL_ID_BASE.regex(
+        /^(UC[A-Za-z0-9_-]{22}|@[A-Za-z0-9_.-]{1,100})$/,
+        "canonicalIdentifier for youtube must be a channel ID (UCxxxxxxxxx) or handle (@name)"
+      );
+    case "x":
+      // X handle without @, 1-50 chars, alphanumeric + underscores
+      return CANONICAL_ID_BASE.regex(
+        /^[A-Za-z0-9_]{1,50}$/,
+        "canonicalIdentifier for x must be a handle without @ (e.g. \"psymetric\")"
+      );
+    default:
+      return CANONICAL_ID_BASE;
+  }
+}
+
 export const CreateCgSurfaceSchema = z
   .object({
     type: z.enum(CG_SURFACE_TYPES),
-    key: z.string().min(1).max(100),
+    // key is canonicalized at write time in the route (trim + lowercase + collapse spaces to hyphens).
+    // This schema validates the raw input before canonicalization; the route stores the canonical form.
+    key: z
+      .string()
+      .min(1)
+      .max(100)
+      .regex(
+        /^[a-zA-Z0-9][a-zA-Z0-9 _-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/,
+        "key must start and end with alphanumeric; may contain letters, numbers, spaces, hyphens, underscores"
+      ),
     label: z.string().min(1).optional(),
+    canonicalIdentifier: z.string().optional(), // per-type validation applied in route after type is known
+    canonicalUrl: z.string().url("canonicalUrl must be a valid URL").optional(),
     enabled: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((data, ctx) => {
+    if (data.canonicalIdentifier !== undefined) {
+      const result = canonicalIdentifierForType(data.type).safeParse(data.canonicalIdentifier);
+      if (!result.success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["canonicalIdentifier"],
+          message: result.error.issues[0]?.message ?? "Invalid canonicalIdentifier for this surface type",
+        });
+      }
+    }
+  });
 
 export const CreateCgSiteSchema = z
   .object({
@@ -95,6 +168,7 @@ export const CreateCgSchemaUsageSchema = z
   .strict();
 
 export type CreateCgSurfaceInput = z.infer<typeof CreateCgSurfaceSchema>;
+export { canonicalIdentifierForType };
 export type CreateCgSiteInput = z.infer<typeof CreateCgSiteSchema>;
 export type CreateCgPageInput = z.infer<typeof CreateCgPageSchema>;
 export type CreateCgContentArchetypeInput = z.infer<typeof CreateCgContentArchetypeSchema>;
