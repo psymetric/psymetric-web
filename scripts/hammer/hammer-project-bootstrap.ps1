@@ -10,6 +10,10 @@
 #   POST /api/projects/:id/blueprint/apply — apply, idempotent re-apply
 #   Lifecycle: created → draft on first proposal
 #   Post-apply: blueprint archived, second apply 400
+#   Apply response shape: blueprintId, projectId, applied, created (surfaces/sites/archetypes/topics/entities)
+#   Apply created counts non-negative
+#   GET /blueprint/apply returns 405
+#   Apply on non-existent project returns 404
 
 Hammer-Section "PROJECT BOOTSTRAP & BLUEPRINT"
 
@@ -276,9 +280,91 @@ try {
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# PB-19: Auto-derived slug works
+# PB-19: Apply response includes blueprintId and per-type created counts
 try {
-    Write-Host "Testing: PB-19 POST with auto-derived slug" -NoNewline
+    Write-Host "Testing: PB-19 Apply response shape has blueprintId and all created counters" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        # Re-propose + apply for a clean check
+        $bpBody = @{ content = $blueprintContent } | ConvertTo-Json -Depth 10
+        $rp = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId/blueprint" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body $bpBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($rp.StatusCode -ne 201) {
+            Write-Host "  SKIP (re-propose failed)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+        } else {
+            $ra = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId/blueprint/apply" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body "{}" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+            if ($ra.StatusCode -eq 200) {
+                $ad = ($ra.Content | ConvertFrom-Json).data
+                if (
+                    $ad.applied -eq $true -and
+                    -not [string]::IsNullOrWhiteSpace($ad.blueprintId) -and
+                    -not [string]::IsNullOrWhiteSpace($ad.projectId) -and
+                    $null -ne $ad.created.surfaces -and
+                    $null -ne $ad.created.sites -and
+                    $null -ne $ad.created.archetypes -and
+                    $null -ne $ad.created.topics -and
+                    $null -ne $ad.created.entities
+                ) {
+                    Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+                } else { Write-Host ("  FAIL (shape mismatch: " + $ra.Content + ")") -ForegroundColor Red; Hammer-Record FAIL }
+            } else { Write-Host ("  FAIL (got " + $ra.StatusCode + ") body=" + $ra.Content) -ForegroundColor Red; Hammer-Record FAIL }
+        }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-20: Apply created counts are non-negative (sanity check; not an exact blueprint composition match)
+# Note: exact counts depend on prior idempotency state. This test only asserts no negative values.
+try {
+    Write-Host "Testing: PB-20 Apply created counts are non-negative" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        # Re-propose for a clean state then apply
+        $bpBody = @{ content = $blueprintContent } | ConvertTo-Json -Depth 10
+        $rp = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId/blueprint" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body $bpBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($rp.StatusCode -ne 201) {
+            Write-Host "  SKIP (re-propose failed)" -ForegroundColor DarkYellow; Hammer-Record SKIP
+        } else {
+            $ra = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId/blueprint/apply" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body "{}" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+            if ($ra.StatusCode -eq 200) {
+                $ad = ($ra.Content | ConvertFrom-Json).data
+                # Verifies all per-type created counters are >= 0 (not negative).
+                # Exact values depend on idempotency state from prior tests and are not asserted here.
+                $countsNonNegative = (
+                    [int]$ad.created.surfaces -ge 0 -and
+                    [int]$ad.created.sites    -ge 0 -and
+                    [int]$ad.created.archetypes -ge 0 -and
+                    [int]$ad.created.topics   -ge 0 -and
+                    [int]$ad.created.entities -ge 0
+                )
+                if ($countsNonNegative) {
+                    Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+                } else { Write-Host ("  FAIL (negative count in response: " + $ra.Content + ")") -ForegroundColor Red; Hammer-Record FAIL }
+            } else { Write-Host ("  FAIL (got " + $ra.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
+        }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-21: GET on apply endpoint returns 405
+try {
+    Write-Host "Testing: PB-21 GET /blueprint/apply returns 405" -NoNewline
+    if ($null -eq $testProjectId) { Write-Host "  SKIP" -ForegroundColor DarkYellow; Hammer-Record SKIP } else {
+        $resp = Invoke-WebRequest -Uri "$Base/api/projects/$testProjectId/blueprint/apply" -Method GET -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+        if ($resp.StatusCode -eq 405) {
+            Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+        } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 405)") -ForegroundColor Red; Hammer-Record FAIL }
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-22: Apply on non-existent project returns 404
+try {
+    Write-Host "Testing: PB-22 Apply on non-existent project returns 404" -NoNewline
+    $fakeId = "00000000-0000-4000-a000-000000000099"
+    $resp = Invoke-WebRequest -Uri "$Base/api/projects/$fakeId/blueprint/apply" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body "{}" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 404) {
+        Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS
+    } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 404)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# PB-23: Auto-derived slug works
+try {
+    Write-Host "Testing: PB-23 POST with auto-derived slug" -NoNewline
     $autoBody = @{ name = "Auto Slug $(Get-Date -Format 'yyyyMMddHHmmss')" } | ConvertTo-Json
     $resp = Invoke-WebRequest -Uri "$Base/api/projects" -Method POST -Headers @{ "Content-Type" = "application/json" } -Body $autoBody -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
     if ($resp.StatusCode -eq 201) {
@@ -289,9 +375,9 @@ try {
     } else { Write-Host ("  FAIL (got " + $resp.StatusCode + ")") -ForegroundColor Red; Hammer-Record FAIL }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
-# PB-20: Blueprint on non-existent project returns 404
+# PB-24: Blueprint on non-existent project returns 404
 try {
-    Write-Host "Testing: PB-20 Blueprint on non-existent project returns 404" -NoNewline
+    Write-Host "Testing: PB-24 Blueprint on non-existent project returns 404" -NoNewline
     $fakeId = "00000000-0000-4000-a000-000000000099"
     $resp = Invoke-WebRequest -Uri "$Base/api/projects/$fakeId/blueprint" -Method GET -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
     if ($resp.StatusCode -eq 404) {

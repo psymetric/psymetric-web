@@ -55,6 +55,7 @@ $_parseTargets = @(
     "$PSScriptRoot\hammer\hammer-content-graph-intelligence.ps1"
     "$PSScriptRoot\hammer\hammer-veda-brain-phase1.ps1"
     "$PSScriptRoot\hammer\hammer-project-bootstrap.ps1"
+    "$PSScriptRoot\hammer\hammer-veda-brain-proposals.ps1"
 )
 foreach ($_pt in $_parseTargets) {
     $_tokens = $null

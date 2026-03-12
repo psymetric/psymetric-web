@@ -251,20 +251,25 @@ All analytics are compute-on-read. No materialized volatility state is permitted
 - VS Code Command Center (multi-panel sidebar)
 - SERP Observatory panel
 - VS Code first-run continuity and blueprint discoverability baseline
+- Content Graph phase 1 structural foundation
+- Content Graph phase 2 diagnostics layer
+- VEDA Brain phase 1 diagnostics layer
+- VEDA Brain phase C1 proposal helpers
+- Project bootstrap and blueprint workflow foundation
+- MCP tools for project bootstrap and proposals
 
 ---
 
 ## 9. Active Development
 
-- Content Graph layer *(in progress)*
-- Project Blueprint workflow
-- Brand Surface Registry
+- Content Graph hardening and operator-loop integration refinement
+- Project Blueprint workflow hardening
+- Brand Surface Registry hardening
 - Page Command Center expansion
-- MCP toolset for project creation and blueprint workflows
-- SERP-to-Content-Graph proposal helpers *(Phase C1: archetype + schema proposals only, read-only, compute-on-read)*
 - proposal discoverability in the VS Code operator loop
 - environment clarity and failure-state wording
 - cross-panel continuity for repo-native execution
+- pre-YouTube hardening gate for current-scope completion
 
 SERP-to-Content-Graph helpers generate operator-reviewable proposals only. They do not mutate Content Graph state automatically.
 Phase C1 scope: `GET /api/veda-brain/proposals` returning archetypeProposals and schemaProposals derived from VEDA Brain diagnostics.
@@ -283,6 +288,19 @@ The current focus is:
 - diagnostic-to-next-step continuity
 - proposal visibility inside the operator loop
 - smaller command/panel discoverability refinements
+
+### Pre-YouTube hardening gate
+
+Before VEDA expands to a YouTube observatory surface, current-scope hardening work must be closed for the existing observatory foundation.
+
+Priority hardening items:
+- strengthen project-resolution safety before scope expansion
+- add missing DB-level integrity enforcement for Content Graph junction models
+- extend trigger integrity coverage to match current entity surface
+- close hammer coverage gaps in blueprint apply and related verification paths
+- keep MCP/docs/roadmap alignment current with implemented surfaces
+
+This hardening pass exists to ensure VEDA's current observatory foundation is coherent, well-defended, and ready for a new observatory surface without architectural drift.
 
 Repo-native execution alignment should preserve these rules:
 - VS Code is the primary repo-native execution surface

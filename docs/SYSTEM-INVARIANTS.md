@@ -1,8 +1,8 @@
-# PsyMetric System Invariants
+# VEDA System Invariants
 
 **Purpose**
 
-This document defines the non-negotiable system invariants of PsyMetric.
+This document defines the non-negotiable system invariants of VEDA.
 
 These invariants are architectural constraints. They are not implementation details. They must remain true regardless of refactors, feature additions, UI changes, or internal reorganizations.
 
@@ -192,7 +192,7 @@ If these tests fail, the system is not safe.
 
 # Final Principle
 
-PsyMetric is a multi-project, event-logged, transaction-safe system.
+VEDA is a multi-project, event-logged, transaction-safe system.
 
 Isolation is structural.
 Atomicity is mandatory.
