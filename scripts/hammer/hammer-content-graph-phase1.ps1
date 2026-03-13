@@ -239,6 +239,63 @@ try {
     }
 } catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
 
+# ---------------------------------------------------------------------------
+# CG-S18 through CG-S22: YouTube surface canonicalIdentifier UC... enforcement
+# Per VEDA-YOUTUBE-IDENTITY-NORMALIZATION.md: YouTube surfaces must store
+# channel ID in UC... form only. @handle and URL forms must be rejected.
+# ---------------------------------------------------------------------------
+
+# CG-S18: YouTube surface with valid UC... canonicalIdentifier accepted
+try {
+    Write-Host "Testing: CG-S18 YouTube surface with UC... canonicalIdentifier accepted" -NoNewline
+    $ucId = "UC" + "aB1cD2eF3gH4iJ5kL6mN7oP8q".Substring(0, 22)
+    $body = @{ type = "youtube"; key = "cgs-yt-uc-$cgRun"; canonicalIdentifier = $ucId } | ConvertTo-Json -Compress
+    $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $Headers -Body $body -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 201) {
+        $stored = ($resp.Content | ConvertFrom-Json).data.canonicalIdentifier
+        if ($stored -eq $ucId) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+        else { Write-Host ("  FAIL (stored='" + $stored + "', expected='" + $ucId + "')") -ForegroundColor Red; Hammer-Record FAIL }
+    } else {
+        Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 201) body=" + $resp.Content) -ForegroundColor Red; Hammer-Record FAIL
+    }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# CG-S19: YouTube surface with @handle canonicalIdentifier rejected
+try {
+    Write-Host "Testing: CG-S19 YouTube surface with @handle canonicalIdentifier rejected" -NoNewline
+    $body = @{ type = "youtube"; key = "cgs-yt-handle-$cgRun"; canonicalIdentifier = "@testchannel" } | ConvertTo-Json -Compress
+    $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $Headers -Body $body -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 400) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+    else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 400 — @handle must not be accepted as YouTube canonicalIdentifier)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# CG-S20: YouTube surface with channel URL as canonicalIdentifier rejected
+try {
+    Write-Host "Testing: CG-S20 YouTube surface with channel URL as canonicalIdentifier rejected" -NoNewline
+    $body = @{ type = "youtube"; key = "cgs-yt-url-$cgRun"; canonicalIdentifier = "https://youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx" } | ConvertTo-Json -Compress
+    $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $Headers -Body $body -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 400) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+    else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 400 — URLs must not be stored as YouTube canonicalIdentifier)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# CG-S21: YouTube surface with short/malformed ID rejected
+try {
+    Write-Host "Testing: CG-S21 YouTube surface with malformed channel ID rejected" -NoNewline
+    $body = @{ type = "youtube"; key = "cgs-yt-bad-$cgRun"; canonicalIdentifier = "UC_tooshort" } | ConvertTo-Json -Compress
+    $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $Headers -Body $body -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 400) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+    else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 400)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
+# CG-S22: Non-YouTube surface types unaffected (X handle still accepted)
+try {
+    Write-Host "Testing: CG-S22 X surface with handle canonicalIdentifier still accepted" -NoNewline
+    $body = @{ type = "x"; key = "cgs-x-id-$cgRun"; canonicalIdentifier = "testhandle" } | ConvertTo-Json -Compress
+    $resp = Invoke-WebRequest -Uri "$Base/api/content-graph/surfaces" -Method POST -Headers $Headers -Body $body -ContentType "application/json" -SkipHttpErrorCheck -TimeoutSec 30 -UseBasicParsing
+    if ($resp.StatusCode -eq 201) { Write-Host "  PASS" -ForegroundColor Green; Hammer-Record PASS }
+    else { Write-Host ("  FAIL (got " + $resp.StatusCode + ", expected 201 — X surface validation must not be affected by YouTube tightening)") -ForegroundColor Red; Hammer-Record FAIL }
+} catch { Write-Host ("  FAIL (exception: " + $_.Exception.Message + ")") -ForegroundColor Red; Hammer-Record FAIL }
+
 Hammer-Section "CONTENT GRAPH PHASE 1 — SITES"
 
 # Setup: second surface for site tests

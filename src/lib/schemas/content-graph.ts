@@ -25,8 +25,8 @@ const CANONICAL_ID_BASE = z
  *
  * website / wiki / blog  → normalized host (no scheme, no trailing slash)
  *   e.g. "psymetric.io", "docs.psymetric.io"
- * youtube                → channel ID (UCxxxx) or handle (@handle form)
- *   both forms are allowed; observatories will normalize on read
+ * youtube                → channel ID only (UC + 22 base64url chars)
+ *   per VEDA-YOUTUBE-IDENTITY-NORMALIZATION.md; @handle must be resolved before registration
  * x                      → handle without @, lowercase alphanumeric + underscores
  */
 function canonicalIdentifierForType(
@@ -42,10 +42,13 @@ function canonicalIdentifierForType(
         "canonicalIdentifier for website/wiki/blog must be a normalized hostname (e.g. \"psymetric.io\")"
       );
     case "youtube":
-      // Accept channel ID (UCxxxxxxxx, 24 chars) or @handle form
+      // Channel ID only (UC + 22 base64url chars, 24 total).
+      // Per VEDA-YOUTUBE-IDENTITY-NORMALIZATION.md: @handle and other
+      // weaker forms must be resolved to UC... before surface registration.
+      // The observatory ownership join requires exact UC... string equality.
       return CANONICAL_ID_BASE.regex(
-        /^(UC[A-Za-z0-9_-]{22}|@[A-Za-z0-9_.-]{1,100})$/,
-        "canonicalIdentifier for youtube must be a channel ID (UCxxxxxxxxx) or handle (@name)"
+        /^UC[A-Za-z0-9_-]{22}$/,
+        "canonicalIdentifier for youtube must be a channel ID in UC... form (24 characters). Resolve @handles to channel IDs before registration."
       );
     case "x":
       // X handle without @, 1-50 chars, alphanumeric + underscores
