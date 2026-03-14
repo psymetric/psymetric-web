@@ -2,7 +2,7 @@
   "mcpServers": {
     "veda": {
       "command": "node",
-      "args": ["C:\\dev\\psymetric\\mcp\\server\\dist\\index.js"],
+      "args": ["C:\\dev\\veda\\mcp\\server\\dist\\index.js"],
       "env": {
         "VEDA_BASE_URL": "http://localhost:3000",
         "VEDA_PROJECT_ID": "00000000-0000-4000-a000-000000000001",

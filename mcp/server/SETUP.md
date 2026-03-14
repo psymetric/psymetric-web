@@ -3,7 +3,7 @@
 ## 1. Install MCP Server Dependencies
 
 ```bash
-cd C:\dev\psymetric\mcp\server
+cd C:\dev\veda\mcp\server
 npm install
 ```
 
@@ -30,7 +30,7 @@ If this is your only MCP server, replace the entire file with:
   "mcpServers": {
     "veda": {
       "command": "node",
-      "args": ["C:\\dev\\psymetric\\mcp\\server\\dist\\index.js"],
+      "args": ["C:\\dev\\veda\\mcp\\server\\dist\\index.js"],
       "env": {
         "VEDA_BASE_URL": "http://localhost:3000",
         "VEDA_PROJECT_ID": "00000000-0000-4000-a000-000000000001",
@@ -53,7 +53,7 @@ If you already have other MCP servers configured, add the `veda` entry to your e
     },
     "veda": {
       "command": "node",
-      "args": ["C:\\dev\\psymetric\\mcp\\server\\dist\\index.js"],
+      "args": ["C:\\dev\\veda\\mcp\\server\\dist\\index.js"],
       "env": {
         "VEDA_BASE_URL": "http://localhost:3000",
         "VEDA_PROJECT_ID": "00000000-0000-4000-a000-000000000001",
