@@ -3,6 +3,12 @@
  *
  * Validates environment variables and creates HTTP client
  * with project scoping headers.
+ *
+ * Env var preference order (VEDA_* first, PSYMETRIC_* fallback):
+ *   VEDA_BASE_URL         ?? PSYMETRIC_BASE_URL
+ *   VEDA_PROJECT_ID       ?? PSYMETRIC_PROJECT_ID
+ *   VEDA_PROJECT_SLUG     ?? PSYMETRIC_PROJECT_SLUG
+ *   VEDA_TIMEOUT_MS       ?? PSYMETRIC_TIMEOUT_MS
  */
 
 export interface ServerConfig {
@@ -24,29 +30,40 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 /**
  * Validate required environment variables.
  * Exits process if configuration is invalid (fail fast).
+ *
+ * Reads VEDA_* first; falls back to PSYMETRIC_* for backward compatibility.
  */
 export function validateConfig(): ServerConfig {
-  const baseUrl = process.env.PSYMETRIC_BASE_URL;
+  const baseUrl =
+    process.env.VEDA_BASE_URL ??
+    process.env.PSYMETRIC_BASE_URL;
+
   if (!baseUrl) {
-    console.error("[VEDA MCP] FATAL: PSYMETRIC_BASE_URL is required");
+    console.error("[VEDA MCP] FATAL: VEDA_BASE_URL is required (PSYMETRIC_BASE_URL also accepted for backward compatibility)");
     process.exit(1);
   }
 
   // Project scope: exactly one of project ID or slug must be provided
-  const projectId = process.env.PSYMETRIC_PROJECT_ID;
-  const projectSlug = process.env.PSYMETRIC_PROJECT_SLUG;
+  const projectId =
+    process.env.VEDA_PROJECT_ID ??
+    process.env.PSYMETRIC_PROJECT_ID;
+
+  const projectSlug =
+    process.env.VEDA_PROJECT_SLUG ??
+    process.env.PSYMETRIC_PROJECT_SLUG;
 
   if (!projectId && !projectSlug) {
     console.error(
-      "[VEDA MCP] FATAL: Either PSYMETRIC_PROJECT_ID or PSYMETRIC_PROJECT_SLUG must be set"
+      "[VEDA MCP] FATAL: Either VEDA_PROJECT_ID or VEDA_PROJECT_SLUG must be set"
     );
+    console.error("[VEDA MCP] (PSYMETRIC_PROJECT_ID and PSYMETRIC_PROJECT_SLUG are also accepted for backward compatibility)");
     console.error("[VEDA MCP] No silent fallback to DEFAULT_PROJECT_ID - project scope is required");
     process.exit(1);
   }
 
   if (projectId && projectSlug) {
     console.error(
-      "[VEDA MCP] FATAL: Cannot set both PSYMETRIC_PROJECT_ID and PSYMETRIC_PROJECT_SLUG"
+      "[VEDA MCP] FATAL: Cannot set both a project ID and a project slug (VEDA_* or PSYMETRIC_*)"
     );
     process.exit(1);
   }
@@ -56,7 +73,7 @@ export function validateConfig(): ServerConfig {
   if (projectId) {
     if (!UUID_RE.test(projectId)) {
       console.error(
-        `[VEDA MCP] FATAL: PSYMETRIC_PROJECT_ID must be a valid UUID, got: ${projectId}`
+        `[VEDA MCP] FATAL: Project ID must be a valid UUID, got: ${projectId}`
       );
       process.exit(1);
     }
@@ -65,10 +82,15 @@ export function validateConfig(): ServerConfig {
     projectScope = { type: "slug", value: projectSlug! };
   }
 
-  const timeoutMs = parseInt(process.env.PSYMETRIC_TIMEOUT_MS ?? "30000", 10);
+  const timeoutRaw =
+    process.env.VEDA_TIMEOUT_MS ??
+    process.env.PSYMETRIC_TIMEOUT_MS ??
+    "30000";
+
+  const timeoutMs = parseInt(timeoutRaw, 10);
   if (isNaN(timeoutMs) || timeoutMs <= 0) {
     console.error(
-      `[VEDA MCP] FATAL: PSYMETRIC_TIMEOUT_MS must be a positive number, got: ${process.env.PSYMETRIC_TIMEOUT_MS}`
+      `[VEDA MCP] FATAL: Timeout must be a positive number, got: ${timeoutRaw}`
     );
     process.exit(1);
   }

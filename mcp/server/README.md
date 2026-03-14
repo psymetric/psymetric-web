@@ -34,33 +34,39 @@ npm run build
 
 ### Required Environment Variables
 
+The server reads `VEDA_*` variables first and falls back to `PSYMETRIC_*` for backward compatibility.
+
 **Backend URL:**
 ```bash
-PSYMETRIC_BASE_URL=http://localhost:3000
+VEDA_BASE_URL=http://localhost:3000
+# PSYMETRIC_BASE_URL=http://localhost:3000  # legacy fallback
 ```
 
 **Project Scope (exactly one required):**
 ```bash
 # Option 1: Project UUID
-PSYMETRIC_PROJECT_ID=00000000-0000-4000-a000-000000000001
+VEDA_PROJECT_ID=00000000-0000-4000-a000-000000000001
+# PSYMETRIC_PROJECT_ID=...  # legacy fallback
 
 # Option 2: Project slug
-PSYMETRIC_PROJECT_SLUG=psymetric
+VEDA_PROJECT_SLUG=your-project-slug
+# PSYMETRIC_PROJECT_SLUG=...  # legacy fallback
 ```
 
 ### Optional Environment Variables
 
 ```bash
 # HTTP request timeout (default: 30000ms)
-PSYMETRIC_TIMEOUT_MS=30000
+VEDA_TIMEOUT_MS=30000
+# PSYMETRIC_TIMEOUT_MS=30000  # legacy fallback
 ```
 
 ### Fail-Fast Validation
 
 The server will exit immediately at startup if:
-- `PSYMETRIC_BASE_URL` is not set
-- Neither `PSYMETRIC_PROJECT_ID` nor `PSYMETRIC_PROJECT_SLUG` is set
-- Both project ID and slug are set (ambiguous)
+- Neither `VEDA_BASE_URL` nor `PSYMETRIC_BASE_URL` is set
+- No project scope is set (neither `VEDA_PROJECT_ID`, `PSYMETRIC_PROJECT_ID`, `VEDA_PROJECT_SLUG`, nor `PSYMETRIC_PROJECT_SLUG`)
+- Both project ID and slug resolve to a value (ambiguous)
 - Project ID is not a valid UUID
 - Timeout is not a positive number
 
@@ -76,12 +82,12 @@ Add to your Claude Desktop config file:
 ```json
 {
   "mcpServers": {
-    "psymetric": {
+    "veda": {
       "command": "node",
       "args": ["/absolute/path/to/psymetric/mcp/server/dist/index.js"],
       "env": {
-        "PSYMETRIC_BASE_URL": "http://localhost:3000",
-        "PSYMETRIC_PROJECT_ID": "00000000-0000-4000-a000-000000000001"
+        "VEDA_BASE_URL": "http://localhost:3000",
+        "VEDA_PROJECT_ID": "00000000-0000-4000-a000-000000000001"
       }
     }
   }
@@ -158,8 +164,8 @@ List quotable citation blocks for GEO optimization.
 
 All tools (except `list_projects`) automatically inject project scope headers based on environment configuration:
 
-- `x-project-id: <uuid>` when `PSYMETRIC_PROJECT_ID` is set
-- `x-project-slug: <slug>` when `PSYMETRIC_PROJECT_SLUG` is set
+- `x-project-id: <uuid>` when a project ID is resolved (`VEDA_PROJECT_ID` or `PSYMETRIC_PROJECT_ID`)
+- `x-project-slug: <slug>` when a project slug is resolved (`VEDA_PROJECT_SLUG` or `PSYMETRIC_PROJECT_SLUG`)
 
 **Security Note:** Project scoping is server-controlled, not tool-parameter-controlled. This prevents users/LLMs from accessing arbitrary projects.
 
@@ -231,11 +237,11 @@ Future phases may introduce additional capabilities.
 
 **Server exits at startup:**
 - Check that all required environment variables are set
-- Verify `PSYMETRIC_PROJECT_ID` is a valid UUID format
-- Ensure only one project scope variable is set
+- Verify `VEDA_PROJECT_ID` (or `PSYMETRIC_PROJECT_ID`) is a valid UUID format
+- Ensure only one project scope variable resolves to a value
 
 **Connection refused:**
-- Verify `PSYMETRIC_BASE_URL` points to running backend
+- Verify `VEDA_BASE_URL` (or `PSYMETRIC_BASE_URL`) points to running backend
 - Check backend is accessible from MCP server environment
 
 **404 errors for existing entities:**
@@ -243,7 +249,7 @@ Future phases may introduce additional capabilities.
 - Remember: 404 is returned for cross-project access (security feature)
 
 **Timeout errors:**
-- Increase `PSYMETRIC_TIMEOUT_MS` if needed
+- Increase `VEDA_TIMEOUT_MS` (or `PSYMETRIC_TIMEOUT_MS`) if needed
 - Check backend performance and network latency
 
 ## License

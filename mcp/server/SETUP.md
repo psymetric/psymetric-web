@@ -28,13 +28,13 @@ If this is your only MCP server, replace the entire file with:
 ```json
 {
   "mcpServers": {
-    "psymetric": {
+    "veda": {
       "command": "node",
       "args": ["C:\\dev\\psymetric\\mcp\\server\\dist\\index.js"],
       "env": {
-        "PSYMETRIC_BASE_URL": "http://localhost:3000",
-        "PSYMETRIC_PROJECT_ID": "00000000-0000-4000-a000-000000000001",
-        "PSYMETRIC_TIMEOUT_MS": "30000"
+        "VEDA_BASE_URL": "http://localhost:3000",
+        "VEDA_PROJECT_ID": "00000000-0000-4000-a000-000000000001",
+        "VEDA_TIMEOUT_MS": "30000"
       }
     }
   }
@@ -43,7 +43,7 @@ If this is your only MCP server, replace the entire file with:
 
 ### Option B: Add to Existing Configuration
 
-If you already have other MCP servers configured, add the `psymetric` entry to your existing `mcpServers` object:
+If you already have other MCP servers configured, add the `veda` entry to your existing `mcpServers` object:
 
 ```json
 {
@@ -51,13 +51,13 @@ If you already have other MCP servers configured, add the `psymetric` entry to y
     "your-existing-server": {
       ...
     },
-    "psymetric": {
+    "veda": {
       "command": "node",
       "args": ["C:\\dev\\psymetric\\mcp\\server\\dist\\index.js"],
       "env": {
-        "PSYMETRIC_BASE_URL": "http://localhost:3000",
-        "PSYMETRIC_PROJECT_ID": "00000000-0000-4000-a000-000000000001",
-        "PSYMETRIC_TIMEOUT_MS": "30000"
+        "VEDA_BASE_URL": "http://localhost:3000",
+        "VEDA_PROJECT_ID": "00000000-0000-4000-a000-000000000001",
+        "VEDA_TIMEOUT_MS": "30000"
       }
     }
   }
@@ -77,10 +77,10 @@ This is the seed project "PsyMetric" created by database migrations.
 
 **To use a different project:**
 1. Query your database: `SELECT id, name, slug FROM projects;`
-2. Replace `PSYMETRIC_PROJECT_ID` with your chosen project's UUID
-3. Or use `PSYMETRIC_PROJECT_SLUG` instead (replace `PSYMETRIC_PROJECT_ID` with `PSYMETRIC_PROJECT_SLUG: "your-slug"`)
+2. Replace `VEDA_PROJECT_ID` with your chosen project's UUID
+3. Or use `VEDA_PROJECT_SLUG` instead (replace `VEDA_PROJECT_ID` with `VEDA_PROJECT_SLUG: "your-slug"`)
 
-**Important:** Exactly one of `PSYMETRIC_PROJECT_ID` or `PSYMETRIC_PROJECT_SLUG` must be set. Setting both or neither will cause startup failure.
+**Important:** Exactly one of `VEDA_PROJECT_ID` or `VEDA_PROJECT_SLUG` must be set. Setting both or neither will cause startup failure. (`PSYMETRIC_PROJECT_ID` and `PSYMETRIC_PROJECT_SLUG` are also accepted for backward compatibility.)
 
 ## 4. Delete Legacy MCP Server
 
@@ -125,10 +125,10 @@ You should see the MCP server respond with data from your local VEDA backend.
 - Check Claude Desktop logs for errors
 - Ensure you fully quit and restarted Claude Desktop
 
-### "PSYMETRIC_BASE_URL is required" error
+### "VEDA_BASE_URL is required" error
 
 - Verify the environment variables in the config are set correctly
-- Check that `PSYMETRIC_BASE_URL` points to your running backend
+- Set `VEDA_BASE_URL` (preferred) or `PSYMETRIC_BASE_URL` (legacy fallback)
 - Remember: MCP server reads ONLY from Claude Desktop config `env` block, NOT from `.env` files
 
 ### Connection refused errors
@@ -138,9 +138,9 @@ You should see the MCP server respond with data from your local VEDA backend.
 
 ### Invalid UUID error
 
-- Verify `PSYMETRIC_PROJECT_ID` is a valid UUID format
+- Verify `VEDA_PROJECT_ID` (or `PSYMETRIC_PROJECT_ID`) is a valid UUID format
 - Default project ID: `00000000-0000-4000-a000-000000000001`
-- Ensure exactly one of `PSYMETRIC_PROJECT_ID` or `PSYMETRIC_PROJECT_SLUG` is set
+- Ensure exactly one project scope variable resolves to a value
 
 ### "Project not found" or 404 errors on tool calls
 
@@ -199,13 +199,15 @@ npm run dev
 
 | Variable | Required | Description | Example |
 |----------|----------|-------------|---------|
-| `PSYMETRIC_BASE_URL` | ✅ Yes | Backend API URL | `http://localhost:3000` |
-| `PSYMETRIC_PROJECT_ID` | ⚠️ One of ID or SLUG | Project UUID | `00000000-0000-4000-a000-000000000001` |
-| `PSYMETRIC_PROJECT_SLUG` | ⚠️ One of ID or SLUG | Project slug | `psymetric` |
-| `PSYMETRIC_TIMEOUT_MS` | ❌ Optional | HTTP timeout (default 30000) | `30000` |
+| `VEDA_BASE_URL` | ✅ Yes | Backend API URL | `http://localhost:3000` |
+| `VEDA_PROJECT_ID` | ⚠️ One of ID or SLUG | Project UUID | `00000000-0000-4000-a000-000000000001` |
+| `VEDA_PROJECT_SLUG` | ⚠️ One of ID or SLUG | Project slug | `your-project-slug` |
+| `VEDA_TIMEOUT_MS` | ❌ Optional | HTTP timeout (default 30000) | `30000` |
+
+**Legacy fallback variables (still accepted):** `PSYMETRIC_BASE_URL`, `PSYMETRIC_PROJECT_ID`, `PSYMETRIC_PROJECT_SLUG`, `PSYMETRIC_TIMEOUT_MS`
 
 **Project Scope Rules:**
-- Exactly ONE of `PSYMETRIC_PROJECT_ID` or `PSYMETRIC_PROJECT_SLUG` must be set
+- Exactly ONE project scope variable must resolve to a value (`VEDA_PROJECT_ID`, `VEDA_PROJECT_SLUG`, `PSYMETRIC_PROJECT_ID`, or `PSYMETRIC_PROJECT_SLUG`)
 - Setting both → Fatal error at startup
 - Setting neither → Fatal error at startup
 - Invalid UUID format → Fatal error at startup
