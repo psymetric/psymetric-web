@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PsyMetric MCP server smoke test.
+ * VEDA MCP server smoke test.
  *
  * What this tests:
  * - MCP stdio server starts
@@ -9,22 +9,32 @@
  * - tools/call works for search_entities (limit=1) if backend has entities
  *
  * Prereqs:
- * - PsyMetric backend running and reachable at PSYMETRIC_BASE_URL
- * - Env vars set: PSYMETRIC_BASE_URL and exactly one of PSYMETRIC_PROJECT_ID or PSYMETRIC_PROJECT_SLUG
+ * - VEDA backend running and reachable at VEDA_BASE_URL (or PSYMETRIC_BASE_URL)
+ * - Env vars set: VEDA_BASE_URL (or PSYMETRIC_BASE_URL) and exactly one of
+ *   VEDA_PROJECT_ID / VEDA_PROJECT_SLUG (or their PSYMETRIC_* equivalents)
  */
 
 import { spawn } from "node:child_process";
 
-const BASE_URL = process.env.PSYMETRIC_BASE_URL;
-const PROJECT_ID = process.env.PSYMETRIC_PROJECT_ID;
-const PROJECT_SLUG = process.env.PSYMETRIC_PROJECT_SLUG;
+// Prefer VEDA_* vars; fall back to PSYMETRIC_* for backward compatibility
+const BASE_URL =
+  process.env.VEDA_BASE_URL ??
+  process.env.PSYMETRIC_BASE_URL;
+
+const PROJECT_ID =
+  process.env.VEDA_PROJECT_ID ??
+  process.env.PSYMETRIC_PROJECT_ID;
+
+const PROJECT_SLUG =
+  process.env.VEDA_PROJECT_SLUG ??
+  process.env.PSYMETRIC_PROJECT_SLUG;
 
 if (!BASE_URL) {
-  console.error("Missing PSYMETRIC_BASE_URL");
+  console.error("Missing VEDA_BASE_URL (or PSYMETRIC_BASE_URL)");
   process.exit(1);
 }
 if ((PROJECT_ID && PROJECT_SLUG) || (!PROJECT_ID && !PROJECT_SLUG)) {
-  console.error("Set exactly one of PSYMETRIC_PROJECT_ID or PSYMETRIC_PROJECT_SLUG");
+  console.error("Set exactly one of VEDA_PROJECT_ID or VEDA_PROJECT_SLUG (or their PSYMETRIC_* equivalents)");
   process.exit(1);
 }
 
@@ -72,6 +82,11 @@ async function main() {
     stdio: ["pipe", "pipe", "inherit"],
     env: {
       ...process.env,
+      // Pass VEDA_* as preferred; also pass PSYMETRIC_* for backward compat
+      // with any older server build that may still be on disk.
+      VEDA_BASE_URL: BASE_URL,
+      VEDA_PROJECT_ID: PROJECT_ID ?? "",
+      VEDA_PROJECT_SLUG: PROJECT_SLUG ?? "",
       PSYMETRIC_BASE_URL: BASE_URL,
       PSYMETRIC_PROJECT_ID: PROJECT_ID ?? "",
       PSYMETRIC_PROJECT_SLUG: PROJECT_SLUG ?? "",
@@ -88,7 +103,7 @@ async function main() {
     params: {
       protocolVersion: "2025-11-25",
       capabilities: {},
-      clientInfo: { name: "psymetric-mcp-smoke", version: "0.0.1" },
+      clientInfo: { name: "veda-mcp-smoke", version: "0.0.1" },
     },
   });
   const initResp = await waitFor(proc, 1);

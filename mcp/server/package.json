@@ -1,11 +1,11 @@
 {
-  "name": "@psymetric/mcp-server",
+  "name": "@veda/mcp-server",
   "version": "1.0.0",
   "description": "VEDA MCP Server - API-backed read-only bridge",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "psymetric-mcp": "dist/index.js"
+    "veda-mcp": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",

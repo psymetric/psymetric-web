@@ -40,12 +40,12 @@ Click to switch via Quick Pick. Stores base URL + auth token per environment in 
 
 ```json
 {
-  "psymetric.environments": {
+  "veda.environments": {
     "local": { "baseUrl": "http://localhost:3000", "token": "" },
     "stage": { "baseUrl": "https://stage.psymetric.dev", "token": "" },
     "prod": { "baseUrl": "https://psymetric.dev", "token": "" }
   },
-  "psymetric.activeEnvironment": "local"
+  "veda.activeEnvironment": "local"
 }
 ```
 
@@ -186,7 +186,7 @@ The existing `api-hammer.ps1` script (or a future cross-platform Node equivalent
   "label": "VEDA: API Hammer",
   "type": "shell",
   "command": "powershell",
-  "args": ["-File", "${workspaceFolder}/scripts/api-hammer.ps1", "-Base", "${config:psymetric.environments.${config:psymetric.activeEnvironment}.baseUrl}"],
+  "args": ["-File", "${workspaceFolder}/scripts/api-hammer.ps1", "-Base", "${config:veda.environments.${config:veda.activeEnvironment}.baseUrl}"],
   "group": "test",
   "presentation": {
     "reveal": "always",
@@ -207,7 +207,7 @@ Future: API key or JWT per environment, stored in VS Code's `SecretStorage` API 
 
 ```typescript
 // Future auth pattern
-const secret = context.secrets.get(`psymetric.token.${env}`);
+const secret = context.secrets.get(`veda.token.${env}`);
 const headers = secret ? { Authorization: `Bearer ${secret}` } : {};
 ```
 
