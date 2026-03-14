@@ -1,4 +1,4 @@
-# PsyMetric — SEO Recording Specification
+# VEDA — SEO Recording Specification
 
 **Version:** 1.0
 **Status:** Phase 0-SEO

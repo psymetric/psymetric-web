@@ -1,7 +1,7 @@
 # Admin Dashboard Scope
 
 ## Purpose
-This document defines the **minimum scope** of the Admin Dashboard (the custom CMS layer) for PsyMetric.
+This document defines the **minimum scope** of the Admin Dashboard (the custom CMS layer) for VEDA.
 
 It exists to:
 - prevent ad-hoc implementation decisions

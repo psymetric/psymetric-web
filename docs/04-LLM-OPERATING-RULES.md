@@ -1,7 +1,7 @@
 04 — LLM Operating Rules
 Purpose
 
-This document defines how Large Language Models (LLMs) operate inside the PsyMetric system.
+This document defines how Large Language Models (LLMs) operate inside the VEDA system.
 
 LLMs are treated as internal assistants, not autonomous agents.
 They assist with drafting, analysis, planning, and summarization—but never invent system state.

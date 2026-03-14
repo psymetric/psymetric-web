@@ -1,7 +1,7 @@
 # Deployment & Infrastructure Baseline
 
 ## Purpose
-This document defines the **minimum required infrastructure** to deploy, operate, and evolve the PsyMetric system.
+This document defines the **minimum required infrastructure** to deploy, operate, and evolve the VEDA system.
 
 It exists to:
 - ground implementation decisions

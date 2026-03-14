@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines how **images, media, and static assets** are handled across the PsyMetric system.
+This document defines how **images, media, and static assets** are handled across the VEDA system.
 
 It exists to:
 - ensure consistent image optimization and delivery
@@ -105,7 +105,7 @@ Every published page must have Open Graph metadata for social sharing.
 ### Default OG Image
 
 If a page has no specific OG image, use a branded default:
-- PsyMetric logo + page type indicator
+- VEDA logo + page type indicator
 - Consistent template across all pages
 
 ---

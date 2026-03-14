@@ -47,7 +47,7 @@ The lifecycle system is advisory and contextual, not autonomous.
 
 Lifecycle state determines which surfaces and actions are emphasized in the interface.
 
-The lifecycle does not introduce new system logic. It only affects how information is presented. All data the extension reads is fetched from the PsyMetric API — no direct database access, no local computation.
+The lifecycle does not introduce new system logic. It only affects how information is presented. All data the extension reads is fetched from the VEDA API — no direct database access, no local computation.
 
 ### 3. Next Valid Action
 
@@ -364,7 +364,7 @@ All transitions map to the canonical table in `docs/veda-project-lifecycle-workf
 
 ## Recommended Transitions
 
-The system may suggest lifecycle transitions based on observed maturity conditions. These suggestions are computed on read from the PsyMetric API — no background process evaluates them.
+The system may suggest lifecycle transitions based on observed maturity conditions. These suggestions are computed on read from the VEDA API — no background process evaluates them.
 
 **Example:**
 

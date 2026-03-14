@@ -1,4 +1,4 @@
-# PsyMetric — DataForSEO Integration Map (v1)
+# VEDA — DataForSEO Integration Map (v1)
 
 **Version:** 1.0
 **Status:** Phase 0-SEO (parallel track within Phase 0)
@@ -8,7 +8,7 @@
 
 ## 1. Purpose
 
-This document defines how PsyMetric integrates with DataForSEO while preserving:
+This document defines how VEDA integrates with DataForSEO while preserving:
 
 - Project isolation
 - Deterministic behavior

@@ -16,7 +16,7 @@ async function main() {
   const config = validateConfig();
 
   console.error(
-    `[PsyMetric MCP] Starting server with project scope: ${config.projectScope.type}=${config.projectScope.value}`
+    `[VEDA MCP] Starting server with project scope: ${config.projectScope.type}=${config.projectScope.value}`
   );
 
   // Create API client
@@ -25,7 +25,7 @@ async function main() {
   // Create MCP server
   const server = new Server(
     {
-      name: "psymetric-mcp-server",
+      name: "veda-mcp-server",
       version: "1.0.0",
     },
     {
@@ -52,7 +52,7 @@ async function main() {
       );
       return result as CallToolResult;
     } catch (error) {
-      console.error(`[PsyMetric MCP] Tool execution error:`, error);
+      console.error(`[VEDA MCP] Tool execution error:`, error);
       throw error;
     }
   });
@@ -61,10 +61,10 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error("[PsyMetric MCP] Server running on stdio");
+  console.error("[VEDA MCP] Server running on stdio");
 }
 
 main().catch((error) => {
-  console.error("[PsyMetric MCP] Fatal error:", error);
+  console.error("[VEDA MCP] Fatal error:", error);
   process.exit(1);
 });

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the canonical `metricType` values PsyMetric uses in `MetricSnapshot.metricType`.
+This document defines the canonical `metricType` values VEDA uses in `MetricSnapshot.metricType`.
 
 `metricType` remains a string in the DB for flexibility, but the application layer MUST validate values against this list to prevent naming drift (e.g., `viewCount` vs `views`).
 
@@ -22,7 +22,7 @@ This list is intentionally small. Add new values only when necessary and record 
 
 ## Core Metric Types (Recommended)
 
-These are the default metrics PsyMetric should use across platforms when available.
+These are the default metrics VEDA should use across platforms when available.
 
 ### Reach / Consumption
 

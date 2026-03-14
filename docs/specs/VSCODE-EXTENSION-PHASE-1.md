@@ -518,7 +518,7 @@ This document is the implementation bridge between:
 
 - `docs/VSCODE-EXTENSION-SPEC.md`
 - `docs/VSCODE-EXTENSION-LIFECYCLE-UX.md`
-- `docs/PsyMetric_VSCode_Semantic_Engine_Integration_v1.0.md`
+- `docs/archive/PsyMetric_VSCode_Semantic_Engine_Integration_v1.0.md` _(legacy, archived)_
 - `docs/VISION-VEDA-COMMAND-CENTER.md`
 - `docs/specs/VSCODE-PAGE-COMMAND-CENTER.md`
 

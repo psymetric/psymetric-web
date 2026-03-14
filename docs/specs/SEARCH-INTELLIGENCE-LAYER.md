@@ -1,6 +1,6 @@
 # Search Intelligence Layer (SIL)
 
-**Project:** PsyMetric / Veda
+**Project:** VEDA
 
 **Status:** Draft (architecture memo; no code changes implied)
 

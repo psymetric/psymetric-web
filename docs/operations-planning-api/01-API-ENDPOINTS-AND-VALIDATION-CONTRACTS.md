@@ -1,7 +1,7 @@
 # API Endpoints & Validation Contracts
 
 ## Purpose
-This document defines the **canonical API contracts** for PsyMetric.
+This document defines the **canonical API contracts** for VEDA.
 
 It exists to:
 - prevent dashboard and extension drift

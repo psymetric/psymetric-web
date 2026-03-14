@@ -1,5 +1,5 @@
 /**
- * PsyMetric DB Hammer
+ * VEDA DB Hammer
  *
  * Deterministic seed + invariant verification + cleanup for multi-project isolation.
  *

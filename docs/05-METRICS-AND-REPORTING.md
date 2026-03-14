@@ -1,7 +1,7 @@
 05 — Metrics & Reporting
 Purpose
 
-This document defines how PsyMetric collects, stores, and reasons about metrics without assuming full or paid API access.
+This document defines how VEDA collects, stores, and reasons about metrics without assuming full or paid API access.
 
 Metrics are treated as:
 
@@ -27,7 +27,7 @@ Core Principle
 
 Metrics are observations, not conclusions.
 
-PsyMetric records what can be observed, when it was observed, and how it was obtained.
+VEDA records what can be observed, when it was observed, and how it was obtained.
 Missing data is acceptable and must never be inferred.
 
 Metric Model (Platform-Agnostic)
@@ -74,7 +74,7 @@ GitHub metrics → adoption & reuse
 
 LLMs and humans must not collapse these into a single “success score”.
 
-Platform: PsyMetric Website
+Platform: VEDA Website
 Data Source
 
 First-party analytics

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the **canonical database architecture** for PsyMetric.
+This document defines the **canonical database architecture** for VEDA.
 
 It is intended for humans and LLMs (Claude, ChatGPT) to:
 - generate schema (Prisma or equivalent)

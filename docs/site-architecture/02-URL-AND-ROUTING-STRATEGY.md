@@ -1,7 +1,7 @@
 # URL & Routing Strategy
 
 ## Purpose
-This document defines the **canonical URL structure and routing rules** for the PsyMetric system.
+This document defines the **canonical URL structure and routing rules** for the VEDA system.
 
 It exists to:
 - prevent SEO ambiguity and duplicate intent

@@ -1,6 +1,6 @@
 # Extension Ingestion Architecture (Desktop + Android)
 
-This document defines the architecture and operational constraints for the PsyMetric browser extension used for X (Twitter) ingestion.
+This document defines the architecture and operational constraints for the VEDA browser extension used for X (Twitter) ingestion.
 
 This architecture supports:
 - Chrome (desktop)
@@ -36,7 +36,7 @@ It does NOT:
 
 It only:
 - Captures X post data
-- Sends structured payload to PsyMetric backend
+- Sends structured payload to VEDA backend
 
 ---
 
@@ -101,7 +101,7 @@ Workflow:
 1. User scrolls X in Kiwi
 2. Taps extension
 3. Selects intent preset
-4. Capture sent to PsyMetric
+4. Capture sent to VEDA
 5. On next break, user opens dashboard and generates reply drafts
 6. User manually posts reply
 

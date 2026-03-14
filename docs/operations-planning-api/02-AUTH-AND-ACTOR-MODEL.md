@@ -1,7 +1,7 @@
 # Auth & Actor Model (v1)
 
 ## Purpose
-This document defines **who is allowed to act**, **how actions are attributed**, and **what trust assumptions exist** in PsyMetric.
+This document defines **who is allowed to act**, **how actions are attributed**, and **what trust assumptions exist** in VEDA.
 
 It exists to:
 - keep authority boundaries explicit

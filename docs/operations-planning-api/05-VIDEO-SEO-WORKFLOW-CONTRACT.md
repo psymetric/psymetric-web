@@ -1,7 +1,7 @@
 # Video SEO Workflow Contract (v1)
 
 ## Purpose
-This document defines the **internal, human-in-the-loop Video SEO workflow** used by the PsyMetric operator.
+This document defines the **internal, human-in-the-loop Video SEO workflow** used by the VEDA operator.
 
 It exists to:
 - align humans and LLMs on how Video SEO is executed

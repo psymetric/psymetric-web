@@ -21,7 +21,7 @@ See: `docs/specs/CONTENT-GRAPH-LAYER.md`
 ---
 
 ## Purpose
-This document defines the high-level architecture of the PsyMetric website system.
+This document defines the high-level architecture of the VEDA website system.
 
 It exists to lock in **roles, boundaries, and invariants** so that future design, SEO work, and implementation decisions do not introduce drift.
 
@@ -48,7 +48,7 @@ Hostnames and domains are intentionally unspecified. All design is **role-based*
 **Role:** Orientation, narrative, credibility, and guidance.
 
 The Main Site answers:
-- What is PsyMetric?
+- What is VEDA?
 - Why does it exist?
 - How should a human use it?
 - How do pieces of the system fit together?

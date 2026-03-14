@@ -1,6 +1,6 @@
 # SIL-1 Observation Ledger (Binding Spec)
 
-**Project:** PsyMetric / Veda
+**Project:** VEDA
 
 **Status:** Schema implemented. Create endpoints implemented. List endpoints pending.
 
@@ -92,7 +92,7 @@ This prevents silent fragmentation ("Best CRM" vs "best crm") and ensures soft-j
 
 SERP observations must capture two time semantics:
 
-- `capturedAt`: when PsyMetric captured the observation.
+- `capturedAt`: when VEDA captured the observation.
 - `validAt`: the timestamp the provider asserts the data is valid for.
 
 **Fallback rule (binding for SIL-1):** if the provider does not supply `validAt`, set `validAt = capturedAt` at the API boundary. `validAt` is nullable in the schema; the fallback is enforced in application code, not at the DB level.

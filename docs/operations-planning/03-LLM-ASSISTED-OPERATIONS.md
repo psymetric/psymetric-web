@@ -1,7 +1,7 @@
 # LLM‑Assisted Operations
 
 ## Purpose
-This document defines **how Large Language Models (LLMs) are used as assistants** within the PsyMetric system.
+This document defines **how Large Language Models (LLMs) are used as assistants** within the VEDA system.
 
 It exists to:
 - accelerate drafting and analysis

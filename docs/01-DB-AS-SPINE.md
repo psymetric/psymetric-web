@@ -2,13 +2,13 @@
 
 ## Purpose
 
-This document defines the database as PsyMetric's canonical source of truth and specifies what must be stored, how it is referenced, and how the rest of the system (website, social platforms, GitHub, LLMs) depends on it.
+This document defines the database as VEDA's canonical source of truth and specifies what must be stored, how it is referenced, and how the rest of the system (website, social platforms, GitHub, LLMs) depends on it.
 
 ---
 
 ## Core Principle
 
-**If it isn't in the DB, it isn't real** (for PsyMetric).
+**If it isn't in the DB, it isn't real** (for VEDA).
 
 The DB is authoritative for:
 - what exists
@@ -23,7 +23,7 @@ Public surfaces render or reference DB state. They do not define it.
 
 ## Canonical Entities
 
-PsyMetric tracks a small set of first-class entities. These are the "nodes" of the system.
+VEDA tracks a small set of first-class entities. These are the "nodes" of the system.
 
 ### Content Entities
 - **Guide:** tutorials, walkthroughs, applied learning
@@ -32,7 +32,7 @@ PsyMetric tracks a small set of first-class entities. These are the "nodes" of t
 - **NewsItem:** curated signals and updates (lightweight, human)
 
 ### Distribution Entities
-- **DistributionEvent:** record of manual posts on X/LinkedIn/etc that reference PsyMetric content or projects
+- **DistributionEvent:** record of manual posts on X/LinkedIn/etc that reference VEDA content or projects
 - **Video** (optional early): YouTube content tied to Guides/Projects/Concepts
 
 **Note:** DistributionEvents track manual distribution only. The system does NOT auto-post.

@@ -24,7 +24,7 @@ export default function DashboardLayout({
           <div className="flex justify-between h-14">
             <div className="flex items-center gap-8">
               <span className="text-lg font-semibold text-gray-900">
-                PsyMetric
+                VEDA
               </span>
               <div className="flex gap-4">
                 <Link

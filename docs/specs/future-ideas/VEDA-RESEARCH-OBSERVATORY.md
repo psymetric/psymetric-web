@@ -2,7 +2,7 @@
 
 Status: Concept – intentionally isolated from active system development.
 
-This document describes a potential future expansion of the PsyMetric / VEDA system that monitors research and ecosystem signals surrounding search and AI systems. The goal is to provide early awareness of structural shifts in search behavior before those changes appear directly in SERP data.
+This document describes a potential future expansion of the VEDA system that monitors research and ecosystem signals surrounding search and AI systems. The goal is to provide early awareness of structural shifts in search behavior before those changes appear directly in SERP data.
 
 Important: This concept must NOT influence current SIL implementation or architectural decisions until explicitly promoted from the future‑ideas space.
 
@@ -120,7 +120,7 @@ Monitoring these shifts could inform long‑term SEO strategy hypotheses.
 
 ## Architectural Constraints
 
-If implemented, this system must respect PsyMetric architectural principles:
+If implemented, this system must respect VEDA architectural principles:
 
 1. **No contamination of SIL layers**
    - Research signals must remain separate from deterministic SERP analytics.

@@ -1,7 +1,7 @@
 # Publishing & Indexing Rules
 
 ## Purpose
-This document defines **when content becomes public, indexable, and canonical** within the PsyMetric system.
+This document defines **when content becomes public, indexable, and canonical** within the VEDA system.
 
 It exists to:
 - prevent accidental SEO damage

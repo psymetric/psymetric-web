@@ -1,8 +1,8 @@
-# PsyMetric MCP Server
+# VEDA MCP Server
 
-**API-backed read-only MCP bridge for PsyMetric backend.**
+**API-backed read-only MCP bridge for VEDA backend.**
 
-This MCP server provides 6 read-only tools for querying PsyMetric data via HTTP API. It uses stdio transport for compatibility with Claude Desktop and other MCP clients.
+This MCP server provides 6 read-only tools for querying VEDA data via HTTP API. It uses stdio transport for compatibility with Claude Desktop and other MCP clients.
 
 ## Architecture
 
@@ -11,7 +11,7 @@ MCP Client (Claude Desktop / VS Code)
     ↓ stdio
 MCP Server (this package)
     ↓ HTTP
-PsyMetric Backend API (Next.js)
+VEDA Backend API (Next.js)
     ↓
 PostgreSQL Database
 ```
@@ -248,4 +248,4 @@ Future phases may introduce additional capabilities.
 
 ## License
 
-Internal use only. Part of PsyMetric project.
+Internal use only. Part of VEDA project.

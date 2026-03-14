@@ -1,6 +1,6 @@
 # SIL-1 Ingest Discipline (Binding Spec)
 
-**Project:** PsyMetric / Veda
+**Project:** VEDA
 
 **Status:** Draft (authoritative for SIL-1 endpoint implementation)
 
@@ -91,7 +91,7 @@ All joins between targets and snapshots MUST use normalized query strings.
 
 ### 5.1 `capturedAt`
 
-- `capturedAt` represents when PsyMetric captured the observation.
+- `capturedAt` represents when VEDA captured the observation.
 - Default behavior: server assigns `capturedAt = now()` at ingest time.
 
 **Backfill allowance (optional, operator-only):**

@@ -1,4 +1,4 @@
-# PsyMetric — SEO Subsystem Reconciliation Report
+# VEDA — SEO Subsystem Reconciliation Report
 
 **Date:** 2026-02-18
 **Status:** Authoritative reconciliation — schema vs site-architecture vs SEO subsystem docs

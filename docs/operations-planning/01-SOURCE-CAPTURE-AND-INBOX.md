@@ -1,7 +1,7 @@
 # Source Capture & Inbox
 
 ## Purpose
-This document defines **how external material enters the PsyMetric system** before becoming content.
+This document defines **how external material enters the VEDA system** before becoming content.
 
 It exists to:
 - keep provenance explicit

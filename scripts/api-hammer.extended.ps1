@@ -1,5 +1,5 @@
 # API Hammer Script
-# Deterministic smoke + isolation testing for PsyMetric APIs (multi-project aware)
+# Deterministic smoke + isolation testing for VEDA APIs (multi-project aware)
 #
 # Coverage:
 # - /api/projects

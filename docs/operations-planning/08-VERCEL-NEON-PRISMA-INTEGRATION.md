@@ -1,7 +1,7 @@
 # Vercel + Neon + Prisma Integration
 
 ## Purpose
-This document defines the **practical integration rules** for connecting the PsyMetric application (Vercel) to the database (Neon Postgres) using Prisma.
+This document defines the **practical integration rules** for connecting the VEDA application (Vercel) to the database (Neon Postgres) using Prisma.
 
 It exists to:
 - prevent serverless connection exhaustion

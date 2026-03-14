@@ -1,9 +1,9 @@
 00 — System Overview
 Purpose
 
-This document defines the core system model for PsyMetric.
+This document defines the core system model for VEDA.
 
-PsyMetric is an AI / LLM learning brand built as a database-centric knowledge and distribution system, where:
+VEDA is an AI / LLM learning brand built as a database-centric knowledge and distribution system, where:
 
 The database is the canonical source of truth
 
@@ -13,9 +13,9 @@ Large Language Models (LLMs) act as operators and assistants that reason over th
 
 This document exists to prevent ambiguity, drift, and improvisation by humans or AI agents interacting with the system.
 
-What PsyMetric Is
+What VEDA Is
 
-PsyMetric is:
+VEDA is:
 
 A learning-focused AI brand
 
@@ -39,9 +39,9 @@ What social posts reference what content
 
 What has changed over time
 
-What PsyMetric Is Not
+What VEDA Is Not
 
-PsyMetric is not:
+VEDA is not:
 
 A research lab
 
@@ -51,7 +51,7 @@ A claims-based comparison platform
 
 A content farm driven by SEO or trends alone
 
-PsyMetric does not publish performance claims, rankings, or superiority assertions.
+VEDA does not publish performance claims, rankings, or superiority assertions.
 Its value comes from explanation, demonstration, and applied learning.
 
 Core Architectural Principle
@@ -82,7 +82,7 @@ If something is not in the database, it is considered non-canonical.
 
 System Surfaces
 
-PsyMetric operates across multiple surfaces, all connected through the database.
+VEDA operates across multiple surfaces, all connected through the database.
 
 1. Website
 

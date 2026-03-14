@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines how PsyMetric distributes content across external platforms (social media, GitHub, video) without losing coherence, memory, or accountability.
+This document defines how VEDA distributes content across external platforms (social media, GitHub, video) without losing coherence, memory, or accountability.
 
 Distribution is treated as a first-class, traceable activity, not an afterthought.
 
@@ -205,7 +205,7 @@ This structure allows:
 - AI-assisted analysis without hallucination
 - future reasoning about what worked and why
 
-It ensures PsyMetric behaves like a system, not a collection of disconnected posts.
+It ensures VEDA behaves like a system, not a collection of disconnected posts.
 
 ---
 

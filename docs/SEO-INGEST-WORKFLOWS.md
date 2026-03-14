@@ -1,4 +1,4 @@
-# PsyMetric — SEO Ingest Workflows
+# VEDA — SEO Ingest Workflows
 
 **Version:** 1.0
 **Status:** Phase 0-SEO (parallel track within Phase 0)
@@ -9,7 +9,7 @@
 
 ## 1. Purpose
 
-This document defines **how SEO data enters PsyMetric**, step by step. Each workflow specifies the trigger, data source, validation, storage target, and operator actions.
+This document defines **how SEO data enters VEDA**, step by step. Each workflow specifies the trigger, data source, validation, storage target, and operator actions.
 
 No workflow may store data without `projectId`. No workflow may mutate canonical entities without human approval.
 

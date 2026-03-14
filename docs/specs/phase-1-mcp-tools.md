@@ -2,7 +2,7 @@
 
 ## Overview
 
-Phase 1 MCP tools provide read-only access to PsyMetric entities with strict project isolation. No write operations, event logging, or cross-phase features are permitted.
+Phase 1 MCP tools provide read-only access to VEDA entities with strict project isolation. No write operations, event logging, or cross-phase features are permitted.
 
 ## Standard Error Envelope
 

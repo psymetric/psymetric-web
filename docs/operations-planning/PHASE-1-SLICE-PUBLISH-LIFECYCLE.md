@@ -167,6 +167,6 @@ At Phase checkpoint:
 
 ---
 
-This slice moves PsyMetric from "ingestion + drafts" toward
+This slice moves VEDA from "ingestion + drafts" toward
 true ingestion → publish operational completeness,
 without expanding beyond Phase 1 discipline.

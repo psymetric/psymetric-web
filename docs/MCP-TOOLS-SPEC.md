@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-This specification defines the **read-only MCP tool interface** for Phase 1 of PsyMetric. These tools provide structured access to backend APIs via the Model Context Protocol.
+This specification defines the **read-only MCP tool interface** for Phase 1 of VEDA. These tools provide structured access to backend APIs via the Model Context Protocol.
 
 ### Phase 1 Scope
 

@@ -1,7 +1,7 @@
 06 — Capture Sources & Chrome Extension
 Purpose
 
-This document defines how PsyMetric captures external signals and human-selected context using multiple ingestion paths, with the Chrome extension as a primary manual capture tool.
+This document defines how VEDA captures external signals and human-selected context using multiple ingestion paths, with the Chrome extension as a primary manual capture tool.
 
 Capture is treated as intentional signal collection, not automated scraping.
 
@@ -19,12 +19,12 @@ Core Principle
 
 Capture is selective and human-directed.
 
-PsyMetric does not attempt to mirror platforms or ingest everything.
+VEDA does not attempt to mirror platforms or ingest everything.
 Only content that a human explicitly chooses to capture enters the system.
 
 Capture Sources (Overview)
 
-PsyMetric supports the following capture sources:
+VEDA supports the following capture sources:
 
 RSS feeds (automated, metadata-first)
 

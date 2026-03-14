@@ -1,7 +1,7 @@
 # SEO & Research Hooks
 
 ## Purpose
-This document defines **how SEO tools and keyword research integrate** with the PsyMetric system *without driving architecture or content design*.
+This document defines **how SEO tools and keyword research integrate** with the VEDA system *without driving architecture or content design*.
 
 It exists to:
 - prevent tool-driven drift

@@ -1,6 +1,6 @@
 # SIL-9 — Alerting Layer (Design Spec)
 
-**Project:** PsyMetric
+**Project:** VEDA
 
 **Status:** Design spec only. No implementation started.
 

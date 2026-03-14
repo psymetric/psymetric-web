@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "VEDA",
-  description: "PsyMetric Admin Dashboard",
+  description: "VEDA Admin Dashboard",
 };
 
 export default function RootLayout({

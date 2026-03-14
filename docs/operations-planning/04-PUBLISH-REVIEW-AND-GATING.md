@@ -1,7 +1,7 @@
 # Publish Review & Gating
 
 ## Purpose
-This document defines **how drafts become published content** within the PsyMetric system.
+This document defines **how drafts become published content** within the VEDA system.
 
 It exists to:
 - preserve human authority

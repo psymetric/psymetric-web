@@ -1,7 +1,7 @@
 # Chrome Extension – Scope & Behavior
 
 ## Purpose
-This document defines the **intended scope, behavior, and constraints** of the PsyMetric Chrome extension.
+This document defines the **intended scope, behavior, and constraints** of the VEDA Chrome extension.
 
 It exists to:
 - support manual, intentional source capture
@@ -30,7 +30,7 @@ At no point does the extension publish content or act on behalf of the user.
 The Chrome extension is a lightweight interface for:
 - capturing selected text and context
 - recording operator intent
-- creating SourceItems in the PsyMetric database
+- creating SourceItems in the VEDA database
 
 It acts as a bridge between the open web and the internal system.
 

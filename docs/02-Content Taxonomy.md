@@ -3,7 +3,7 @@ Purpose
 
 This document defines PsyMetric’s public-facing content types and how they work together.
 
-PsyMetric is a learning brand. Content is designed to be:
+VEDA is a learning brand. Content is designed to be:
 
 beginner-friendly without insulting experts
 
@@ -15,7 +15,7 @@ This document is intentionally simple and enforceable.
 
 Core Content Types
 
-PsyMetric publishes four primary content types:
+VEDA publishes four primary content types:
 
 Guides
 
@@ -196,7 +196,7 @@ a demo
 
 a learning vehicle
 
-Projects are how PsyMetric earns credibility without needing “lab testing.”
+Projects are how VEDA earns credibility without needing “lab testing.”
 
 What Projects Are
 

@@ -1,15 +1,14 @@
-# PsyMetric VS Code Extension — Content Ops Cockpit
+# VEDA VS Code Extension — Content Ops Cockpit
 
 **Status:** Future Vision (not active development)  
 **Last updated:** February 13, 2026  
-**Depends on:** Voltron core system fully operational + 2 weeks dogfooding minimum  
-**Related:** docs/REBECCA-SPEC.md (Rebecca can surface through this extension)
+**Depends on:** Veda core system fully operational + 2 weeks dogfooding minimum  
 
 ---
 
 ## 1. Purpose
 
-A VS Code extension that surfaces PsyMetric's operational state directly in the editor, eliminating browser context-switching for routine content operations. The extension is a **client of the Voltron API** — it does not access the database, bypass validation, or perform any operation the dashboard can't.
+A VS Code extension that surfaces VEDA's operational state directly in the editor, eliminating browser context-switching for routine content operations. The extension is a client of the VEDA API — it does not access the database, bypass validation, or perform any operation the dashboard can’t.
 
 ---
 
@@ -29,11 +28,11 @@ Implementation order based on effort-to-value ratio. Each level is independently
 
 **Build first. Prevents the most dangerous class of mistake.**
 
-A status bar item showing the current Voltron environment:
+A status bar item showing the current Veda environment:
 
-- `PsyMetric: LOCAL` (default, neutral color)
-- `PsyMetric: STAGE` (yellow)
-- `PsyMetric: PROD` (red background)
+- `VEDA: LOCAL` (default, neutral color)
+- `VEDA: STAGE` (yellow)
+- `VEDA: PROD` (red background)
 
 Click to switch via Quick Pick. Stores base URL + auth token per environment in VS Code settings. All subsequent extension API calls use the selected environment.
 
@@ -56,10 +55,10 @@ Click to switch via Quick Pick. Stores base URL + auth token per environment in 
 
 **The "file explorer" for your content system.**
 
-A sidebar tree view under a PsyMetric icon:
+A sidebar tree view under a VEDA icon:
 
 ```
-PSYMETRIC
+VEDA
 ├── Entities
 │   ├── By Type
 │   │   ├── Guides (12)
@@ -95,21 +94,21 @@ PSYMETRIC
 Commands registered:
 
 ```
-PsyMetric: Create Entity
-PsyMetric: Validate Entity
-PsyMetric: Request Publish
-PsyMetric: Publish
-PsyMetric: Reject
-PsyMetric: Capture Source
-PsyMetric: Promote Source to Entity
-PsyMetric: Create Relationship
-PsyMetric: Remove Relationship
-PsyMetric: Run API Hammer
-PsyMetric: Open Entity by ID
-PsyMetric: Open Entity by Slug
-PsyMetric: Switch Environment
-PsyMetric: Refresh Entity Tree
-PsyMetric: Show Daily Briefing (when Rebecca Phase A is active)
+VEDA: Create Entity
+VEDA: Validate Entity
+VEDA: Request Publish
+VEDA: Publish
+VEDA: Reject
+VEDA: Capture Source
+VEDA: Promote Source to Entity
+VEDA: Create Relationship
+VEDA: Remove Relationship
+VEDA: Run API Hammer
+VEDA: Open Entity by ID
+VEDA: Open Entity by Slug
+VEDA: Switch Environment
+VEDA: Refresh Entity Tree
+VEDA: Show Daily Briefing (when Rebecca Phase A is active)
 ```
 
 Commands that require entity selection use Quick Pick with search (backed by `GET /api/entities?search=`). Commands that mutate state require confirmation.
@@ -146,7 +145,7 @@ A webview panel that renders when clicking an entity in the tree view:
 If a file path matches an entity's `contentRef`, show CodeLens annotations at the top of the file:
 
 ```
-[Entity: "Transformer Architecture" | Status: draft | Validate | Request Publish | Open in PsyMetric]
+[Entity: "Transformer Architecture" | Status: draft | Validate | Request Publish | Open in VEDA]
 ```
 
 This requires a lookup: when a file opens, check `GET /api/entities?search={filename}` and match against `contentRef`. Cache results per session.
@@ -184,7 +183,7 @@ The existing `api-hammer.ps1` script (or a future cross-platform Node equivalent
 
 ```json
 {
-  "label": "PsyMetric: API Hammer",
+  "label": "VEDA: API Hammer",
   "type": "shell",
   "command": "powershell",
   "args": ["-File", "${workspaceFolder}/scripts/api-hammer.ps1", "-Base", "${config:psymetric.environments.${config:psymetric.activeEnvironment}.baseUrl}"],
@@ -216,12 +215,12 @@ const headers = secret ? { Authorization: `Bearer ${secret}` } : {};
 
 ## 6. Offline / Degraded Mode
 
-Voltron's database is remote (Neon). Connection drops are real.
+Veda's database is remote (Neon). Connection drops are real.
 
 **Behavior when API is unreachable:**
 
 - Tree view shows last-known state with `[STALE]` suffix on root node
-- Status bar shows `PsyMetric: PROD (offline)` in grey
+- Status bar shows `VEDA: PROD (offline)` in grey
 - All mutation commands disabled with "API unreachable" message
 - Read-only cached data remains browsable
 - Automatic reconnect attempt on next explicit action (not polling)
@@ -257,7 +256,7 @@ It is a **content operations interface** that happens to live where you write co
 
 | Step | Deliverable | Depends On |
 |------|------------|------------|
-| 1 | Extension scaffold + env switcher | Voltron deployed |
+| 1 | Extension scaffold + env switcher | Veda deployed |
 | 2 | Entity tree view (read-only) | GET /api/entities working |
 | 3 | Command palette lifecycle actions | All lifecycle API routes working |
 | 4 | Entity detail webview | GET /api/entities/{id} working |

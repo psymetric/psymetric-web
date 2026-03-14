@@ -1,7 +1,7 @@
 # Validation Rules & Error Taxonomy (v1)
 
 ## Purpose
-This document defines **what validation means**, **when it runs**, and **how failures are categorized** in PsyMetric.
+This document defines **what validation means**, **when it runs**, and **how failures are categorized** in VEDA.
 
 It exists to:
 - make publishing predictable

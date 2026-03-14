@@ -1,6 +1,6 @@
 # SIL-8 — Deep Diagnostics + Operator Decision Tooling (Binding Spec)
 
-**Project:** PsyMetric
+**Project:** VEDA
 
 **Status:** Spec complete. No implementation started.
 

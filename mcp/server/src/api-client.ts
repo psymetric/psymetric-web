@@ -28,7 +28,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 export function validateConfig(): ServerConfig {
   const baseUrl = process.env.PSYMETRIC_BASE_URL;
   if (!baseUrl) {
-    console.error("[PsyMetric MCP] FATAL: PSYMETRIC_BASE_URL is required");
+    console.error("[VEDA MCP] FATAL: PSYMETRIC_BASE_URL is required");
     process.exit(1);
   }
 
@@ -38,15 +38,15 @@ export function validateConfig(): ServerConfig {
 
   if (!projectId && !projectSlug) {
     console.error(
-      "[PsyMetric MCP] FATAL: Either PSYMETRIC_PROJECT_ID or PSYMETRIC_PROJECT_SLUG must be set"
+      "[VEDA MCP] FATAL: Either PSYMETRIC_PROJECT_ID or PSYMETRIC_PROJECT_SLUG must be set"
     );
-    console.error("[PsyMetric MCP] No silent fallback to DEFAULT_PROJECT_ID - project scope is required");
+    console.error("[VEDA MCP] No silent fallback to DEFAULT_PROJECT_ID - project scope is required");
     process.exit(1);
   }
 
   if (projectId && projectSlug) {
     console.error(
-      "[PsyMetric MCP] FATAL: Cannot set both PSYMETRIC_PROJECT_ID and PSYMETRIC_PROJECT_SLUG"
+      "[VEDA MCP] FATAL: Cannot set both PSYMETRIC_PROJECT_ID and PSYMETRIC_PROJECT_SLUG"
     );
     process.exit(1);
   }
@@ -56,7 +56,7 @@ export function validateConfig(): ServerConfig {
   if (projectId) {
     if (!UUID_RE.test(projectId)) {
       console.error(
-        `[PsyMetric MCP] FATAL: PSYMETRIC_PROJECT_ID must be a valid UUID, got: ${projectId}`
+        `[VEDA MCP] FATAL: PSYMETRIC_PROJECT_ID must be a valid UUID, got: ${projectId}`
       );
       process.exit(1);
     }
@@ -68,7 +68,7 @@ export function validateConfig(): ServerConfig {
   const timeoutMs = parseInt(process.env.PSYMETRIC_TIMEOUT_MS ?? "30000", 10);
   if (isNaN(timeoutMs) || timeoutMs <= 0) {
     console.error(
-      `[PsyMetric MCP] FATAL: PSYMETRIC_TIMEOUT_MS must be a positive number, got: ${process.env.PSYMETRIC_TIMEOUT_MS}`
+      `[VEDA MCP] FATAL: PSYMETRIC_TIMEOUT_MS must be a positive number, got: ${process.env.PSYMETRIC_TIMEOUT_MS}`
     );
     process.exit(1);
   }

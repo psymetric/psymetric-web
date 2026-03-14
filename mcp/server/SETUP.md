@@ -98,7 +98,7 @@ Or manually delete the folder: `C:\dev\psymetric\mcp\claude-desktop`
 After updating the configuration:
 1. Completely quit Claude Desktop (not just close the window)
 2. Restart Claude Desktop
-3. The PsyMetric MCP server will start automatically
+3. The VEDA MCP server will start automatically
 
 ## 6. Verify Installation
 
@@ -114,7 +114,7 @@ Or:
 "Search for entities with the search_entities tool"
 ```
 
-You should see the MCP server respond with data from your local PsyMetric backend.
+You should see the MCP server respond with data from your local VEDA backend.
 
 ## 7. Troubleshooting
 
@@ -133,7 +133,7 @@ You should see the MCP server respond with data from your local PsyMetric backen
 
 ### Connection refused errors
 
-- Ensure your PsyMetric backend is running on `http://localhost:3000`
+- Ensure your VEDA backend is running on `http://localhost:3000`
 - Start backend: `npm run dev` from project root
 
 ### Invalid UUID error

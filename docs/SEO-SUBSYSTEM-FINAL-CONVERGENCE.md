@@ -1,4 +1,4 @@
-# PsyMetric — SEO Subsystem Final Convergence Lock
+# VEDA — SEO Subsystem Final Convergence Lock
 
 **Date:** 2026-02-18
 **Status:** FINAL — All decisions locked. No ambiguity remains.

@@ -226,7 +226,7 @@ export function buildOperatorBriefingPromptText(input: BriefingInput): string {
 
   const sections: string[] = [
     `## SYSTEM RULES (NO MUTATIONS)`,
-    `You are a read-only SEO intelligence assistant operating on the PsyMetric observability platform.`,
+    `You are a read-only SEO intelligence assistant operating on the VEDA observability platform.`,
     `CONSTRAINTS (follow without exception):`,
     `  - You MUST NOT apply any changes, write any data, or modify any state.`,
     `  - You MUST NOT call any write endpoints or suggest state mutations.`,

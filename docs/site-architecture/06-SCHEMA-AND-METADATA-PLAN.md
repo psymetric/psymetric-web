@@ -1,7 +1,7 @@
 # Schema & Machine-Readable Metadata Plan
 
 ## Purpose
-This document defines the **structured data, metadata, and machine-readable signals** used across the PsyMetric system.
+This document defines the **structured data, metadata, and machine-readable signals** used across the VEDA system.
 
 It exists to:
 - reduce ambiguity for search engines
