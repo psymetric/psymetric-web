@@ -2,7 +2,7 @@
 Likely first-run path
 Step 1: Open the repo and look for the VEDA entry point
 
-A first-time operator has C:\dev\psymetric open and likely notices there is a vscode-extension/ folder plus docs describing VEDA as a multi-project observatory.
+A first-time operator has C:\dev\veda open and likely notices there is a vscode-extension/ folder plus docs describing VEDA as a multi-project observatory.
 
 What they probably infer:
 
