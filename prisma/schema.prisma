@@ -1,7 +1,14 @@
-// PsyMetric Prisma Schema — Multi-Project Scoping
-// Derived from: DB-ARCHITECTURE-PLAN.md, 07-RELATIONSHIP-AND-EVENT-VOCABULARY.md
-// SEO instrumentation: SEO-SCHEMA-MIGRATION-PLAN.md, SEO-SUBSYSTEM-FINAL-CONVERGENCE.md
-// Project scoping: every domain entity belongs to exactly one Project.
+// VEDA Prisma Schema — Multi-Project Observatory
+//
+// VEDA is an observability system. This schema contains only observatory truth:
+//   entity + observation + time + interpretation
+//
+// Production/editorial models (Entity, DraftArtifact, Video, DistributionEvent,
+// QuotableBlock, MetricSnapshot, EntityRelation) belong to V Forge and are
+// intentionally excluded.
+//
+// Content Graph models represent observed structural state of external content
+// surfaces, not owned content production.
 
 generator client {
   provider = "prisma-client-js"
@@ -14,7 +21,7 @@ datasource db {
 }
 
 // =============================================================================
-// Enums — Canonical vocabularies from docs/07 and DB-ARCHITECTURE-PLAN.md
+// Enums — Observatory vocabularies
 // =============================================================================
 
 enum SourceType {
@@ -52,19 +59,11 @@ enum CapturedBy {
   system
 }
 
+// EntityType — observatory-scoped model discriminator for EventLog
 enum EntityType {
-  guide
-  concept
-  project
-  news
-  distributionEvent
-  video
   sourceItem
   sourceFeed
-  metricSnapshot
-  quotableBlock
   searchPerformance
-  draftArtifact
   keywordTarget
   serpSnapshot
   cgSurface
@@ -80,83 +79,12 @@ enum EntityType {
   vedaProject
 }
 
-enum ContentEntityType {
-  guide
-  concept
-  project
-  news
-}
-
-enum EntityStatus {
-  draft
-  publish_requested
-  published
-  archived
-}
-
-enum Difficulty {
-  beginner
-  intermediate
-  advanced
-}
-
-enum ConceptKind {
-  standard
-  model
-  comparison
-}
-
-// RelationType — from docs/07-RELATIONSHIP-AND-EVENT-VOCABULARY.md
-enum RelationType {
-  GUIDE_USES_CONCEPT
-  GUIDE_EXPLAINS_CONCEPT
-  GUIDE_REFERENCES_SOURCE
-  CONCEPT_RELATES_TO_CONCEPT
-  CONCEPT_REFERENCES_SOURCE
-  NEWS_DERIVED_FROM_SOURCE
-  NEWS_REFERENCES_SOURCE
-  NEWS_REFERENCES_CONCEPT
-  PROJECT_IMPLEMENTS_CONCEPT
-  PROJECT_REFERENCES_SOURCE
-  PROJECT_HAS_GUIDE
-  DISTRIBUTION_PROMOTES_GUIDE
-  DISTRIBUTION_PROMOTES_CONCEPT
-  DISTRIBUTION_PROMOTES_PROJECT
-  DISTRIBUTION_PROMOTES_NEWS
-  VIDEO_EXPLAINS_GUIDE
-  VIDEO_EXPLAINS_CONCEPT
-  VIDEO_EXPLAINS_PROJECT
-  VIDEO_EXPLAINS_NEWS
-}
-
-// EventType — from docs/07-RELATIONSHIP-AND-EVENT-VOCABULARY.md
-// SEO additions: SEO-SUBSYSTEM-FINAL-CONVERGENCE.md
-// Content Graph additions: CONTENT-GRAPH-PHASES.md Phase 1
+// EventType — observatory-scoped audit events
 enum EventType {
-  ENTITY_CREATED
-  ENTITY_UPDATED
-  ENTITY_PUBLISH_REQUESTED
-  ENTITY_PUBLISH_REJECTED
-  ENTITY_PUBLISHED
-  ENTITY_ARCHIVED
-  ENTITY_VALIDATION_FAILED
   SOURCE_CAPTURED
   SOURCE_TRIAGED
-  RELATION_CREATED
-  RELATION_REMOVED
-  DISTRIBUTION_CREATED
-  DISTRIBUTION_PLANNED
-  DISTRIBUTION_PUBLISHED
-  VIDEO_CREATED
-  VIDEO_PUBLISHED
-  METRIC_SNAPSHOT_RECORDED
   SYSTEM_CONFIG_CHANGED
-  DRAFT_CREATED
-  DRAFT_EXPIRED
-  QUOTABLE_BLOCK_CREATED
   PROJECT_CREATED
-  BLUEPRINT_PROPOSED
-  BLUEPRINT_APPLIED
   KEYWORD_TARGET_CREATED
   SERP_SNAPSHOT_RECORDED
   CG_SURFACE_CREATED
@@ -177,53 +105,7 @@ enum ActorType {
   system
 }
 
-enum DraftArtifactKind {
-  x_reply
-  seo_keyword_research
-  seo_serp_snapshot
-  seo_content_brief
-  seo_competitor_notes
-  seo_llm_mentions
-  seo_llm_response
-  byda_s_audit
-  project_blueprint
-}
-
-enum DraftArtifactStatus {
-  draft
-  archived
-}
-
-enum MetricType {
-  x_impressions
-  x_likes
-  x_reposts
-  x_replies
-  x_bookmarks
-  gsc_impressions
-  gsc_clicks
-  ga4_pageviews
-  ga4_sessions
-  yt_views
-  yt_watch_time_hours
-  yt_ctr
-  yt_avg_retention_pct
-  geo_citability_score
-  geo_extractability_score
-  geo_factual_density
-  ai_search_volume
-}
-
-enum ClaimType {
-  statistic
-  comparison
-  definition
-  howto_step
-}
-
-// Content Graph Phase 1 Enums
-// Per docs/specs/CONTENT-GRAPH-DATA-MODEL.md
-
+// Content Graph enums
 enum CgSurfaceType {
   website
   wiki
@@ -253,8 +135,8 @@ enum CgLinkRole {
 }
 
 // =============================================================================
-// Project — Multi-project scoping
-// Every domain entity belongs to exactly one project.
+// Project — Thin observatory scoping container
+// Every observatory record belongs to exactly one project.
 // =============================================================================
 
 model Project {
@@ -266,35 +148,28 @@ model Project {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  // Reverse relations
-  entities           Entity[]
-  sourceItems        SourceItem[]
-  sourceFeeds        SourceFeed[]
-  entityRelations    EntityRelation[]
-  eventLogs          EventLog[]
-  videos             Video[]
-  distributionEvents DistributionEvent[]
-  metricSnapshots    MetricSnapshot[]
-  draftArtifacts     DraftArtifact[]
-  searchPerformanceRecords SearchPerformance[]
-  quotableBlocks     QuotableBlock[]
-  keywordTargets     KeywordTarget[]
-  serpSnapshots      SERPSnapshot[]
-  // Content Graph Phase 1
-  cgSurfaces         CgSurface[]
-  cgSites            CgSite[]
-  cgPages            CgPage[]
-  cgContentArchetypes CgContentArchetype[]
-  cgTopics           CgTopic[]
-  cgEntities         CgEntity[]
-  cgInternalLinks    CgInternalLink[]
-  cgSchemaUsages     CgSchemaUsage[]
-  cgPageTopics       CgPageTopic[]
-  cgPageEntities     CgPageEntity[]
+  // Observatory reverse relations
+  sourceItems                SourceItem[]
+  sourceFeeds                SourceFeed[]
+  eventLogs                  EventLog[]
+  keywordTargets             KeywordTarget[]
+  serpSnapshots              SERPSnapshot[]
+  searchPerformanceRecords   SearchPerformance[]
+  // Content Graph
+  cgSurfaces                 CgSurface[]
+  cgSites                    CgSite[]
+  cgPages                    CgPage[]
+  cgContentArchetypes        CgContentArchetype[]
+  cgTopics                   CgTopic[]
+  cgEntities                 CgEntity[]
+  cgInternalLinks            CgInternalLink[]
+  cgSchemaUsages             CgSchemaUsage[]
+  cgPageTopics               CgPageTopic[]
+  cgPageEntities             CgPageEntity[]
 }
 
 // =============================================================================
-// Source & Capture Entities
+// Source & Capture — External signal observation
 // =============================================================================
 
 model SourceItem {
@@ -346,73 +221,8 @@ model SourceFeed {
 }
 
 // =============================================================================
-// Content Entities — Unified table for guides, concepts, projects, news
-// Using a single table to simplify polymorphic relationships and querying.
-// entityType discriminates the kind.
-// =============================================================================
-
-model Entity {
-  id                String            @id @default(uuid()) @db.Uuid
-  entityType        ContentEntityType
-  title             String
-  slug              String
-  summary           String?
-  difficulty        Difficulty?
-  conceptKind       ConceptKind?      // only for entityType=concept
-  comparisonTargets String[]          @db.Uuid @default([]) // only when conceptKind=comparison
-  repoUrl           String?           // only for entityType=project
-  repoDefaultBranch String?
-  license           String?
-  status            EntityStatus      @default(draft)
-  canonicalUrl      String?
-  contentRef        String?
-  publishedAt       DateTime?
-  archivedAt        DateTime?
-  lastVerifiedAt    DateTime?         // Content freshness tracking (SEO)
-
-  projectId         String            @db.Uuid
-  project           Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
-
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-
-  // Relations
-  distributionEvents         DistributionEvent[]
-  metricSnapshots            MetricSnapshot[]
-  quotableBlocks             QuotableBlock[]
-  searchPerformanceRecords   SearchPerformance[]
-
-  @@unique([projectId, entityType, slug])
-  @@index([projectId, entityType, status, createdAt])
-}
-
-// =============================================================================
-// Relationship Graph — from DB-ARCHITECTURE-PLAN.md
-// =============================================================================
-
-model EntityRelation {
-  id             String       @id @default(uuid()) @db.Uuid
-  fromEntityType EntityType
-  fromEntityId   String       @db.Uuid
-  toEntityType   EntityType
-  toEntityId     String       @db.Uuid
-  relationType   RelationType
-  notes          String?
-
-  projectId      String       @db.Uuid
-  project        Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
-
-  createdAt      DateTime     @default(now())
-
-  @@unique([projectId, fromEntityType, fromEntityId, relationType, toEntityType, toEntityId])
-  @@index([projectId, fromEntityId])
-  @@index([projectId, toEntityId])
-}
-
-// =============================================================================
-// Event Log — append-only, from DB-ARCHITECTURE-PLAN.md
-// projectId added directly to avoid joins for project-scoped audit queries.
-// Invariant: entityType always identifies the table that entityId references.
+// Event Log — Append-only observatory audit trail
+// entityType always identifies the table that entityId references.
 // =============================================================================
 
 model EventLog {
@@ -433,180 +243,8 @@ model EventLog {
 }
 
 // =============================================================================
-// Distribution Entities — Video
-// Per DB-ARCHITECTURE-PLAN.md: Video spec
-// =============================================================================
-
-model Video {
-  id                String            @id @default(uuid()) @db.Uuid
-  platform          Platform
-  externalUrl       String
-  status            EntityStatus      @default(draft)
-  publishedAt       DateTime?
-  archivedAt        DateTime?
-  primaryEntityType ContentEntityType
-  primaryEntityId   String            @db.Uuid
-
-  projectId         String            @db.Uuid
-  project           Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
-
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-
-  @@index([projectId, primaryEntityType, primaryEntityId])
-  @@index([status])
-  @@index([platform])
-}
-
-// =============================================================================
-// Draft Artifacts — scaffolding only, non-canonical
-// Per ROADMAP.md Phase 1 Draft System requirements
-// SEO additions: schemaVersion, source, contentHash per SEO-SCHEMA-MIGRATION-PLAN.md
-// =============================================================================
-
-model DraftArtifact {
-  id           String              @id @default(uuid()) @db.Uuid
-  kind         DraftArtifactKind
-  status       DraftArtifactStatus @default(draft)
-  content      String
-  sourceItemId String?             @db.Uuid
-  entityId     String?             @db.Uuid
-  createdBy    ActorType
-  llmModel     String?
-  llmMeta      Json?
-  expiresAt    DateTime
-  deletedAt    DateTime?
-  schemaVersion String?            // Versioned contract for structured JSON content (e.g., seo.keyword_research.v1)
-  source       String?             // Data provider identifier (e.g., dataforseo, gsc, manual)
-  contentHash  String?             // SHA256 for deduplication. Application-enforced, not DB-unique.
-
-  projectId    String              @db.Uuid
-  project      Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
-
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
-
-  @@index([projectId, kind, status])
-  @@index([sourceItemId, kind])
-  @@index([expiresAt, deletedAt])
-  @@index([contentHash])
-}
-
-// =============================================================================
-// Distribution Entities — DistributionEvent
-// Per PHASE-1-SLICE-DISTRIBUTION-AND-METRICS.md
-// =============================================================================
-
-model DistributionEvent {
-  id                String            @id @default(uuid()) @db.Uuid
-  platform          Platform
-  externalUrl       String
-  status            EntityStatus      @default(draft)
-  publishedAt       DateTime?
-  archivedAt        DateTime?
-  primaryEntityType ContentEntityType
-  primaryEntityId   String            @db.Uuid
-
-  projectId         String            @db.Uuid
-  project           Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
-
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-
-  // Relations
-  primaryEntity     Entity?           @relation(fields: [primaryEntityId], references: [id], onDelete: Restrict)
-
-  @@index([projectId, primaryEntityType, primaryEntityId])
-  @@index([status])
-  @@index([platform])
-}
-
-// =============================================================================
-// Metrics — MetricSnapshot
-// Per PHASE-1-SLICE-DISTRIBUTION-AND-METRICS.md
-// SEO change: value Int → Float per SEO-SCHEMA-MIGRATION-PLAN.md
-// =============================================================================
-
-model MetricSnapshot {
-  id          String            @id @default(uuid()) @db.Uuid
-  metricType  MetricType
-  value       Float
-  platform    Platform
-  capturedAt  DateTime          @default(now())
-  entityType  ContentEntityType
-  entityId    String            @db.Uuid
-  notes       String?
-
-  projectId   String            @db.Uuid
-  project     Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
-
-  createdAt   DateTime          @default(now())
-
-  // Relations
-  entity      Entity?           @relation(fields: [entityId], references: [id], onDelete: Restrict)
-
-  @@index([projectId, metricType, capturedAt])
-  @@index([projectId, entityType, entityId, capturedAt])
-}
-
-// =============================================================================
-// Search Performance — GSC query × page × date-range analytics
-// Per SEO-SCHEMA-MIGRATION-PLAN.md, SEO-RECORDING-SPEC.md
-// Source of truth for search performance data. GSC only.
-// =============================================================================
-
-model SearchPerformance {
-  id          String    @id @default(uuid()) @db.Uuid
-  projectId   String    @db.Uuid
-  entityId    String?   @db.Uuid
-  pageUrl     String
-  query       String
-  impressions Int
-  clicks      Int
-  ctr         Float
-  avgPosition Float
-  dateStart   DateTime
-  dateEnd     DateTime
-  capturedAt  DateTime  @default(now())
-
-  project     Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  entity      Entity?   @relation(fields: [entityId], references: [id], onDelete: Restrict)
-
-  @@unique([projectId, query, pageUrl, dateStart, dateEnd])
-  @@index([projectId, capturedAt])
-  @@index([projectId, pageUrl, dateStart])
-  @@index([projectId, query, dateStart])
-}
-
-// =============================================================================
-// Quotable Blocks — Canonical structured citation assets for GEO optimization
-// Per SEO-SCHEMA-MIGRATION-PLAN.md, SEO-RECORDING-SPEC.md
-// NOT a DraftArtifact. These are verified, human-approved citation units.
-// =============================================================================
-
-model QuotableBlock {
-  id              String    @id @default(uuid()) @db.Uuid
-  projectId       String    @db.Uuid
-  entityId        String    @db.Uuid
-  text            String
-  claimType       ClaimType
-  sourceCitation  String?
-  verifiedUntil   DateTime?
-  topicTag        String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  project         Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  entity          Entity    @relation(fields: [entityId], references: [id], onDelete: Restrict)
-
-  @@index([projectId, entityId])
-  @@index([projectId, claimType])
-}
-
-// =============================================================================
-// SIL-1 — Search Intelligence Layer: Observation Ledger
-// Per docs/specs/SIL-1-OBSERVATION-LEDGER.md
-// KeywordTarget: mutable governance record ("we care about this keyword")
+// Search Intelligence Layer — Observation Ledger
+// KeywordTarget: mutable governance record ("we observe this keyword")
 // SERPSnapshot: immutable observation (append-only SERP capture)
 // =============================================================================
 
@@ -662,8 +300,34 @@ model SERPSnapshot {
 }
 
 // =============================================================================
-// System Config — from DB-ARCHITECTURE-PLAN.md
-// Intentionally NOT project-scoped. Global system configuration.
+// Search Performance — GSC query × page × date-range observations
+// Pure URL-based observation. No entity FK coupling.
+// =============================================================================
+
+model SearchPerformance {
+  id          String    @id @default(uuid()) @db.Uuid
+  projectId   String    @db.Uuid
+  pageUrl     String
+  query       String
+  impressions Int
+  clicks      Int
+  ctr         Float
+  avgPosition Float
+  dateStart   DateTime
+  dateEnd     DateTime
+  capturedAt  DateTime  @default(now())
+
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, query, pageUrl, dateStart, dateEnd])
+  @@index([projectId, capturedAt])
+  @@index([projectId, pageUrl, dateStart])
+  @@index([projectId, query, dateStart])
+}
+
+// =============================================================================
+// System Config — Global observatory configuration
+// Intentionally NOT project-scoped.
 // Per-project overrides use JSON value: { "default": N, "overrides": { "<projectId>": N } }
 // =============================================================================
 
@@ -676,33 +340,24 @@ model SystemConfig {
 }
 
 // =============================================================================
-// Content Graph Phase 1 — Core structural registration layer
-// Per docs/specs/CONTENT-GRAPH-DATA-MODEL.md, docs/specs/CONTENT-GRAPH-PHASES.md
-// Phase 1 scope: Surface, Site, Page, ContentArchetype, Topic, Entity,
-//                PageTopic, PageEntity, InternalLink, SchemaUsage
+// Content Graph — Structural observation of external content surfaces
 // Intelligence is compute-on-read only. No materialized scores.
 // =============================================================================
 
-// CgSurface — A brand surface where content exists (website, wiki, blog, X, YouTube)
-// key: canonicalized operator/admin identifier (lowercase, hyphens only)
+// CgSurface — A brand surface where content exists
 // canonicalIdentifier: durable machine-readable platform identity
-//   website  → normalized host, e.g. "psymetric.io"
-//   youtube  → channel ID or normalized slug, e.g. "UCxxxxxx" or "@psymetric"
-//   x        → normalized handle without @, e.g. "psymetric"
-//   wiki/blog → normalized host or slug
-// canonicalUrl: optional human-facing reference URL (presentation layer)
 // Uniqueness: (projectId, key) for operator identity;
 //             (projectId, type, canonicalIdentifier) for platform identity
-//             — enforced via partial unique index in migration (canonicalIdentifier IS NOT NULL)
+//             — partial unique index enforced via migration SQL
 model CgSurface {
   id                  String        @id @default(uuid()) @db.Uuid
   projectId           String        @db.Uuid
   project             Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
   type                CgSurfaceType
-  key                 String        // Canonicalized operator identifier: lowercase a-z0-9 + hyphens
+  key                 String
   label               String?
-  canonicalIdentifier String?       // Durable machine-readable platform identity (see comments above)
-  canonicalUrl        String?       // Optional presentation/reference URL
+  canonicalIdentifier String?
+  canonicalUrl        String?
   enabled             Boolean       @default(true)
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
@@ -711,8 +366,6 @@ model CgSurface {
 
   @@unique([projectId, key])
   @@index([projectId, type])
-  // Note: partial unique index on (projectId, type, canonicalIdentifier) WHERE canonicalIdentifier IS NOT NULL
-  // is enforced via raw migration SQL — not expressible as Prisma @@unique with partial filter.
 }
 
 // CgSite — A web property within a surface
@@ -723,7 +376,7 @@ model CgSite {
   surfaceId   String    @db.Uuid
   surface     CgSurface @relation(fields: [surfaceId], references: [id], onDelete: Restrict)
   domain      String
-  framework   String?   // e.g. "nextjs", "wordpress"
+  framework   String?
   isCanonical Boolean   @default(true)
   notes       String?
   createdAt   DateTime  @default(now())
@@ -735,12 +388,12 @@ model CgSite {
   @@index([projectId, surfaceId])
 }
 
-// CgContentArchetype — Structural page type (guide, comparison, review, tutorial, reference)
+// CgContentArchetype — Structural page type (guide, comparison, review, etc.)
 model CgContentArchetype {
   id        String   @id @default(uuid()) @db.Uuid
   projectId String   @db.Uuid
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  key       String   // Stable short identifier, e.g. "guide", "comparison"
+  key       String
   label     String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -783,7 +436,7 @@ model CgTopic {
   id        String      @id @default(uuid()) @db.Uuid
   projectId String      @db.Uuid
   project   Project     @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  key       String      // Stable short identifier
+  key       String
   label     String
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
@@ -794,14 +447,14 @@ model CgTopic {
   @@index([projectId])
 }
 
-// CgEntity — Real-world entity referenced by content (product, technology, concept, etc.)
+// CgEntity — Real-world entity referenced by content
 model CgEntity {
   id          String        @id @default(uuid()) @db.Uuid
   projectId   String        @db.Uuid
   project     Project       @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  key         String        // Stable short identifier
+  key         String
   label       String
-  entityType  String        // e.g. "product", "technology", "concept", "organization"
+  entityType  String
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
@@ -861,14 +514,14 @@ model CgInternalLink {
   @@index([projectId, targetPageId])
 }
 
-// CgSchemaUsage — Structured data used on a page (Article, Product, FAQ, HowTo, Recipe, etc.)
+// CgSchemaUsage — Structured data used on a page
 model CgSchemaUsage {
   id          String   @id @default(uuid()) @db.Uuid
   projectId   String   @db.Uuid
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
   pageId      String   @db.Uuid
   page        CgPage   @relation(fields: [pageId], references: [id], onDelete: Cascade)
-  schemaType  String   // e.g. "Article", "Product", "FAQ", "HowTo", "Recipe"
+  schemaType  String
   isPrimary   Boolean  @default(false)
   createdAt   DateTime @default(now())
 

@@ -4,7 +4,7 @@
  *
  * Per docs/specs/CONTENT-GRAPH-DATA-MODEL.md (Phase 1)
  * Note: "CgEntity" is a Content Graph entity (product, technology, concept, org).
- * Not to be confused with the canonical "Entity" model (guides, concepts, etc.).
+ * Not to be confused with editorial Entity models (which are outside VEDA scope).
  */
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";

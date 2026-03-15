@@ -20,7 +20,6 @@ import {
 } from "@/lib/api-response";
 import { resolveProjectId } from "@/lib/project";
 import type { Prisma } from "@prisma/client";
-import { UUID_RE } from "@/lib/constants";
 
 
 // Strict ISO 8601 date validation (deterministic across environments)
@@ -74,15 +73,6 @@ export async function GET(request: NextRequest) {
     const pageUrlParam = searchParams.get("pageUrl");
     if (pageUrlParam) {
       where.pageUrl = { contains: pageUrlParam, mode: "insensitive" };
-    }
-
-    // entityId filter (UUID validation)
-    const entityIdParam = searchParams.get("entityId");
-    if (entityIdParam) {
-      if (!UUID_RE.test(entityIdParam)) {
-        return badRequest("entityId must be a valid UUID");
-      }
-      where.entityId = entityIdParam;
     }
 
     // dateStart filter (strict ISO validation)

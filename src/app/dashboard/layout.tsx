@@ -33,24 +33,6 @@ export default function DashboardLayout({
                 >
                   Source Inbox
                 </Link>
-                <Link
-                  href="/dashboard/entities"
-                  className="text-sm font-medium text-gray-700 hover:text-gray-900 px-2 py-1 rounded"
-                >
-                  Entity Library
-                </Link>
-                <Link
-                  href="/dashboard/distribution-events"
-                  className="text-sm font-medium text-gray-700 hover:text-gray-900 px-2 py-1 rounded"
-                >
-                  Distribution
-                </Link>
-                <Link
-                  href="/dashboard/metric-snapshots"
-                  className="text-sm font-medium text-gray-700 hover:text-gray-900 px-2 py-1 rounded"
-                >
-                  Metrics
-                </Link>
               </div>
             </div>
           </div>

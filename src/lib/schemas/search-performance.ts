@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { UUID_RE } from "@/lib/constants";
 
 
 const ISO_DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -30,10 +29,6 @@ const SearchPerformanceRowSchema = z
     avgPosition: z.number().positive(),
     dateStart: isoDateString,
     dateEnd: isoDateString,
-    entityId: z
-      .string()
-      .regex(UUID_RE, "entityId must be a valid UUID")
-      .nullish(),
   })
   .strict()
   .refine(

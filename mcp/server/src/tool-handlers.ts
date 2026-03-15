@@ -1,8 +1,10 @@
 /**
- * Tool Call Handlers
+ * Tool Call Handlers — VEDA Observatory
  *
  * Maps tool invocations to API endpoints and formats responses
  * with context-efficient results (structured + compact JSON text).
+ *
+ * Entity/editorial handlers removed in Wave 2D.
  */
 
 import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
@@ -124,16 +126,8 @@ export async function handleToolCall(
   switch (toolName) {
     case "list_projects":
       return handleListProjects(args, apiClient);
-    case "search_entities":
-      return handleSearchEntities(args, apiClient);
-    case "get_entity":
-      return handleGetEntity(args, apiClient);
-    case "get_entity_graph":
-      return handleGetEntityGraph(args, apiClient);
     case "list_search_performance":
       return handleListSearchPerformance(args, apiClient);
-    case "list_quotable_blocks":
-      return handleListQuotableBlocks(args, apiClient);
     // ── Keyword-level observatory tools ───────────────────────────────
     case "get_keyword_overview":
       return handleKeywordSubresource(args, apiClient, "overview");
@@ -215,94 +209,6 @@ async function handleListProjects(
 }
 
 /**
- * search_entities: GET /api/entities
- */
-async function handleSearchEntities(
-  args: Record<string, unknown>,
-  apiClient: ApiClient
-): Promise<unknown> {
-  const { page, limit } = clampPagination(args);
-
-  const queryParams: Record<string, unknown> = { page, limit };
-
-  if (args.entityType) queryParams.entityType = args.entityType;
-  if (args.status) queryParams.status = args.status;
-  if (args.conceptKind) queryParams.conceptKind = args.conceptKind;
-  if (args.search) queryParams.search = args.search;
-
-  const queryString = buildQueryString(queryParams);
-  const response = await apiClient.fetch(`/api/entities${queryString}`);
-
-  if (!response.ok) {
-    await handleApiError(response);
-  }
-
-  const data = await response.json();
-  return formatToolResult(data);
-}
-
-/**
- * get_entity: GET /api/entities/:id
- */
-async function handleGetEntity(
-  args: Record<string, unknown>,
-  apiClient: ApiClient
-): Promise<unknown> {
-  const entityId = args.entityId as string;
-  if (!entityId) {
-    throw new McpError(ErrorCode.InvalidParams, "entityId is required");
-  }
-
-  validateUuid(entityId, "entityId");
-
-  const response = await apiClient.fetch(`/api/entities/${entityId}`);
-
-  if (!response.ok) {
-    await handleApiError(response);
-  }
-
-  const data = await response.json();
-  return formatToolResult(data);
-}
-
-/**
- * get_entity_graph: GET /api/entities/:id/graph
- */
-async function handleGetEntityGraph(
-  args: Record<string, unknown>,
-  apiClient: ApiClient
-): Promise<unknown> {
-  const entityId = args.entityId as string;
-  if (!entityId) {
-    throw new McpError(ErrorCode.InvalidParams, "entityId is required");
-  }
-
-  validateUuid(entityId, "entityId");
-
-  const queryParams: Record<string, unknown> = {};
-  if (args.depth !== undefined) {
-    const depth = Number(args.depth);
-    if (depth !== 1 && depth !== 2) {
-      throw new McpError(ErrorCode.InvalidParams, "depth must be 1 or 2");
-    }
-    queryParams.depth = depth;
-  }
-  if (args.relationshipTypes) {
-    queryParams.relationshipTypes = args.relationshipTypes;
-  }
-
-  const queryString = buildQueryString(queryParams);
-  const response = await apiClient.fetch(`/api/entities/${entityId}/graph${queryString}`);
-
-  if (!response.ok) {
-    await handleApiError(response);
-  }
-
-  const data = await response.json();
-  return formatToolResult(data);
-}
-
-/**
  * list_search_performance: GET /api/seo/search-performance
  */
 async function handleListSearchPerformance(
@@ -311,10 +217,7 @@ async function handleListSearchPerformance(
 ): Promise<unknown> {
   const { page, limit } = clampPagination(args);
 
-  // Validate optional UUID and date parameters
-  if (args.entityId) {
-    validateUuid(args.entityId as string, "entityId");
-  }
+  // Validate optional date parameters
   if (args.dateStart) {
     validateIsoDate(args.dateStart as string, "dateStart");
   }
@@ -325,50 +228,11 @@ async function handleListSearchPerformance(
   const queryParams: Record<string, unknown> = { page, limit };
   if (args.query) queryParams.query = args.query;
   if (args.pageUrl) queryParams.pageUrl = args.pageUrl;
-  if (args.entityId) queryParams.entityId = args.entityId;
   if (args.dateStart) queryParams.dateStart = args.dateStart;
   if (args.dateEnd) queryParams.dateEnd = args.dateEnd;
 
   const queryString = buildQueryString(queryParams);
   const response = await apiClient.fetch(`/api/seo/search-performance${queryString}`);
-
-  if (!response.ok) {
-    await handleApiError(response);
-  }
-
-  const data = await response.json();
-  return formatToolResult(data);
-}
-
-/**
- * list_quotable_blocks: GET /api/quotable-blocks
- */
-async function handleListQuotableBlocks(
-  args: Record<string, unknown>,
-  apiClient: ApiClient
-): Promise<unknown> {
-  const { page, limit } = clampPagination(args);
-
-  // Validate optional parameters
-  if (args.entityId) {
-    validateUuid(args.entityId as string, "entityId");
-  }
-  if (args.verifiedUntilBefore) {
-    validateIsoDate(args.verifiedUntilBefore as string, "verifiedUntilBefore");
-  }
-  if (args.verifiedUntilAfter) {
-    validateIsoDate(args.verifiedUntilAfter as string, "verifiedUntilAfter");
-  }
-
-  const queryParams: Record<string, unknown> = { page, limit };
-  if (args.entityId) queryParams.entityId = args.entityId;
-  if (args.claimType) queryParams.claimType = args.claimType;
-  if (args.topicTag) queryParams.topicTag = args.topicTag;
-  if (args.verifiedUntilBefore) queryParams.verifiedUntilBefore = args.verifiedUntilBefore;
-  if (args.verifiedUntilAfter) queryParams.verifiedUntilAfter = args.verifiedUntilAfter;
-
-  const queryString = buildQueryString(queryParams);
-  const response = await apiClient.fetch(`/api/quotable-blocks${queryString}`);
 
   if (!response.ok) {
     await handleApiError(response);

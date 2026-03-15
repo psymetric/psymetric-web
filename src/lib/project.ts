@@ -23,7 +23,7 @@ import { UUID_RE } from "@/lib/constants";
 
 // Deterministic UUID matching the migration seed row
 export const DEFAULT_PROJECT_ID = "00000000-0000-4000-a000-000000000001";
-export const DEFAULT_PROJECT_SLUG = "psymetric";
+export const DEFAULT_PROJECT_SLUG = "veda";
 
 
 /**

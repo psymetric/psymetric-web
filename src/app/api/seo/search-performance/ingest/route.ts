@@ -4,19 +4,16 @@
  * Phase 0-SEO manual endpoint for GSC opportunity query ingestion.
  * - Accepts bulk rows (manual upload/paste)
  * - Upserts by composite unique: (projectId, query, pageUrl, dateStart, dateEnd)
- * - Validates entityId belongs to same project if provided
  * - Single summary EventLog entry per batch
  *
  * Multi-project hardened:
  * - Resolves projectId from request
  * - All writes scoped by projectId
- * - Cross-project entityId returns 404
  */
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { successResponse, badRequest, notFound, serverError } from "@/lib/api-response";
-import { resolveProjectId, resolveProjectIdStrict } from "@/lib/project";
-import { EventType, EntityType, ActorType } from "@prisma/client";
+import { successResponse, badRequest, serverError } from "@/lib/api-response";
+import { resolveProjectId } from "@/lib/project";
 import type { Prisma } from "@prisma/client";
 import {
   IngestSearchPerformanceSchema,
@@ -50,37 +47,6 @@ export async function POST(request: NextRequest) {
     }
 
     const validatedRows: SearchPerformanceRow[] = parsed.data.rows;
-
-    // Collect unique entityIds for batch verification
-    const entityIdsToVerify = new Set<string>();
-    for (const row of validatedRows) {
-      if (row.entityId) {
-        entityIdsToVerify.add(row.entityId);
-      }
-    }
-
-    // Verify all referenced entities exist and belong to this project
-    if (entityIdsToVerify.size > 0) {
-      const entities = await prisma.entity.findMany({
-        where: {
-          id: { in: Array.from(entityIdsToVerify) },
-        },
-        select: { id: true, projectId: true },
-      });
-
-      const entityMap = new Map(entities.map((e) => [e.id, e.projectId]));
-
-      for (const entityId of entityIdsToVerify) {
-        const entityProjectId = entityMap.get(entityId);
-        if (!entityProjectId) {
-          return notFound(`Entity not found: ${entityId}`);
-        }
-        if (entityProjectId !== projectId) {
-          // Cross-project access: return 404 to avoid leaking existence
-          return notFound(`Entity not found: ${entityId}`);
-        }
-      }
-    }
 
     // Deterministic processing order: sort by (query, pageUrl, dateStart, dateEnd)
     const sortedRows = [...validatedRows].sort((a, b) => {
@@ -125,7 +91,6 @@ export async function POST(request: NextRequest) {
           },
           create: {
             projectId,
-            entityId: row.entityId ?? null,
             pageUrl: row.pageUrl,
             query: row.query,
             impressions: row.impressions,
@@ -136,7 +101,6 @@ export async function POST(request: NextRequest) {
             dateEnd,
           },
           update: {
-            entityId: row.entityId ?? null,
             impressions: row.impressions,
             clicks: row.clicks,
             ctr: row.ctr,
@@ -157,10 +121,10 @@ export async function POST(request: NextRequest) {
 
       await tx.eventLog.create({
         data: {
-          eventType: EventType.ENTITY_UPDATED,
-          entityType: EntityType.project,
+          eventType: "SOURCE_CAPTURED",
+          entityType: "searchPerformance",
           entityId: projectId,
-          actor: ActorType.human,
+          actor: "human",
           projectId,
           details,
         },
